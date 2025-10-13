@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"Glupulse_V0.2/internal/auth"
+	"Glupulse_V0.2/internal/database"
 	"Glupulse_V0.2/internal/server"
 )
 
@@ -38,7 +40,18 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 }
 
 func main() {
+	// FIX: Initialize the database connection first.
+	// This call runs the code in NewService(), which populates the exported 'database.Dbpool' variable.
+	dbService := database.NewService()
+	defer dbService.Close() // Ensure the database connection is closed on exit.
 
+	// FIX: Now that database.Dbpool is initialized and exported, this call will work.
+	if err := auth.InitAuth(database.Dbpool); err != nil {
+		log.Fatalf("Fatal error: could not initialize authentication providers: %v", err)
+	}
+
+	// It's likely your NewServer will need the database service, so you would pass it here.
+	// Example: server := server.NewServer(dbService)
 	server := server.NewServer()
 
 	// Create a done channel to signal when the shutdown is complete

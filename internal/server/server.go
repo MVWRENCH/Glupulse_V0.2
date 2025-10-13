@@ -7,15 +7,18 @@ import (
 	"strconv"
 	"time"
 
-	_ "github.com/joho/godotenv/autoload"
-
 	"Glupulse_V0.2/internal/database"
+	_ "github.com/joho/godotenv/autoload"
+	"github.com/labstack/echo/v4"
+	"golang.org/x/oauth2"
 )
 
 type Server struct {
 	port int
 
-	db database.Service
+	db          database.Service
+	OAuthConfig *oauth2.Config
+	*echo.Echo
 }
 
 func NewServer() *http.Server {
@@ -23,7 +26,7 @@ func NewServer() *http.Server {
 	NewServer := &Server{
 		port: port,
 
-		db: database.New(),
+		db: database.NewService(),
 	}
 
 	// Declare Server config
