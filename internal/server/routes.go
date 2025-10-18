@@ -50,13 +50,15 @@ func (s *Server) RegisterRoutes() http.Handler {
 	// --- Public Auth Routes (Traditional) ---
 	e.POST("/signup", auth.SignupHandler) // New route for traditional registration (mobile/web API)
 	e.POST("/login", auth.LoginHandler)   // POST route for traditional login (mobile/web API)
+	e.POST("/verify-otp", auth.VerifyOTPHandler)
+	e.POST("/resend-otp", auth.ResendOTPHandler)
 
 	// Public routes (Web pages)
-	e.GET("/", s.HelloWorldHandler)
 	e.GET("/health", s.healthHandler)
 	e.GET("/websocket", s.websocketHandler)
 	e.GET("/login", s.renderLoginHandler)       // Serves the login.html page
 	e.GET("/register", s.renderRegisterHandler) // Serves the register.html page
+	e.GET("/verify", s.OTPHandler)              // Serves the otp.html page
 
 	// Web OAuth routes
 	e.GET("/auth/:provider", auth.ProviderHandler)
@@ -79,14 +81,6 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.GET("/logout", auth.LogoutHandler)
 
 	return e
-}
-
-func (s *Server) HelloWorldHandler(c echo.Context) error {
-	resp := map[string]string{
-		"message": "Hello World - Updated",
-	}
-
-	return c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) healthHandler(c echo.Context) error {
@@ -121,8 +115,6 @@ func (s *Server) websocketHandler(c echo.Context) error {
 	return nil
 }
 
-// --- NEW HANDLERS FOR WEB PAGE RENDERING ---
-
 // renderLoginHandler serves the public login.html page.
 func (s *Server) renderLoginHandler(c echo.Context) error {
 	return c.Render(http.StatusOK, "index.html", nil)
@@ -133,7 +125,9 @@ func (s *Server) renderRegisterHandler(c echo.Context) error {
 	return c.Render(http.StatusOK, "register.html", nil)
 }
 
-// --- NEW SPLIT WELCOME HANDLERS ---
+func (s *Server) OTPHandler(c echo.Context) error {
+	return c.Render(http.StatusOK, "otp.html", nil)
+}
 
 // getUserDataFromContext extracts and combines user and Goth raw data from the context.
 func getUserDataFromContext(c echo.Context) (map[string]interface{}, error) {

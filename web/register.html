@@ -129,77 +129,70 @@
     </div>
 
     <script>
-        document.getElementById('registerForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const button = document.getElementById('registerButton');
-            button.disabled = true;
-            button.textContent = 'Memproses...';
+    const REGISTER_ENDPOINT = '/signup';
+    const OTP_VERIFY_URL = '/verify';
+
+    document.getElementById('registerForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const button = document.getElementById('registerButton');
+        button.disabled = true;
+        button.textContent = 'Memproses...';
+        
+        const formData = new FormData(this);
+        const data = Object.fromEntries(formData.entries());
+
+        // Add placeholder data for location
+        data.latitude = 0;
+        data.longitude = 0;
+        
+        showMessage('Mencoba mendaftar...', 'bg-blue-100 text-blue-800');
+
+        try {
+            const response = await fetch(REGISTER_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
             
-            const formData = new FormData(this);
-            const data = Object.fromEntries(formData.entries());
-
-            // Prepare address data (latitude and longitude are placeholders for now)
-            data.latitude = 0;
-            data.longitude = 0;
+            const responseData = await response.json();
             
-            showMessage('Mencoba mendaftar...', 'bg-blue-100 text-blue-800');
+            if (response.ok || response.status === 202) {
+                // Success - store user_id and redirect
+                if (responseData.user_id && responseData.next_step) {
+                    // This path handles the mobile/JSON flow (Status 202 or 200 OK)
+                    localStorage.setItem('user_id', responseData.user_id);
+                    localStorage.setItem('otp_expires_in', responseData.expires_in);
 
-            try {
-                const response = await fetch('/signup', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(data)
-                });
-
-                const responseData = await response.json();
-                
-                if (response.ok) {
-                    // Success: Store tokens and redirect (optional: store tokens)
-                    
-                    // Note: Registration flow typically redirects to login, 
-                    // or directly logs in and sets cookies/tokens. 
-                    // For this flow, we assume the backend returns auth tokens, 
-                    // but we will primarily redirect to login as per standard practice.
-                    
-                    // Store tokens (if API returns them)
-                    if (responseData.access_token && responseData.refresh_token) {
-                        document.cookie = `access-token=${responseData.access_token}; path=/; max-age=${responseData.expires_in}; Secure; SameSite=Lax`;
-                        document.cookie = `refresh-token=${responseData.refresh_token}; path=/; max-age=${30 * 24 * 60 * 60}; Secure; SameSite=Lax`;
-                    }
-
-
-                    showMessage('Pendaftaran Berhasil! Mengalihkan ke halaman Login.', 'bg-green-100 text-green-800');
+                    showMessage('Pendaftaran Berhasil! Kode verifikasi dikirim.', 'bg-green-100 text-green-800'); // Remove "(Mobile Flow)"
                     setTimeout(() => {
-                        window.location.href = '/login'; 
-                    }, 1500);
-
+                        window.location.href = OTP_VERIFY_URL; 
+                    }, 1000);
                 } else {
-                    // Failure: Display specific error message
-                    const errorMessage = responseData.error || 'Terjadi kesalahan pada server.';
-                    showMessage(`Pendaftaran Gagal: ${errorMessage}`, 'bg-red-100 text-red-800');
+                    showMessage('Pendaftaran berhasil tetapi terjadi kesalahan. Coba login.', 'bg-yellow-100 text-yellow-800');
                 }
-
-            } catch (error) {
-                console.error('Network or unexpected error:', error);
-                showMessage('Kesalahan Jaringan. Tidak dapat terhubung ke server.', 'bg-red-100 text-red-800');
-            } finally {
-                button.disabled = false;
-                button.textContent = 'Daftar Akun';
+            } else {
+                // Error response
+                const errorMessage = responseData.error || 'Terjadi kesalahan pada server.';
+                showMessage(`Pendaftaran Gagal: ${errorMessage}`, 'bg-red-100 text-red-800');
             }
-        });
 
-        function showMessage(message, classes) {
-            const box = document.getElementById('messageBox');
-            box.textContent = message;
-            // Clear previous classes and apply new ones
-            box.className = 'p-3 rounded-lg text-sm text-center ' + classes;
-            box.style.display = 'block';
+        } catch (error) {
+            console.error('Network or unexpected error:', error);
+            showMessage('Kesalahan Jaringan. Tidak dapat terhubung ke server.', 'bg-red-100 text-red-800');
+        } finally {
+            button.disabled = false;
+            button.textContent = 'Daftar Akun';
         }
+    });
 
-        // Fix the href for the login link
-        document.querySelector('a[href="login.html"]').setAttribute('href', '/login');
-    </script>
+    function showMessage(message, classes) {
+        const box = document.getElementById('messageBox');
+        box.textContent = message;
+        box.className = 'p-3 rounded-lg text-sm text-center ' + classes;
+        box.style.display = 'block';
+    }
+</script>
 </body>
 </html>
