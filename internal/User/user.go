@@ -13,7 +13,7 @@ import (
 
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
-	"Glupulse_V0.2/utility"
+	"Glupulse_V0.2/internal/utility"
 	"github.com/go-gomail/gomail"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"

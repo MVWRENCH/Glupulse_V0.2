@@ -18,7 +18,7 @@ import (
 	"unicode"
 
 	"Glupulse_V0.2/internal/database"
-	"Glupulse_V0.2/utility"
+	"Glupulse_V0.2/internal/utility"
 	emailverifier "github.com/AfterShip/email-verifier"
 	"github.com/go-gomail/gomail"
 	"github.com/golang-jwt/jwt/v5"
