@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Updated Successfully</title>
+    <!-- Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use the Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div class="bg-white p-8 sm:p-12 rounded-xl shadow-lg w-full max-w-md text-center">
+        <!-- Success Icon -->
+        <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-6">
+            <svg class="h-10 w-10 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+        </div>
+
+        <!-- Heading -->
+        <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-4">
+            Email Updated!
+        </h1>
+
+        <!-- Message -->
+        <p class="text-gray-600 text-base sm:text-lg mb-8">
+            Your email address has been successfully updated.
+        </p>
+
+        <!-- Button (Optional) - You can link this to your app's login page -->
+        <!-- 
+          MODIFICATION:
+          The href attribute is changed to a custom URL scheme.
+          You must register "glupulseapp" in your mobile app's configuration.
+          "glupulseapp://login" will open your app and (if configured) navigate 
+          to the login screen.
+        -->
+        <a href="glupulseapp://login" class="inline-block w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition duration-150">
+            Open App
+        </a>
+        <p class="text-xs text-gray-400 mt-4">
+            (You can now safely close this window)
+        </p>
+    </div>
+
+</body>
+</html>

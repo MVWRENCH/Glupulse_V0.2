@@ -873,6 +873,19 @@ type GlucoseManual struct {
 	GlucoseLevel     int64              `json:"glucose_level"`
 }
 
+type LogsAuth struct {
+	LogID       pgtype.UUID        `json:"log_id"`
+	UserID      pgtype.Text        `json:"user_id"`
+	LogCategory string             `json:"log_category"`
+	LogAction   string             `json:"log_action"`
+	LogMessage  string             `json:"log_message"`
+	LogLevel    pgtype.Text        `json:"log_level"`
+	IpAddress   *netip.Addr        `json:"ip_address"`
+	UserAgent   pgtype.Text        `json:"user_agent"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type MessageAttachment struct {
 	AttachmentID  int64              `json:"attachment_id"`
 	MessageID     string             `json:"message_id"`
@@ -893,6 +906,31 @@ type Notification struct {
 	IsRead         pgtype.Bool        `json:"is_read"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	Link           pgtype.Text        `json:"link"`
+}
+
+type OtpCode struct {
+	OtpID               pgtype.UUID        `json:"otp_id"`
+	EntityID            pgtype.UUID        `json:"entity_id"`
+	EntityRole          string             `json:"entity_role"`
+	OtpSecret           string             `json:"otp_secret"`
+	OtpPurpose          string             `json:"otp_purpose"`
+	OtpAttempts         int32              `json:"otp_attempts"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	DeletionScheduledAt pgtype.Timestamptz `json:"deletion_scheduled_at"`
+}
+
+type PendingRegistration struct {
+	PendingID      pgtype.UUID        `json:"pending_id"`
+	EntityRole     string             `json:"entity_role"`
+	Email          string             `json:"email"`
+	Username       pgtype.Text        `json:"username"`
+	HashedPassword string             `json:"hashed_password"`
+	FirstName      pgtype.Text        `json:"first_name"`
+	LastName       pgtype.Text        `json:"last_name"`
+	RawData        []byte             `json:"raw_data"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type Seller struct {
@@ -968,20 +1006,23 @@ type User struct {
 	UserLastLoginAt    pgtype.Timestamptz `json:"user_last_login_at"`
 	// Email from OAuth provider (may differ from primary email)
 	UserEmailAuth pgtype.Text `json:"user_email_auth"`
+	// Whether user has verified their email via OTP
+	IsEmailVerified pgtype.Bool        `json:"is_email_verified"`
+	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
 }
 
 type UserAddress struct {
-	AddressID         int64          `json:"address_id"`
-	UserID            string         `json:"user_id"`
-	AddressLine1      string         `json:"address_line1"`
-	AddressLine2      pgtype.Text    `json:"address_line2"`
-	AddressCity       string         `json:"address_city"`
-	AddressProvince   pgtype.Text    `json:"address_province"`
-	AddressPostalcode pgtype.Text    `json:"address_postalcode"`
-	AddressLatitude   pgtype.Numeric `json:"address_latitude"`
-	AddressLongitude  pgtype.Numeric `json:"address_longitude"`
-	AddressLabel      pgtype.Text    `json:"address_label"`
-	IsDefault         pgtype.Bool    `json:"is_default"`
+	AddressID         int64         `json:"address_id"`
+	UserID            string        `json:"user_id"`
+	AddressLine1      string        `json:"address_line1"`
+	AddressLine2      pgtype.Text   `json:"address_line2"`
+	AddressCity       string        `json:"address_city"`
+	AddressProvince   pgtype.Text   `json:"address_province"`
+	AddressPostalcode pgtype.Text   `json:"address_postalcode"`
+	AddressLatitude   pgtype.Float8 `json:"address_latitude"`
+	AddressLongitude  pgtype.Float8 `json:"address_longitude"`
+	AddressLabel      pgtype.Text   `json:"address_label"`
+	IsDefault         pgtype.Bool   `json:"is_default"`
 }
 
 type UserCart struct {
@@ -1002,6 +1043,15 @@ type UserCartitem struct {
 	Subtotal   pgtype.Int8 `json:"subtotal"`
 }
 
+type UserEmailChangeRequest struct {
+	RequestID         pgtype.UUID        `json:"request_id"`
+	UserID            string             `json:"user_id"`
+	NewEmail          string             `json:"new_email"`
+	VerificationToken string             `json:"verification_token"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
 type UserHealthdatum struct {
 	HealthdataID            string             `json:"healthdata_id"`
 	UserID                  pgtype.Text        `json:"user_id"`
@@ -1010,8 +1060,7 @@ type UserHealthdatum struct {
 	HealthdataHeight        pgtype.Numeric     `json:"healthdata_height"`
 	HealthdataBmi           pgtype.Numeric     `json:"healthdata_bmi"`
 	HealthdataBloodpressure pgtype.Text        `json:"healthdata_bloodpressure"`
-	HealthdataHeartrate     pgtype.Int8        `json:"healthdata_heartrate"`
-	HealthdataGlucose       pgtype.Numeric     `json:"healthdata_glucose"`
+	HealthdataHeartrate     pgtype.Int4        `json:"healthdata_heartrate"`
 	HealthdataNotes         pgtype.Text        `json:"healthdata_notes"`
 	RecordedBy              string             `json:"recorded_by"`
 }

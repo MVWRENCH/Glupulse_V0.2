@@ -4,24 +4,27 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/netip"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
+	"unicode"
 
 	"Glupulse_V0.2/internal/database"
+	"Glupulse_V0.2/utility"
 	emailverifier "github.com/AfterShip/email-verifier"
 	"github.com/go-gomail/gomail"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -31,27 +34,54 @@ import (
 	"github.com/markbates/goth/providers/google"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
 	AccessTokenDuration  = 15 * time.Minute
 	RefreshTokenDuration = 30 * 24 * time.Hour
-	OtpExpiryDuration    = 5 * time.Minute
+	OtpExpiryDuration    = 60 * time.Second
+	OtpStoreRetention    = 30 * time.Minute
+	PendingRegExpiry     = 1 * time.Hour
 	OtpResendCooldown    = 1 * time.Minute
 	MaxOtpAttempts       = 3
+	MaxOTPStoreSize      = 10000
+
+	// Log Categories
+	LogCategoryLogin    = "login"
+	LogCategoryRegister = "register"
+	LogCategoryOTP      = "otp"
+	LogCategoryOAuth    = "oauth"
+	LogCategoryLogout   = "logout"
+	LogCategoryRefresh  = "refresh_token"
+	LogCategoryError    = "error"
+
+	// Log Levels
+	LogLevelInfo     = "info"
+	LogLevelWarning  = "warning"
+	LogLevelError    = "error"
+	LogLevelCritical = "critical"
+
+	// OTP Status
+	OTPStatusActive  = "active"
+	OTPStatusExpired = "expired"
+	OTPStatusUsed    = "used"
 )
 
 var (
 	queries  *database.Queries
 	verifier = emailverifier.
 			NewVerifier().
-			EnableSMTPCheck().            // Enable SMTP verification
-			EnableAutoUpdateDisposable(). // Auto-update disposable domains list
+			EnableSMTPCheck().
+			EnableAutoUpdateDisposable().
 			EnableDomainSuggest()
-	emailCache = sync.Map{}
-	otpStore   = sync.Map{} // Thread-safe map
-	otpMutex   = sync.RWMutex{}
+	emailCache, _      = lru.New[string, emailVerificationResult](1000)
+	otpCleanupShutdown = make(chan struct{})
+	pendingRegShutdown = make(chan struct{})
+	metrics            AuthMetrics
+	sessionSecret      []byte
 )
 
 type JwtCustomClaims struct {
@@ -61,6 +91,7 @@ type JwtCustomClaims struct {
 	jwt.RegisteredClaims
 }
 
+// API Response for OAuth
 type AuthResponse struct {
 	AccessToken  string        `json:"access_token"`
 	RefreshToken string        `json:"refresh_token"`
@@ -69,12 +100,10 @@ type AuthResponse struct {
 	User         database.User `json:"user"`
 }
 
-// GoogleTokenRequest is used for mobile Google Sign-In
 type GoogleTokenRequest struct {
 	IDToken string `json:"id_token" form:"id_token"`
 }
 
-// GoogleUserInfo represents the user info from Google
 type GoogleUserInfo struct {
 	Sub           string `json:"sub"`
 	Email         string `json:"email"`
@@ -83,18 +112,18 @@ type GoogleUserInfo struct {
 	Picture       string `json:"picture"`
 	GivenName     string `json:"given_name"`
 	FamilyName    string `json:"family_name"`
+	Aud           string `json:"aud"`
 }
 
-// SignupRequest for traditional registration
 type SignupRequest struct {
-	Username  string `json:"username" form:"username" validate:"required,min=3,max=50"`
-	Password  string `json:"password" form:"password" validate:"required,min=8"`
-	Email     string `json:"email" form:"email" validate:"required,email"`
-	FirstName string `json:"first_name" form:"first_name" validate:"required"`
-	LastName  string `json:"last_name" form:"last_name" validate:"required"`
-	DOB       string `json:"dob" form:"dob"` // Format: YYYY-MM-DD
-	Gender    string `json:"gender" form:"gender"`
-	// Address fields (optional)
+	Username     string  `json:"username" form:"username" validate:"required,min=3,max=50"`
+	Password     string  `json:"password" form:"password" validate:"required,min=8"`
+	Email        string  `json:"email" form:"email" validate:"required,email"`
+	FirstName    string  `json:"first_name" form:"first_name" validate:"required"`
+	LastName     string  `json:"last_name" form:"last_name" validate:"required"`
+	DOB          string  `json:"dob" form:"dob"`
+	Gender       string  `json:"gender" form:"gender"`
+	Created_At   string  `json:"created_at" form:"created_at"`
 	AddressLine1 string  `json:"address_line1" form:"address_line1"`
 	AddressLine2 string  `json:"address_line2" form:"address_line2"`
 	City         string  `json:"city" form:"city"`
@@ -105,13 +134,12 @@ type SignupRequest struct {
 	AddressLabel string  `json:"address_label" form:"address_label"`
 }
 
-// LoginRequest for traditional login
 type LoginRequest struct {
 	Username string `json:"username" form:"username" validate:"required"`
 	Password string `json:"password" form:"password" validate:"required"`
 }
 
-// UserResponse for API responses
+// UserResponse for API responses. Used in verify OTP Handler
 type UserResponse struct {
 	UserID      string  `json:"user_id"`
 	Username    string  `json:"username"`
@@ -147,17 +175,73 @@ type OtpEntry struct {
 	Attempts    int
 	LastAttempt time.Time
 	Purpose     string // "signup" or "login"
+	Status      string // "active", "expired", "used"
 }
 
 // VerifyOTPRequest for OTP verification
 type VerifyOTPRequest struct {
-	UserID  string `json:"user_id" form:"user_id"`
-	OtpCode string `json:"otp_code" form:"otp_code"`
+	PendingID string `json:"pending_id"` // For signup flow
+	UserID    string `json:"user_id"`    // For login flow
+	OtpCode   string `json:"otp_code"`
 }
 
-// ResendOTPRequest for resending OTP
 type ResendOTPRequest struct {
-	UserID string `json:"user_id" form:"user_id"`
+	PendingID string `json:"pending_id"` // For signup
+	UserID    string `json:"user_id"`    // For login
+	Email     string `json:"email"`      // Fallback lookup
+}
+
+// AuthLogEntry represents a structured log entry
+type AuthLogEntry struct {
+	UserID    *string
+	Category  string
+	Action    string
+	Message   string
+	Level     string
+	IPAddress string
+	UserAgent string
+	Metadata  map[string]interface{}
+}
+
+// AddressData stores user addresses
+type AddressData struct {
+	AddressLine1 string
+	AddressLine2 string
+	City         string
+	Province     string
+	PostalCode   string
+	Latitude     float64
+	Longitude    float64
+	AddressLabel string
+}
+
+type LinkGoogleRequest struct {
+	IDToken string `json:"id_token" validate:"required"`
+}
+
+type UnlinkGoogleRequest struct {
+	Password string `json:"password"`
+}
+
+type AuthMetrics struct {
+	OTPGenerated     int64
+	OTPVerified      int64
+	OTPFailed        int64
+	SignupsPending   int64
+	SignupsCompleted int64
+}
+
+// ResetRequest used to initiate the password reset flow
+type ResetRequest struct {
+	Email string `json:"email" form:"email" validate:"required,email"`
+}
+
+// CompleteResetRequest used to confirm OTP and set new password
+type CompleteResetRequest struct {
+	UserID          string `json:"user_id" form:"user_id" validate:"required"`
+	OtpCode         string `json:"otp_code" form:"otp_code" validate:"required"`
+	NewPassword     string `json:"new_password" form:"new_password" validate:"required"`
+	ConfirmPassword string `json:"confirm_password" form:"confirm_password" validate:"required"`
 }
 
 func InitAuth(dbpool *pgxpool.Pool) error {
@@ -165,13 +249,14 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 	verifier = emailverifier.NewVerifier()
 
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, reading from environment")
+		log.Fatal().Err(err).Msg("No .env file found, reading from environment")
 	}
 
-	sessionSecret := os.Getenv("SESSION_SECRET")
-	if sessionSecret == "" {
-		log.Fatal("FATAL: SESSION_SECRET environment variable is not set")
+	sessionSecretStr := os.Getenv("SESSION_SECRET")
+	if sessionSecretStr == "" {
+		log.Fatal().Msg("FATAL: SESSION_SECRET environment variable is not set")
 	}
+	sessionSecret = []byte(sessionSecretStr)
 
 	googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
@@ -181,39 +266,45 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 		return fmt.Errorf("GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and APP_URL must be set")
 	}
 
+	otpDummySecret := os.Getenv("OTPDummySecret")
+	if otpDummySecret == "" {
+		log.Fatal().Msg("FATAL: OTPDummySecret must be set for security")
+	}
+
 	appEnv := os.Getenv("APP_ENV")
 	if appEnv == "" {
 		appEnv = "development"
 	}
 	isProd := appEnv == "production"
 
-	store := sessions.NewCookieStore([]byte(sessionSecret))
+	store := sessions.NewCookieStore(sessionSecret)
 	store.MaxAge(600)
 	store.Options.Path = "/"
 	store.Options.HttpOnly = true
 	store.Options.Secure = isProd
-	store.Options.SameSite = http.SameSiteLaxMode
 
-	// IMPORTANT: For ngrok, we need to allow cross-domain cookies
-	if strings.Contains(appUrl, "ngrok") {
-		store.Options.Domain = "" // Don't restrict domain for ngrok
+	// For ngrok/tunneling, set SameSite and Secure flags based on URL
+	if strings.Contains(appUrl, "ngrok") || strings.HasPrefix(appUrl, "https://") {
 		store.Options.SameSite = http.SameSiteNoneMode
-		store.Options.Secure = true // Required for SameSite=None
-		log.Println("Detected ngrok URL - using cross-domain cookie settings")
+		store.Options.Secure = true
+		log.Info().Msg("Detected external URL - using SameSite=None and Secure=true")
+	} else {
+		store.Options.SameSite = http.SameSiteLaxMode
 	}
 
 	gothic.Store = store
 
-	log.Printf("Auth initialized in '%s' mode. Secure cookies: %v.", appEnv, isProd)
+	log.Info().Msgf("Auth initialized in '%s' mode. Secure cookies: %v.", appEnv, isProd)
 
 	callbackURL := fmt.Sprintf("%s/auth/google/callback", appUrl)
 	goth.UseProviders(
 		google.New(googleClientId, googleClientSecret, callbackURL),
 	)
 
-	startOTPCleanup()
-	log.Printf("Auth initialized with OTP support")
-	log.Printf("OAuth callback URL: %s", callbackURL)
+	startOTPCleanup(context.Background())
+	startPendingRegCleanup()
+	log.Info().Msg("Auth initialized with OTP support")
+	log.Info().Msgf("OAuth callback URL: %s", callbackURL)
 
 	return nil
 }
@@ -224,25 +315,79 @@ func MobileGoogleAuthHandler(c echo.Context) error {
 
 	var req GoogleTokenRequest
 	if err := c.Bind(&req); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_invalid_request",
+			Message:  "Invalid mobile OAuth request format",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
 	if req.IDToken == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_missing_token",
+			Message:  "Mobile OAuth attempt without ID token",
+			Level:    LogLevelWarning,
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "id_token is required"})
 	}
 
 	// Verify Google ID token
 	userInfo, err := verifyGoogleIDToken(req.IDToken)
 	if err != nil {
-		log.Printf("Error verifying Google ID token: %v", err)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_token_verification_failed",
+			Message:  fmt.Sprintf("Google ID token verification failed: %s", err.Error()),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid Google token"})
 	}
 
-	isValidEmail, emailError, err := verifyEmailAddressFastWithCache(userInfo.Email)
+	isValidEmail, emailError, err := VerifyEmailAddressWithCache(userInfo.Email)
 	if err != nil {
-		log.Printf("Email verification error: %v", err)
+		log.Error().Err(err).Msgf("Email verification error:")
 	} else if !isValidEmail {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_invalid_email",
+			Message:  fmt.Sprintf("Mobile OAuth attempt with invalid email: %s", emailError),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"email": userInfo.Email,
+				"error": emailError,
+			},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": emailError})
+	}
+
+	// Check if email exists in traditional auth users
+	existingTraditionalUser, err := queries.GetUserByEmail(ctx, pgtype.Text{String: userInfo.Email, Valid: true})
+	if err == nil && existingTraditionalUser.UserID != "" && existingTraditionalUser.UserProvider.String == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(existingTraditionalUser.UserID),
+			Category: LogCategoryOAuth,
+			Action:   "mobile_oauth_login_conflict",
+			Message:  "Mobile OAuth login attempt detected existing traditional user email",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"email":            userInfo.Email,
+				"existing_user_id": existingTraditionalUser.UserID,
+			},
+		})
+
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error_code": "ACCOUNT_EXISTS_TRADITIONAL",
+			"message":    "This email is registered with a password. Please log in with your password and link your Google account from your profile settings.",
+		})
 	}
 
 	// Upsert user with OAuth data
@@ -262,33 +407,71 @@ func MobileGoogleAuthHandler(c echo.Context) error {
 
 	user, err := queries.UpsertOAuthUser(ctx, database.UpsertOAuthUserParams{
 		UserID:             userID,
-		UserEmail:          pgtype.Text{String: userInfo.Email, Valid: true},                     // pgtype.Text
-		UserNameAuth:       pgtype.Text{String: userInfo.Name, Valid: userInfo.Name != ""},       // pgtype.Text
-		UserAvatarUrl:      pgtype.Text{String: userInfo.Picture, Valid: userInfo.Picture != ""}, // pgtype.Text
-		UserProvider:       pgtype.Text{String: "google", Valid: true},                           // pgtype.Text
-		UserProviderUserID: pgtype.Text{String: userInfo.Sub, Valid: true},                       // pgtype.Text
+		UserEmail:          pgtype.Text{String: userInfo.Email, Valid: true},
+		UserNameAuth:       pgtype.Text{String: userInfo.Name, Valid: userInfo.Name != ""},
+		UserAvatarUrl:      pgtype.Text{String: userInfo.Picture, Valid: userInfo.Picture != ""},
+		UserProvider:       pgtype.Text{String: "google", Valid: true},
+		UserProviderUserID: pgtype.Text{String: userInfo.Sub, Valid: true},
 		UserRawData:        rawDataJSON,
 		UserLastLoginAt:    pgtype.Timestamptz{Time: now, Valid: true},
-		UserEmailAuth:      pgtype.Text{String: userInfo.Email, Valid: true}, // pgtype.Text
-		UserUsername:       pgtype.Text{String: "", Valid: false},            // NULL for OAuth users (pgtype.Text)
-		UserPassword:       pgtype.Text{String: "", Valid: false},            // NULL for OAuth users (pgtype.Text)
+		UserEmailAuth:      pgtype.Text{String: userInfo.Email, Valid: true},
+		UserUsername:       pgtype.Text{String: "", Valid: false},
+		UserPassword:       pgtype.Text{String: "", Valid: false},
 	})
 
 	if err != nil {
-		log.Printf("Error upserting OAuth user: %v", err)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(userID),
+			Category: LogCategoryOAuth,
+			Action:   "oauth_upsert_error",
+			Message:  "Error upserting OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email": userInfo.Email,
+				"error": err.Error(),
+			},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error saving user data"})
 	}
 
 	// Generate tokens
 	accessToken, err := generateAccessToken(&user)
 	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryError,
+			Action:   "token_generation_error",
+			Message:  "Error generating access token for OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
 	}
 
 	refreshToken, err := generateAndStoreRefreshToken(ctx, user.UserID, c.Request())
 	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryError,
+			Action:   "token_generation_error",
+			Message:  "Error generating refresh token for OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating refresh token"})
 	}
+
+	// Log successful OAuth login
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryOAuth,
+		Action:   "oauth_login_success",
+		Message:  "Mobile OAuth user successfully authenticated",
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"email": user.UserEmail.String,
+		},
+	})
 
 	response := AuthResponse{
 		AccessToken:  accessToken,
@@ -298,7 +481,6 @@ func MobileGoogleAuthHandler(c echo.Context) error {
 		User:         user,
 	}
 
-	log.Printf("Mobile OAuth user successfully authenticated: %s", user.UserEmail.String)
 	return c.JSON(http.StatusOK, response)
 }
 
@@ -322,9 +504,10 @@ func verifyGoogleIDToken(idToken string) (*GoogleUserInfo, error) {
 		return nil, fmt.Errorf("failed to decode user info: %w", err)
 	}
 
-	// Verify the token is for our app
-	// googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
-	// Additional validation should be done in production
+	googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
+	if userInfo.Aud != googleClientId {
+		return nil, fmt.Errorf("token audience did not match app client ID")
+	}
 
 	if userInfo.EmailVerified != "true" {
 		return nil, fmt.Errorf("email not verified")
@@ -333,11 +516,10 @@ func verifyGoogleIDToken(idToken string) (*GoogleUserInfo, error) {
 	return &userInfo, nil
 }
 
-// CallbackHandler handles web OAuth callback
+// CallbackHandler (OAuth) with logging
 func CallbackHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	// Extract provider from URL path parameter
 	provider := c.Param("provider")
 	if provider == "" {
 		provider = "google"
@@ -348,60 +530,134 @@ func CallbackHandler(c echo.Context) error {
 
 	gothUser, err := gothic.CompleteUserAuth(c.Response().Writer, req)
 	if err != nil {
-		log.Printf("Gothic auth completion error: %v (provider: %s)", err, provider)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_callback_error",
+			Message:  fmt.Sprintf("OAuth callback error: %s", err.Error()),
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"provider": provider,
+				"error":    err.Error(),
+			},
+		})
 
 		// If session is lost, redirect back to auth start
 		if strings.Contains(err.Error(), "select a provider") {
-			log.Printf("Session lost, redirecting to auth start")
+			log.Info().Msg("Session lost, redirecting to auth start")
 			return c.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("/auth/%s", provider))
 		}
 
 		return c.String(http.StatusInternalServerError, fmt.Sprintf("Error completing auth: %v", err))
 	}
 
+	// Check if email exists in traditional auth users
+	existingTraditionalUser, err := queries.GetUserByEmail(ctx, pgtype.Text{String: gothUser.Email, Valid: true})
+	if err == nil && existingTraditionalUser.UserID != "" && existingTraditionalUser.UserProvider.String == "" {
+		// Email exists in traditional users - prevent OAuth login
+
+		// Log the conflict event
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(existingTraditionalUser.UserID),
+			Category: LogCategoryOAuth,
+			Action:   "oauth_login_conflict",
+			Message:  "OAuth login attempt detected existing traditional user email",
+			Level:    LogLevelWarning, // This is now an expected flow, so LogLevelInfo is also fine
+			Metadata: map[string]interface{}{
+				"email":            gothUser.Email,
+				"existing_user_id": existingTraditionalUser.UserID,
+			},
+		})
+
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error_code": "ACCOUNT_EXISTS_TRADITIONAL",
+			"message":    "This email is already registered with username and password. Please login using your credentials instead of Google Sign-In.",
+		})
+
+	}
+
 	// Upsert user with OAuth data
 	rawDataJSON, _ := json.Marshal(gothUser.RawData)
 	now := time.Now()
-
-	// Generate UUID for new OAuth users
 	userID := uuid.New().String()
 
 	user, err := queries.UpsertOAuthUser(ctx, database.UpsertOAuthUserParams{
 		UserID:             userID,
-		UserEmail:          pgtype.Text{String: gothUser.Email, Valid: true},                         // pgtype.Text
-		UserNameAuth:       pgtype.Text{String: gothUser.Name, Valid: gothUser.Name != ""},           // pgtype.Text
-		UserAvatarUrl:      pgtype.Text{String: gothUser.AvatarURL, Valid: gothUser.AvatarURL != ""}, // pgtype.Text
-		UserProvider:       pgtype.Text{String: gothUser.Provider, Valid: true},                      // pgtype.Text
-		UserProviderUserID: pgtype.Text{String: gothUser.UserID, Valid: true},                        // pgtype.Text
+		UserEmail:          pgtype.Text{String: gothUser.Email, Valid: true},
+		UserNameAuth:       pgtype.Text{String: gothUser.Name, Valid: gothUser.Name != ""},
+		UserAvatarUrl:      pgtype.Text{String: gothUser.AvatarURL, Valid: gothUser.AvatarURL != ""},
+		UserProvider:       pgtype.Text{String: gothUser.Provider, Valid: true},
+		UserProviderUserID: pgtype.Text{String: gothUser.UserID, Valid: true},
 		UserRawData:        rawDataJSON,
 		UserLastLoginAt:    pgtype.Timestamptz{Time: now, Valid: true},
-		UserEmailAuth:      pgtype.Text{String: gothUser.Email, Valid: true}, // pgtype.Text
-		UserUsername:       pgtype.Text{String: "", Valid: false},            // NULL for OAuth users
-		UserPassword:       pgtype.Text{String: "", Valid: false},            // NULL for OAuth users
+		UserEmailAuth:      pgtype.Text{String: gothUser.Email, Valid: true},
+		UserUsername:       pgtype.Text{String: "", Valid: false},
+		UserPassword:       pgtype.Text{String: "", Valid: false},
 	})
 
 	if err != nil {
-		log.Printf("Error upserting OAuth user: %v", err)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(userID),
+			Category: LogCategoryOAuth,
+			Action:   "oauth_upsert_error",
+			Message:  "Error upserting OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"provider": provider,
+				"email":    gothUser.Email,
+				"error":    err.Error(),
+			},
+		})
 		return c.String(http.StatusInternalServerError, "Error saving user data")
 	}
 
 	// Generate tokens
 	accessToken, err := generateAccessToken(&user)
 	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryError,
+			Action:   "token_generation_error",
+			Message:  "Error generating access token for OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.String(http.StatusInternalServerError, "Error generating access token")
 	}
 
 	refreshToken, err := generateAndStoreRefreshToken(ctx, user.UserID, c.Request())
 	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryError,
+			Action:   "token_generation_error",
+			Message:  "Error generating refresh token for OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.String(http.StatusInternalServerError, "Error generating refresh token")
 	}
 
-	// Always set cookies for web
+	// Log successful OAuth login
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryOAuth,
+		Action:   "oauth_login_success",
+		Message:  fmt.Sprintf("OAuth user successfully authenticated via %s", provider),
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"provider": provider,
+			"email":    gothUser.Email,
+			"name":     gothUser.Name,
+		},
+	})
+
+	// Set cookies and redirect
 	setAuthCookies(c, accessToken, refreshToken)
-	log.Printf("Web OAuth user successfully authenticated: %s", user.UserEmail.String)
 	return c.Redirect(http.StatusTemporaryRedirect, "/welcome/web")
 }
 
+// RefreshHandler with logging
 func RefreshHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 	var refreshToken string
@@ -419,19 +675,50 @@ func RefreshHandler(c echo.Context) error {
 	}
 
 	if refreshToken == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRefresh,
+			Action:   "refresh_no_token",
+			Message:  "Refresh attempt without token",
+			Level:    LogLevelWarning,
+		})
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "No refresh token provided"})
 	}
 
 	user, newRefreshToken, err := useRefreshToken(ctx, refreshToken, c.Request())
 	if err != nil {
-		log.Printf("Refresh token error: %v", err)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRefresh,
+			Action:   "refresh_invalid_token",
+			Message:  fmt.Sprintf("Invalid or expired refresh token: %s", err.Error()),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired refresh token"})
 	}
 
 	accessToken, err := generateAccessToken(user)
 	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryRefresh,
+			Action:   "refresh_token_generation_error",
+			Message:  "Error generating access token during refresh",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
 	}
+
+	// Log successful refresh
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryRefresh,
+		Action:   "refresh_success",
+		Message:  "Token refreshed successfully",
+		Level:    LogLevelInfo,
+	})
 
 	isMobile := c.Request().Header.Get("X-Platform") == "mobile" || strings.HasPrefix(authHeader, "Bearer ")
 
@@ -453,7 +740,6 @@ func RefreshHandler(c echo.Context) error {
 
 func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		ctx := c.Request().Context()
 		var tokenString string
 		isMobile := false
 
@@ -471,17 +757,16 @@ func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 			tokenString = cookie.Value
 		}
 
-		sessionSecret := os.Getenv("SESSION_SECRET")
 		token, err := jwt.ParseWithClaims(tokenString, &JwtCustomClaims{}, func(token *jwt.Token) (interface{}, error) {
 			// Verify signing method
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return []byte(sessionSecret), nil
+			return sessionSecret, nil
 		})
 
 		if err != nil || !token.Valid {
-			log.Printf("Token validation error: %v", err)
+			log.Error().Err(err).Msg("Token validation error")
 			if isMobile {
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired token"})
 			}
@@ -489,18 +774,14 @@ func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 
 		if claims, ok := token.Claims.(*JwtCustomClaims); ok {
-			userID, err := parseUserID(claims.UserID)
-			if err != nil {
-				log.Printf("Invalid user ID in token: %v", err)
-				if isMobile {
-					return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid user ID"})
-				}
-				return c.Redirect(http.StatusTemporaryRedirect, "/login")
-			}
+			c.Set("user_claims", claims)
 
-			user, err := queries.GetUserByID(ctx, userID)
+			c.Set("user_id", claims.UserID)
+
+			ctx := c.Request().Context()
+			user, err := queries.GetUserByID(ctx, claims.UserID)
 			if err != nil {
-				log.Printf("Error fetching user: %v", err)
+				log.Error().Err(err).Msg("Error fetching user from DB")
 				if isMobile {
 					return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not found"})
 				}
@@ -508,7 +789,7 @@ func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 			}
 
 			c.Set("user", &user)
-			c.Set("user_id", claims.UserID)
+
 			return next(c)
 		}
 
@@ -519,21 +800,38 @@ func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+// LogoutHandler with logging
 func LogoutHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	userID, ok := c.Get("user_id").(string)
 	if ok && userID != "" {
-		// FIX: Convert string userID to pgtype.UUID before passing to RevokeAllUserRefreshTokens
+		// Revoke all refresh tokens
 		userIDPgtype := pgtype.UUID{}
 		if err := userIDPgtype.Scan(userID); err == nil {
 			if err := queries.RevokeAllUserRefreshTokens(ctx, userID); err != nil {
-				log.Printf("Error revoking tokens: %v", err)
+				LogAuthActivity(ctx, c, AuthLogEntry{
+					UserID:   utility.StringPtr(userID),
+					Category: LogCategoryLogout,
+					Action:   "logout_revoke_tokens_error",
+					Message:  "Error revoking tokens during logout",
+					Level:    LogLevelWarning,
+					Metadata: map[string]interface{}{"error": err.Error()},
+				})
 			}
 		}
+
+		// Log successful logout
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(userID),
+			Category: LogCategoryLogout,
+			Action:   "logout_success",
+			Message:  "User logged out successfully",
+			Level:    LogLevelInfo,
+		})
 	}
 
-	clearAuthCookies(c)
+	ClearAuthCookies(c)
 
 	isMobile := c.Request().Header.Get("X-Platform") == "mobile" ||
 		strings.HasPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
@@ -545,21 +843,16 @@ func LogoutHandler(c echo.Context) error {
 	return c.Redirect(http.StatusTemporaryRedirect, "/login")
 }
 
-// Helper functions
-
 func generateAccessToken(user *database.User) (string, error) {
-	// Use OAuth name if available, otherwise use username
 	name := user.UserNameAuth.String
-	// FIX: UserUsername is now pgtype.Text
 	if name == "" && user.UserUsername.Valid {
 		name = user.UserUsername.String
 	}
 
 	claims := &JwtCustomClaims{
 		UserID: user.UserID,
-		// FIX: UserEmail is now pgtype.Text
-		Email: user.UserEmail.String,
-		Name:  name,
+		Email:  user.UserEmail.String,
+		Name:   name,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenDuration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -568,11 +861,11 @@ func generateAccessToken(user *database.User) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	sessionSecret := os.Getenv("SESSION_SECRET")
-	return token.SignedString([]byte(sessionSecret))
+	return token.SignedString(sessionSecret)
 }
 
 func generateAndStoreRefreshToken(ctx context.Context, userID string, r *http.Request) (string, error) {
+
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", err
@@ -601,7 +894,7 @@ func generateAndStoreRefreshToken(ctx context.Context, userID string, r *http.Re
 	})
 
 	if err != nil {
-		log.Printf("Database error creating refresh token for user %s: %v", userID, err)
+		log.Info().Msgf("Database error creating refresh token for user %s: %v", userID, err)
 		return "", err
 	}
 
@@ -612,7 +905,15 @@ func useRefreshToken(ctx context.Context, token string, r *http.Request) (*datab
 	hash := sha256.Sum256([]byte(token))
 	tokenHash := base64.URLEncoding.EncodeToString(hash[:])
 
-	rt, err := queries.GetRefreshTokenByHash(ctx, tokenHash)
+	tx, err := database.Dbpool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := queries.WithTx(tx)
+
+	rt, err := qtx.GetRefreshTokenByHash(ctx, tokenHash)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid refresh token")
 	}
@@ -640,8 +941,12 @@ func useRefreshToken(ctx context.Context, token string, r *http.Request) (*datab
 	}
 
 	// Revoke old token
-	if err := queries.RevokeRefreshToken(ctx, rt.ID); err != nil {
-		log.Printf("Warning: failed to revoke old refresh token: %v", err)
+	if err := qtx.RevokeRefreshToken(ctx, rt.ID); err != nil {
+		log.Info().Msgf("Warning: failed to revoke old refresh token: %v", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
 	}
 
 	return &user, newToken, nil
@@ -672,7 +977,7 @@ func setAuthCookies(c echo.Context, accessToken, refreshToken string) {
 	c.SetCookie(refreshCookie)
 }
 
-func clearAuthCookies(c echo.Context) {
+func ClearAuthCookies(c echo.Context) {
 	appEnv := os.Getenv("APP_ENV")
 	isProd := appEnv == "production"
 
@@ -693,9 +998,9 @@ func clearAuthCookies(c echo.Context) {
 func ProviderHandler(c echo.Context) error {
 	provider := c.Param("provider")
 
-	log.Printf("Starting OAuth flow for provider: %s", provider)
-	log.Printf("Request URL: %s", c.Request().URL.String())
-	log.Printf("Request Host: %s", c.Request().Host)
+	log.Info().Msgf("Starting OAuth flow for provider: %s", provider)
+	log.Info().Msgf("Request URL: %s", c.Request().URL.String())
+	log.Info().Msgf("Request Host: %s", c.Request().Host)
 
 	// Set provider in context
 	ctx := context.WithValue(c.Request().Context(), "provider", provider)
@@ -706,195 +1011,431 @@ func ProviderHandler(c echo.Context) error {
 	return nil
 }
 
-// parseUserID handles both UUID and VARCHAR user IDs
-func parseUserID(s string) (string, error) {
-	if s == "" {
-		return "", fmt.Errorf("user ID cannot be empty")
-	}
-	return s, nil
-}
-
-// SignupHandler handles user registration
+// SignupHandler handles user registration with DB-based pending registration
 func SignupHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
+	realIP := utility.GetRealIP(c)
+
+	if err := utility.CheckIPRateLimit(realIP); err != nil {
+		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+	}
+
 	var req SignupRequest
 	if err := c.Bind(&req); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_invalid_request",
+			Message:  "Invalid signup request format",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
 	// Validate required fields
 	if req.Username == "" || req.Password == "" || req.Email == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_missing_fields",
+			Message:  "Signup attempt with missing required fields",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"username": req.Username,
+				"email":    req.Email,
+			},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Username, password, and email are required"})
 	}
 
-	if len(req.Password) < 8 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password must be at least 8 characters"})
+	if err := validatePasswordStrength(req.Password); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
 	// Email verification
-	isValidEmail, emailError, err := verifyEmailAddressWithCache(req.Email)
+	isValidEmail, emailError, err := VerifyEmailAddressWithCache(req.Email)
 	if err != nil {
-		log.Printf("Email verification error: %v", err)
+		log.Error().Err(err).Msg("Email verification error")
 	} else if !isValidEmail {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_invalid_email",
+			Message:  fmt.Sprintf("Signup attempt with invalid email: %s", emailError),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"email": req.Email,
+				"error": emailError,
+			},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": emailError})
 	}
 
-	// Check username exists
+	// Check username exists in actual users table
 	usernameExists, err := queries.CheckUsernameExists(ctx, pgtype.Text{String: req.Username, Valid: true})
 	if err != nil {
-		log.Printf("Error checking username: %v", err)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_db_error",
+			Message:  "Database error checking username",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
 	}
 	if usernameExists {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_username",
+			Message:  "Signup attempt with existing username",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
 		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists"})
 	}
 
-	// Check email exists
+	// Check if username exists in pending registrations
+	existingPendingByUsername, err := queries.GetPendingRegistrationByUsername(ctx, pgtype.Text{String: req.Username, Valid: true})
+	if err == nil && existingPendingByUsername.PendingID.Valid {
+		// Username already in pending registration
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_username_pending",
+			Message:  "Signup attempt with username in pending registration",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists in pending registration"})
+	}
+
+	// Check email exists in actual users table
 	emailExists, err := queries.CheckEmailExists(ctx, pgtype.Text{String: req.Email, Valid: true})
 	if err != nil {
-		log.Printf("Error checking email: %v", err)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_db_error",
+			Message:  "Database error checking email",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
 	}
 	if emailExists {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_email",
+			Message:  "Signup attempt with existing email",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"email": req.Email},
+		})
 		return c.JSON(http.StatusConflict, map[string]string{"error": "Email already exists"})
+	}
+
+	// Check if email exists in pending registrations
+	existingPendingByEmail, err := queries.GetPendingRegistrationByEmail(ctx, req.Email)
+	if err == nil && existingPendingByEmail.PendingID.Valid {
+		// Email already in pending registration - allow resend OTP
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_email_pending",
+			Message:  "Signup attempt with email already in pending registration",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{
+				"email":      req.Email,
+				"pending_id": existingPendingByEmail.PendingID,
+			},
+		})
+		return c.JSON(http.StatusConflict, map[string]interface{}{
+			"error":      "Email already exists in pending registration",
+			"pending_id": existingPendingByEmail.PendingID,
+			"message":    "A verification code was already sent to this email. Please check your inbox or request a new code.",
+		})
+	}
+
+	// Check OAuth users
+	existingOAuthUser, err := queries.GetUserByOAuthEmail(ctx, pgtype.Text{String: req.Email, Valid: true})
+	if err == nil && existingOAuthUser.UserID != "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_oauth_email_conflict",
+			Message:  "Signup attempt with email linked to OAuth account",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"email": req.Email},
+		})
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error": "This email is already registered with Google. Please use 'Sign in with Google' instead.",
+		})
 	}
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		log.Printf("Error hashing password: %v", err)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_hash_error",
+			Message:  "Error hashing password",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
 	}
 
-	// Generate UUID
-	userID := uuid.New().String()
-
-	// Parse DOB and Gender
-	var dob pgtype.Date
-	if req.DOB != "" {
-		parsedDate, err := time.Parse("2006-01-02", req.DOB)
-		if err == nil {
-			dob = pgtype.Date{Time: parsedDate, Valid: true}
-		}
-	}
-
-	var gender database.NullUsersUserGender
-	if req.Gender != "" {
-		gender = database.NullUsersUserGender{
-			UsersUserGender: database.UsersUserGender(req.Gender),
-			Valid:           true,
-		}
-	}
-
-	// Create user
-	user, err := queries.CreateUser(ctx, database.CreateUserParams{
-		UserID:          userID,
-		UserUsername:    pgtype.Text{String: req.Username, Valid: true},
-		UserPassword:    pgtype.Text{String: string(hashedPassword), Valid: true},
-		UserFirstname:   pgtype.Text{String: req.FirstName, Valid: true},
-		UserLastname:    pgtype.Text{String: req.LastName, Valid: req.LastName != ""},
-		UserEmail:       pgtype.Text{String: req.Email, Valid: true},
-		UserDob:         dob,
-		UserGender:      gender,
-		UserAccounttype: pgtype.Int2{Int16: 0, Valid: true},
-	})
-
-	if err != nil {
-		log.Printf("Error creating user: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create user"})
-	}
-
-	// Create address if provided
+	// Prepare address data if provided
+	var addressData map[string]interface{}
 	if req.AddressLine1 != "" {
 		addressLabel := req.AddressLabel
 		if addressLabel == "" {
 			addressLabel = "Home"
 		}
-
-		_, err = queries.CreateUserAddress(ctx, database.CreateUserAddressParams{
-			UserID:            userID,
-			AddressLine1:      req.AddressLine1,
-			AddressLine2:      pgtype.Text{String: req.AddressLine2, Valid: req.AddressLine2 != ""},
-			AddressCity:       req.City,
-			AddressProvince:   pgtype.Text{String: req.Province, Valid: req.Province != ""},
-			AddressPostalcode: pgtype.Text{String: req.PostalCode, Valid: req.PostalCode != ""},
-			AddressLatitude:   pgtype.Numeric{Valid: req.Latitude != 0},
-			AddressLongitude:  pgtype.Numeric{Valid: req.Longitude != 0},
-			AddressLabel:      pgtype.Text{String: addressLabel, Valid: true},
-			IsDefault:         pgtype.Bool{Bool: true, Valid: true},
-		})
-
-		if err != nil {
-			log.Printf("Warning: Failed to create address: %v", err)
+		addressData = map[string]interface{}{
+			"address_line1": req.AddressLine1,
+			"address_line2": req.AddressLine2,
+			"city":          req.City,
+			"province":      req.Province,
+			"postal_code":   req.PostalCode,
+			"latitude":      req.Latitude,
+			"longitude":     req.Longitude,
+			"address_label": addressLabel,
 		}
 	}
 
-	// Generate and send OTP
-	if err := generateAndStoreOTP(userID, user.UserEmail.String, "signup"); err != nil {
-		log.Printf("Failed to send OTP: %v", err)
+	// Store additional data in JSON
+	rawData, err := json.Marshal(map[string]interface{}{
+		"dob":     req.DOB,
+		"gender":  req.Gender,
+		"address": addressData,
+	})
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_json_marshal_error",
+			Message:  "Error marshaling raw data",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+
+	// Store pending registration in database
+	pendingID, err := queries.CreatePendingRegistration(ctx, database.CreatePendingRegistrationParams{
+		EntityRole:     "user",
+		Email:          req.Email,
+		Username:       pgtype.Text{String: req.Username, Valid: true},
+		HashedPassword: string(hashedPassword),
+		FirstName:      pgtype.Text{String: req.FirstName, Valid: true},
+		LastName:       pgtype.Text{String: req.LastName, Valid: req.LastName != ""},
+		RawData:        rawData,
+		ExpiresAt:      pgtype.Timestamptz{Time: time.Now().Add(PendingRegExpiry), Valid: true},
+	})
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_db_error",
+			Message:  "Failed to create pending registration",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email":    req.Email,
+				"username": req.Username,
+				"error":    err.Error(),
+			},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+
+	// Convert pgtype.UUID to string for OTP storage
+	var pendingIDStr string
+	if pendingID.Valid {
+		pendingIDStr, err = utility.PgtypeUUIDToString(pendingID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert UUID to string"})
+		}
+	} else {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_invalid_pending_id",
+			Message:  "Invalid pending registration ID generated",
+			Level:    LogLevelError,
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+
+	// Generate and send OTP using pending registration ID
+	if err := GenerateAndStoreOTP(ctx, pendingIDStr, req.Email, "signup"); err != nil {
+		// Remove from pending registrations if OTP fails
+		queries.DeletePendingRegistration(ctx, pendingID)
+
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOTP,
+			Action:   "otp_send_failed",
+			Message:  "Failed to send OTP during registration",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email":      req.Email,
+				"pending_id": pendingIDStr,
+				"error":      err.Error(),
+			},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Registration successful but failed to send verification code. Please contact support.",
+			"error": "Failed to send verification code. Please try again.",
 		})
 	}
 
-	// Return JSON response for both mobile and web
-	log.Printf("New user registered: %s (%s). Awaiting OTP verification.", user.UserUsername.String, user.UserEmail.String)
+	// Log pending registration
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   nil,
+		Category: LogCategoryRegister,
+		Action:   "signup_pending_verification",
+		Message:  fmt.Sprintf("Registration pending verification for %s", req.Username),
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"username":   req.Username,
+			"email":      req.Email,
+			"pending_id": pendingIDStr,
+		},
+	})
+
+	log.Error().Msgf("Pending registration created for: %s (%s) with ID: %s. Awaiting OTP verification.", req.Username, req.Email, pendingIDStr)
+
+	atomic.AddInt64(&metrics.SignupsPending, 1)
+
 	return c.JSON(http.StatusAccepted, map[string]interface{}{
-		"message":    "Registration successful. Verification code sent to your email.",
-		"user_id":    userID,
-		"email":      user.UserEmail.String,
+		"message":    "Verification code sent to your email. Please verify to complete registration.",
+		"pending_id": pendingIDStr,
+		"email":      req.Email,
 		"next_step":  "/verify",
 		"expires_in": int(OtpExpiryDuration.Seconds()),
 	})
 }
 
-// LoginHandler with OTP
+// LoginHandler with comprehensive logging
 func LoginHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
+	realIP := utility.GetRealIP(c)
+
+	if err := utility.CheckIPRateLimit(realIP); err != nil {
+		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+	}
+
 	var req LoginRequest
 	if err := c.Bind(&req); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryLogin,
+			Action:   "login_invalid_request",
+			Message:  "Invalid login request format",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
 	if req.Username == "" || req.Password == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryLogin,
+			Action:   "login_missing_credentials",
+			Message:  "Login attempt with missing credentials",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Username and password are required"})
 	}
 
 	// Get user and verify password
 	user, err := queries.GetUserByUsername(ctx, pgtype.Text{String: req.Username, Valid: true})
 	if err != nil {
-		log.Printf("Login attempt for non-existent user: %s", req.Username)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryLogin,
+			Action:   "login_user_not_found",
+			Message:  fmt.Sprintf("Login attempt for non-existent user: %s", req.Username),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid username or password"})
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password))
 	if err != nil {
-		log.Printf("Failed login attempt for user: %s", req.Username)
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryLogin,
+			Action:   "login_password_mismatch",
+			Message:  fmt.Sprintf("Failed login attempt for user: %s", req.Username),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"username": req.Username,
+				"user_id":  user.UserID,
+			},
+		})
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid username or password"})
 	}
 
 	// Generate and send OTP
-	if err := generateAndStoreOTP(user.UserID, user.UserEmail.String, "login"); err != nil {
-		log.Printf("Failed to send OTP: %v", err)
+	if err := GenerateAndStoreOTP(ctx, user.UserID, user.UserEmail.String, "login"); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryOTP,
+			Action:   "otp_send_failed",
+			Message:  "Failed to send login OTP",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"username": req.Username,
+				"email":    user.UserEmail.String,
+				"error":    err.Error(),
+			},
+		})
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to send verification code. " + err.Error(),
 		})
 	}
 
-	// Return JSON response for both mobile and web
-	log.Printf("Login credentials verified for %s. OTP sent.", user.UserUsername.String)
+	// Log successful credential verification
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryLogin,
+		Action:   "login_credentials_verified",
+		Message:  fmt.Sprintf("Login credentials verified for %s, OTP sent", req.Username),
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"username": req.Username,
+			"email":    user.UserEmail.String,
+		},
+	})
+
+	// Handle Mobile/Web Response
+	isMobile := c.Request().Header.Get("X-Platform") == "mobile"
+
+	if !isMobile {
+		// Web: Redirect to OTP page (Status 302 Found)
+		return c.Redirect(http.StatusFound, "/verify")
+	}
+
+	// Mobile: Return JSON response (Status 202 Accepted)
 	return c.JSON(http.StatusAccepted, map[string]interface{}{
 		"message":    "Verification code sent to your email.",
 		"user_id":    user.UserID,
 		"email":      user.UserEmail.String,
-		"next_step":  "/verify",
+		"next_step":  "/verify-otp",
 		"expires_in": int(OtpExpiryDuration.Seconds()),
 	})
 }
 
-// generateTraditionalAccessToken creates JWT for traditional auth
 func generateTraditionalAccessToken(userID, email, username string) (string, error) {
 	claims := &JwtCustomClaims{
 		UserID: userID,
@@ -908,8 +1449,7 @@ func generateTraditionalAccessToken(userID, email, username string) (string, err
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	sessionSecret := os.Getenv("SESSION_SECRET")
-	return token.SignedString([]byte(sessionSecret))
+	return token.SignedString(sessionSecret)
 }
 
 // email verification handler
@@ -933,91 +1473,93 @@ func verifyEmailAddress(email string) (bool, string, error) {
 	}
 
 	if ret.RoleAccount {
-		log.Printf("Warning: Role account terdeteksi: %s", email)
+		log.Info().Msgf("Warning: Role account terdeteksi: %s", email)
 	}
 
 	return true, "", nil
 }
 
-func verifyEmailAddressFast(email string) (bool, string, error) {
-	// Quick syntax check without SMTP verification
-	ret, err := verifier.Verify(email)
+func VerifyEmailAddressWithCache(email string) (bool, string, error) {
+	// Check cache first
+	if cached, ok := emailCache.Get(email); ok {
+		if time.Since(cached.timestamp) < 24*time.Hour {
+			return cached.valid, cached.message, nil
+		}
+	}
+
+	// Verify with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	resultChan := make(chan emailVerificationResult)
+	go func() {
+		valid, message, err := verifyEmailAddress(email)
+		resultChan <- emailVerificationResult{
+			valid:     valid && err == nil,
+			message:   message,
+			timestamp: time.Now(),
+		}
+	}()
+
+	select {
+	case result := <-resultChan:
+		emailCache.Add(email, result)
+		if result.valid {
+			return true, "", nil
+		}
+		return false, result.message, nil
+	case <-ctx.Done():
+		// Timeout - allow signup but log
+		log.Info().Msgf("Email verification timeout for: %s", email)
+		return true, "", nil // Assume valid on timeout
+	}
+}
+
+// GenerateAndStoreOTP creates and stores OTP in database
+func GenerateAndStoreOTP(ctx context.Context, entityID, email, purpose string) error {
+	// Check system capacity
+	count, err := queries.CountActiveOTPCodes(ctx)
 	if err != nil {
-		return false, "Verifikasi email gagal karena kesalahan sistem. Coba lagi.", err
-	}
+		log.Info().Msgf("Error counting OTP codes: %v", err)
+	} else if count >= MaxOTPStoreSize {
+		// Trigger cleanup of scheduled deletions
+		if err := queries.DeleteScheduledOTPCodes(ctx); err != nil {
+			log.Info().Msgf("Error cleaning up scheduled OTPs: %v", err)
+		}
 
-	if ret.Disposable {
-		return false, "Alamat email sementara tidak diizinkan.", nil
-	}
-
-	if ret.RoleAccount {
-		log.Printf("Warning: Role account terdeteksi: %s", email)
-	}
-
-	return true, "", nil
-}
-
-func verifyEmailAddressWithCache(email string) (bool, string, error) {
-	if cached, ok := emailCache.Load(email); ok {
-		result := cached.(emailVerificationResult)
-		if time.Since(result.timestamp) < 24*time.Hour {
-			return result.valid, result.message, nil
+		// Recount
+		count, err = queries.CountActiveOTPCodes(ctx)
+		if err == nil && count >= MaxOTPStoreSize {
+			return fmt.Errorf("system is busy, please try again in a moment")
 		}
 	}
 
-	valid, message, err := verifyEmailAddress(email)
-
-	if err == nil {
-		emailCache.Store(email, emailVerificationResult{
-			valid:     valid,
-			message:   message,
-			timestamp: time.Now(),
-		})
+	// Convert entityID string to pgtype.UUID
+	parsedUUID, err := uuid.Parse(entityID)
+	if err != nil {
+		return fmt.Errorf("invalid entity ID format: %w", err)
 	}
 
-	return valid, message, err
-}
+	var entityUUID pgtype.UUID
+	copy(entityUUID.Bytes[:], parsedUUID[:])
+	entityUUID.Valid = true
 
-func verifyEmailAddressFastWithCache(email string) (bool, string, error) {
-	if cached, ok := emailCache.Load(email); ok {
-		result := cached.(emailVerificationResult)
-		if time.Since(result.timestamp) < 24*time.Hour {
-			return result.valid, result.message, nil
+	// Check cooldown - if OTP was created within last minute
+	recentOTP, err := queries.GetOTPCodeWithCooldown(ctx, entityUUID)
+	if err == nil && recentOTP.OtpID.Valid {
+		timeSinceCreation := time.Since(recentOTP.CreatedAt.Time)
+		if timeSinceCreation < OtpResendCooldown {
+			remainingSeconds := int(OtpResendCooldown.Seconds() - timeSinceCreation.Seconds())
+			return fmt.Errorf("please wait %d seconds before requesting a new code", remainingSeconds)
 		}
 	}
 
-	valid, message, err := verifyEmailAddressFast(email)
-
-	if err == nil {
-		emailCache.Store(email, emailVerificationResult{
-			valid:     valid,
-			message:   message,
-			timestamp: time.Now(),
-		})
-	}
-
-	return valid, message, err
-}
-
-func generateAndStoreOTP(userID, email, purpose string) error {
-	otpMutex.Lock()
-	defer otpMutex.Unlock()
-
-	// Check if OTP already exists and enforce cooldown
-	if val, ok := otpStore.Load(userID); ok {
-		entry := val.(OtpEntry)
-		if time.Since(entry.GeneratedAt) < OtpResendCooldown {
-			return fmt.Errorf("please wait %d seconds before requesting a new code",
-				int(OtpResendCooldown.Seconds()-time.Since(entry.GeneratedAt).Seconds()))
-		}
-	}
-
-	// Generate TOTP secret (unique per user per session)
+	// Generate TOTP secret
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "GluPulse",
 		AccountName: email,
-		Period:      uint(OtpExpiryDuration.Seconds()),
-		SecretSize:  32, // Stronger secret
+		Period:      30,
+		SecretSize:  32,
 		Digits:      6,
 		Algorithm:   otp.AlgorithmSHA1,
 	})
@@ -1031,24 +1573,38 @@ func generateAndStoreOTP(userID, email, purpose string) error {
 		return fmt.Errorf("failed to generate OTP code: %w", err)
 	}
 
-	// Store OTP entry
-	otpStore.Store(userID, OtpEntry{
-		UserID:      userID,
-		Email:       email,
-		Secret:      key.Secret(),
-		GeneratedAt: time.Now(),
-		Attempts:    0,
-		Purpose:     purpose,
+	// Determine entity role from context or default to 'user'
+	entityRole := "user"
+
+	// Delete any existing OTP for this entity (ensure only one active OTP per entity)
+	queries.DeleteOTPCodeByEntityID(ctx, entityUUID)
+
+	// Store OTP in database
+	now := time.Now()
+	expiresAt := now.Add(OtpExpiryDuration)
+	deletionScheduledAt := now.Add(OtpStoreRetention) // Schedule deletion 2 hours from now
+
+	_, err = queries.CreateOTPCode(ctx, database.CreateOTPCodeParams{
+		EntityID:            entityUUID,
+		EntityRole:          entityRole,
+		OtpSecret:           key.Secret(),
+		OtpPurpose:          purpose,
+		ExpiresAt:           pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		DeletionScheduledAt: pgtype.Timestamptz{Time: deletionScheduledAt, Valid: true},
 	})
+	if err != nil {
+		return fmt.Errorf("failed to store OTP in database: %w", err)
+	}
 
 	// Send OTP via email
 	if err := sendOTPEmail(email, otpCode, purpose); err != nil {
-		// Remove from store if email fails
-		otpStore.Delete(userID)
+		// Remove from database if email fails
+		queries.DeleteOTPCodeByEntityID(ctx, entityUUID)
 		return fmt.Errorf("failed to send OTP email: %w", err)
 	}
 
-	log.Printf("OTP generated and sent to %s (purpose: %s)", email, purpose)
+	log.Info().Msgf("OTP generated and sent to %s (purpose: %s)", email, purpose)
+	atomic.AddInt64(&metrics.OTPGenerated, 1)
 	return nil
 }
 
@@ -1086,7 +1642,7 @@ func sendOTPEmail(toEmail, otpCode, purpose string) error {
 				<div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; letter-spacing: 5px; font-weight: bold; margin: 20px 0;">
 					%s
 				</div>
-				<p><strong>Kode ini berlaku selama 5 menit.</strong></p>
+				<p><strong>Kode ini berlaku selama 1 menit.</strong></p>
 				<p>Jika Anda tidak melakukan pendaftaran, abaikan email ini.</p>
 				<hr>
 				<p style="color: #666; font-size: 12px;">Email otomatis dari GluPulse</p>
@@ -1103,7 +1659,7 @@ func sendOTPEmail(toEmail, otpCode, purpose string) error {
 				<div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; letter-spacing: 5px; font-weight: bold; margin: 20px 0;">
 					%s
 				</div>
-				<p><strong>Kode ini berlaku selama 5 menit.</strong></p>
+				<p><strong>Kode ini berlaku selama 1 menit.</strong></p>
 				<p>Jika Anda tidak mencoba login, segera amankan akun Anda.</p>
 				<hr>
 				<p style="color: #666; font-size: 12px;">Email otomatis dari GluPulse</p>
@@ -1132,6 +1688,9 @@ func sendOTPEmail(toEmail, otpCode, purpose string) error {
 	m.SetBody("text/html", body)
 
 	d := gomail.NewDialer(smtpHost, port, smtpUser, smtpPass)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	errChan := make(chan error, 1)
 	go func() {
 		errChan <- d.DialAndSend(m)
@@ -1140,93 +1699,400 @@ func sendOTPEmail(toEmail, otpCode, purpose string) error {
 	select {
 	case err := <-errChan:
 		if err != nil {
-			log.Printf("Failed to send OTP email to %s: %v", toEmail, err)
+			log.Info().Msgf("Failed to send OTP email to %s: %v", toEmail, err)
 			return err
 		}
 		return nil
-	case <-time.After(15 * time.Second):
-		log.Printf("Timeout sending OTP email to %s", toEmail)
+	case <-ctx.Done():
+		log.Info().Msgf("Timeout sending OTP email to %s", toEmail)
 		return fmt.Errorf("email sending timeout")
 	}
 }
 
-// verifyOTPCode validates the OTP code
-func verifyOTPCode(userID, otpCode string) (bool, error) {
-	val, ok := otpStore.Load(userID)
-	if !ok {
-		return false, fmt.Errorf("no OTP found for this user")
+// VerifyOTPCode validates OTP from database (TIMING-ATTACK RESISTANT)
+func VerifyOTPCode(ctx context.Context, entityID, otpCode string) (bool, error) {
+	var dummySecret string = os.Getenv("OTPDummySecret")
+	if dummySecret == "" {
+		log.Info().Msg("WARNING: OTPDummySecret not set, using fallback")
+		dummySecret = "JBSWY3DPEHPK3PXP" // Fallback only
 	}
 
-	entry := val.(OtpEntry)
+	var secret string
+	var otpRecord database.OtpCode
+	var isFound, isExpired, isMaxAttempts, shouldDelete bool
+	var dbUpdateNeeded bool
 
-	// Check expiry
-	if time.Since(entry.GeneratedAt) > OtpExpiryDuration {
-		otpStore.Delete(userID)
-		return false, fmt.Errorf("OTP has expired")
+	parsedUUID, parseErr := uuid.Parse(entityID)
+
+	var entityUUID pgtype.UUID
+	if parseErr == nil {
+		copy(entityUUID.Bytes[:], parsedUUID[:])
+		entityUUID.Valid = true
+
+		otpRecord, dbErr := queries.GetOTPCodeByEntityID(ctx, entityUUID)
+		isFound = (dbErr == nil)
+
+		if isFound {
+			secret = otpRecord.OtpSecret
+			isExpired = time.Now().After(otpRecord.ExpiresAt.Time)
+			isMaxAttempts = otpRecord.OtpAttempts >= MaxOtpAttempts
+		} else {
+			secret = dummySecret
+		}
+	} else {
+		secret = dummySecret
+		isFound = false
 	}
 
-	// Check max attempts
-	if entry.Attempts >= MaxOtpAttempts {
-		otpStore.Delete(userID)
-		return false, fmt.Errorf("maximum verification attempts exceeded")
+	isValid := totp.Validate(otpCode, secret)
+
+	// Convert bools to ints for constant-time operations
+	isFoundInt := subtle.ConstantTimeByteEq(utility.BoolToByte(isFound), 1)
+	isValidInt := subtle.ConstantTimeByteEq(utility.BoolToByte(isValid), 1)
+	isExpiredInt := subtle.ConstantTimeByteEq(utility.BoolToByte(isExpired), 1)
+	isMaxAttemptsInt := subtle.ConstantTimeByteEq(utility.BoolToByte(isMaxAttempts), 1)
+
+	// Determine outcomes using constant-time logic
+	isSuccess := isFoundInt & isValidInt & (1 - isExpiredInt) & (1 - isMaxAttemptsInt)
+	isFailedAttempt := isFoundInt & (1 - isValidInt) & (1 - isExpiredInt) & (1 - isMaxAttemptsInt)
+	shouldDelete = isSuccess == 1 || isMaxAttempts
+	dbUpdateNeeded = isFailedAttempt == 1
+
+	if isFound {
+		if shouldDelete {
+			// Delete on success or max attempts
+			if err := queries.DeleteOTPCode(ctx, otpRecord.OtpID); err != nil {
+				log.Info().Msgf("Error deleting OTP: %v", err)
+			}
+		} else if dbUpdateNeeded {
+			// Update attempts on failed validation
+			if err := queries.UpdateOTPAttempts(ctx, otpRecord.OtpID); err != nil {
+				log.Info().Msgf("Error updating OTP attempts: %v", err)
+			}
+		} else {
+			// Expired - do dummy operation for timing consistency
+			_, _ = queries.GetOTPCodeByEntityID(ctx, entityUUID) // Dummy read
+		}
+	} else {
+		// Not found - do dummy operation
+		dummyUUID := pgtype.UUID{Bytes: [16]byte{}, Valid: true}
+		_, _ = queries.GetOTPCodeByEntityID(ctx, dummyUUID) // Dummy read
 	}
 
-	// Update attempts
-	entry.Attempts++
-	entry.LastAttempt = time.Now()
-	otpStore.Store(userID, entry)
+	utility.AddRandomDelay()
 
-	// Validate TOTP code with time window
-	valid := totp.Validate(otpCode, entry.Secret)
+	// Use constant-time select for return value
+	success := subtle.ConstantTimeSelect(isSuccess, 1, 0) == 1
 
-	if valid {
-		// Remove from store after successful verification
-		otpStore.Delete(userID)
+	if success {
 		return true, nil
 	}
-
-	return false, nil
+	return false, fmt.Errorf("invalid OTP code")
 }
 
-// cleanupExpiredOTPs removes expired OTP entries (run periodically)
-func cleanupExpiredOTPs() {
-	otpStore.Range(func(key, value interface{}) bool {
-		entry := value.(OtpEntry)
-		if time.Since(entry.GeneratedAt) > OtpExpiryDuration {
-			otpStore.Delete(key)
-			log.Printf("Cleaned up expired OTP for user: %s", entry.UserID)
-		}
-		return true
-	})
-}
-
+// VerifyOTPHandler with DB-based OTP storage
 func VerifyOTPHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
+	realIP := utility.GetRealIP(c)
+
+	if err := utility.CheckIPRateLimit(realIP); err != nil {
+		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+	}
+
 	var req VerifyOTPRequest
 	if err := c.Bind(&req); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOTP,
+			Action:   "otp_verify_invalid_request",
+			Message:  "Invalid OTP verification request",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
-	if req.UserID == "" || req.OtpCode == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "User ID and OTP code are required"})
+	// Determine entity ID (pending_id or user_id)
+	entityID := req.PendingID
+	isSignupFlow := req.PendingID != ""
+	if entityID == "" {
+		entityID = req.UserID
 	}
 
-	// Verify OTP
-	valid, err := verifyOTPCode(req.UserID, req.OtpCode)
+	if entityID == "" || req.OtpCode == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(entityID),
+			Category: LogCategoryOTP,
+			Action:   "otp_verify_missing_data",
+			Message:  "OTP verification attempt with missing data",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Pending ID or User ID and OTP code are required"})
+	}
+
+	// Verify OTP from database
+	valid, err := VerifyOTPCode(ctx, entityID, req.OtpCode)
 	if err != nil {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
-	}
-
-	if !valid {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(entityID),
+			Category: LogCategoryOTP,
+			Action:   "otp_verify_failed",
+			Message:  fmt.Sprintf("OTP verification failed: %s", err.Error()),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		atomic.AddInt64(&metrics.OTPFailed, 1)
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid OTP code"})
 	}
 
-	// Fetch user data
-	user, err := queries.GetUserByID(ctx, req.UserID)
-	if err != nil {
-		log.Printf("Error fetching user after OTP verification: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "User not found"})
+	if !valid {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(entityID),
+			Category: LogCategoryOTP,
+			Action:   "otp_code_invalid",
+			Message:  "Invalid OTP code provided",
+			Level:    LogLevelWarning,
+		})
+		atomic.AddInt64(&metrics.OTPFailed, 1)
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid OTP code"})
+	}
+
+	atomic.AddInt64(&metrics.OTPVerified, 1)
+
+	parsedUUID, err := uuid.Parse(entityID)
+    if err != nil {
+        LogAuthActivity(ctx, c, AuthLogEntry{
+            UserID:   utility.StringPtr(entityID),
+            Category: LogCategoryError,
+            Action:   "otp_verify_invalid_uuid",
+            Message:  "Invalid entity ID format",
+            Level:    LogLevelError,
+            Metadata: map[string]interface{}{"error": err.Error()},
+        })
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid entity ID"})
+    }
+
+    var entityUUID pgtype.UUID
+    copy(entityUUID.Bytes[:], parsedUUID[:])
+    entityUUID.Valid = true
+
+	if err := queries.DeleteOTPCodeByEntityID(ctx, entityUUID); err != nil {
+        log.Warn().Msgf("Warning: Failed to delete OTP after successful verification for entity %s: %v", entityID, err)
+        // Continue anyway - OTP already verified
+    } else {
+        log.Info().Msgf("OTP successfully deleted for entity %s after verification", entityID)
+    }
+
+	var user database.User
+	var userResponse UserResponse
+
+	// SIGNUP FLOW: Create user from pending registration
+	if isSignupFlow {
+		// Convert string to pgtype.UUID
+		parsedUUID, err := uuid.Parse(req.PendingID)
+		pendingUUID := pgtype.UUID{
+			Bytes: parsedUUID,
+			Valid: true,
+		}
+		if err != nil {
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(req.PendingID),
+				Category: LogCategoryError,
+				Action:   "otp_verify_invalid_uuid",
+				Message:  "Invalid pending registration ID format",
+				Level:    LogLevelError,
+				Metadata: map[string]interface{}{"error": err.Error()},
+			})
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid pending registration ID"})
+		}
+
+		// Get pending registration from database
+		pending, err := queries.GetPendingRegistrationByID(ctx, pendingUUID)
+		if err != nil {
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(req.PendingID),
+				Category: LogCategoryError,
+				Action:   "otp_verify_pending_not_found",
+				Message:  "Pending registration not found",
+				Level:    LogLevelWarning,
+				Metadata: map[string]interface{}{"error": err.Error()},
+			})
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Pending registration not found or expired"})
+		}
+
+		// Check if expired
+		if pending.ExpiresAt.Valid && time.Now().After(pending.ExpiresAt.Time) {
+			queries.DeletePendingRegistration(ctx, pendingUUID)
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(req.PendingID),
+				Category: LogCategoryRegister,
+				Action:   "signup_expired",
+				Message:  "Registration expired",
+				Level:    LogLevelInfo,
+				Metadata: map[string]interface{}{"email": pending.Email},
+			})
+			return c.JSON(http.StatusGone, map[string]string{"error": "Registration expired. Please sign up again."})
+		}
+
+		// Parse raw data
+		var rawData map[string]interface{}
+		if err := json.Unmarshal(pending.RawData, &rawData); err != nil {
+			log.Warn().Msgf("Warning: Failed to parse raw data: %v", err)
+		}
+
+		// Parse DOB
+		var dob pgtype.Date
+		if dobStr, ok := rawData["dob"].(string); ok && dobStr != "" {
+			if parsedDate, err := time.Parse("2006-01-02", dobStr); err == nil {
+				dob = pgtype.Date{Time: parsedDate, Valid: true}
+			}
+		}
+
+		// Parse Gender
+		var gender database.NullUsersUserGender
+		if genderStr, ok := rawData["gender"].(string); ok && genderStr != "" {
+			gender = database.NullUsersUserGender{
+				UsersUserGender: database.UsersUserGender(genderStr),
+				Valid:           true,
+			}
+		}
+
+		// Generate UUID for new user
+		userID := uuid.New().String()
+
+		tx, err := database.Dbpool.Begin(ctx)
+		if err != nil {
+			log.Error().Msgf("Failed to begin transaction: %v", err)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+		}
+		defer tx.Rollback(ctx) // Rollback on any error
+
+		qtx := queries.WithTx(tx)
+
+		// Create user
+		user, err = qtx.CreateUser(ctx, database.CreateUserParams{
+			UserID:            userID,
+			UserUsername:      pending.Username,
+			UserPassword:      pgtype.Text{String: pending.HashedPassword, Valid: true},
+			UserFirstname:     pending.FirstName,
+			UserLastname:      pending.LastName,
+			UserEmail:         pgtype.Text{String: pending.Email, Valid: true},
+			UserDob:           dob,
+			UserGender:        gender,
+			UserAccounttype:   pgtype.Int2{Int16: 0, Valid: true},
+			IsEmailVerified:   pgtype.Bool{Bool: true, Valid: true},
+			EmailVerifiedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserCreatedAtAuth: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		})
+
+		if err != nil {
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(req.PendingID),
+				Category: LogCategoryError,
+				Action:   "user_creation_failed",
+				Message:  "Failed to create user after OTP verification",
+				Level:    LogLevelError,
+				Metadata: map[string]interface{}{
+					"username": pending.Username.String,
+					"email":    pending.Email,
+					"error":    err.Error(),
+				},
+			})
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create user account"})
+		}
+
+		// Create address if provided
+		if addressData, ok := rawData["address"].(map[string]interface{}); ok && addressData != nil {
+			if addressLine1, _ := addressData["address_line1"].(string); addressLine1 != "" {
+				addressLine2, _ := addressData["address_line2"].(string)
+				city, _ := addressData["city"].(string)
+				province, _ := addressData["province"].(string)
+				postalCode, _ := addressData["postal_code"].(string)
+				latitude, _ := addressData["latitude"].(float64)
+				longitude, _ := addressData["longitude"].(float64)
+				addressLabel, _ := addressData["address_label"].(string)
+				if addressLabel == "" {
+					addressLabel = "Home"
+				}
+
+				_, err = qtx.CreateUserAddress(ctx, database.CreateUserAddressParams{
+					UserID:            userID,
+					AddressLine1:      addressLine1,
+					AddressLine2:      pgtype.Text{String: addressLine2, Valid: addressLine2 != ""},
+					AddressCity:       city,
+					AddressProvince:   pgtype.Text{String: province, Valid: province != ""},
+					AddressPostalcode: pgtype.Text{String: postalCode, Valid: postalCode != ""},
+					AddressLatitude:   pgtype.Float8{Float64: latitude, Valid: latitude != 0},
+					AddressLongitude:  pgtype.Float8{Float64: longitude, Valid: longitude != 0},
+					AddressLabel:      pgtype.Text{String: addressLabel, Valid: true},
+					IsDefault:         pgtype.Bool{Bool: true, Valid: true},
+				})
+				if err != nil {
+					log.Warn().Msgf("Warning: Failed to create address: %v", err)
+				}
+			}
+		}
+
+		// Delete pending registration
+		qtx.DeletePendingRegistration(ctx, pendingUUID)
+
+		if err := tx.Commit(ctx); err != nil {
+			log.Error().Msgf("Failed to commit transaction: %v", err)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+		}
+
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryRegister,
+			Action:   "signup_completed",
+			Message:  fmt.Sprintf("User %s registered and verified successfully", pending.Username.String),
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{
+				"username": pending.Username.String,
+				"email":    pending.Email,
+			},
+		})
+		atomic.AddInt64(&metrics.SignupsCompleted, 1)
+
+	} else {
+		// LOGIN FLOW: Fetch existing user
+		var err error
+		user, err = queries.GetUserByID(ctx, req.UserID)
+		if err != nil {
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(req.UserID),
+				Category: LogCategoryError,
+				Action:   "otp_user_fetch_error",
+				Message:  "Error fetching user after OTP verification",
+				Level:    LogLevelError,
+				Metadata: map[string]interface{}{"error": err.Error()},
+			})
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "User not found"})
+		}
+
+		// Mark email as verified if not already
+		if !user.IsEmailVerified.Bool || !user.IsEmailVerified.Valid {
+			err = queries.VerifyUserEmail(ctx, database.VerifyUserEmailParams{
+				UserID:          user.UserID,
+				IsEmailVerified: pgtype.Bool{Bool: true, Valid: true},
+				EmailVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			})
+			if err != nil {
+				log.Error().Msgf("Error marking email as verified: %v", err)
+			}
+		}
+
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryLogin,
+			Action:   "login_otp_success",
+			Message:  fmt.Sprintf("User %s successfully verified OTP and logged in", user.UserUsername.String),
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{
+				"username": user.UserUsername.String,
+			},
+		})
 	}
 
 	// Update last login
@@ -1243,8 +2109,8 @@ func VerifyOTPHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating refresh token"})
 	}
 
-	// Prepare response
-	userResponse := UserResponse{
+	// Prepare user response
+	userResponse = UserResponse{
 		UserID:      user.UserID,
 		Username:    user.UserUsername.String,
 		Email:       user.UserEmail.String,
@@ -1276,15 +2142,24 @@ func VerifyOTPHandler(c echo.Context) error {
 		strings.HasPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
 
 	if isMobile {
-		log.Printf("User %s successfully verified OTP and logged in (mobile)", user.UserUsername.String)
+		if isSignupFlow {
+			log.Info().Msgf("New user %s registered and logged in (mobile)", user.UserUsername.String)
+		}
 		return c.JSON(http.StatusOK, response)
 	}
 
-	// Web: set cookies and return JSON (no redirect!)
+	// Web: set cookies and return JSON
 	setAuthCookies(c, accessToken, refreshToken)
-	log.Printf("User %s successfully verified OTP and logged in (web)", user.UserUsername.String)
 
-	// Return JSON instead of redirect
+	if isSignupFlow {
+		log.Info().Msgf("New user %s registered and logged in (web)", user.UserUsername.String)
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"message":      "Registration completed successfully!",
+			"redirect_url": "/welcome/web",
+			"user":         userResponse,
+		})
+	}
+
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":      "Verification successful",
 		"redirect_url": "/welcome/web",
@@ -1292,29 +2167,128 @@ func VerifyOTPHandler(c echo.Context) error {
 	})
 }
 
-// ResendOTPHandler resends OTP code
+// ResendOTPHandler updated for DB storage
 func ResendOTPHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	realIP := utility.GetRealIP(c)
+
+	if err := utility.CheckIPRateLimit(realIP); err != nil {
+		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+	}
+
 	var req ResendOTPRequest
 	if err := c.Bind(&req); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOTP,
+			Action:   "otp_resend_invalid_request",
+			Message:  "Invalid OTP resend request",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
-	if req.UserID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "User ID is required"})
+	// Determine entity ID
+	entityID := req.PendingID
+	if entityID == "" {
+		entityID = req.UserID
 	}
 
-	// Get existing OTP entry to retrieve email
-	val, ok := otpStore.Load(req.UserID)
-	if !ok {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "No pending verification found"})
+	if entityID == "" && req.Email != "" {
+		// Try to find pending registration by email
+		pending, err := queries.GetPendingRegistrationByEmail(ctx, req.Email)
+		if err == nil {
+			entityID, _ = utility.PgtypeUUIDToString(pending.PendingID)
+		}
 	}
 
-	entry := val.(OtpEntry)
+	if entityID == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOTP,
+			Action:   "otp_resend_missing_entity_id",
+			Message:  "OTP resend attempt without entity ID or email",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Pending ID, User ID, or Email is required"})
+	}
+
+	// Convert to pgtype.UUID
+	parsedUUID, err := uuid.Parse(entityID)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid entity ID format"})
+	}
+
+	var entityUUID pgtype.UUID
+	copy(entityUUID.Bytes[:], parsedUUID[:])
+	entityUUID.Valid = true
+
+	existingOTP, err := queries.GetOTPCodeByEntityID(ctx, entityUUID)
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(entityID),
+			Category: LogCategoryOTP,
+			Action:   "otp_resend_no_pending",
+			Message:  "OTP resend attempt with no pending verification",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "No pending verification found. Please start the process again.",
+		})
+	}
+
+	// Determine email from existing OTP purpose
+	var email string
+	var purpose string = existingOTP.OtpPurpose
+
+	if purpose == "signup" {
+		// Get from pending registration
+		pending, err := queries.GetPendingRegistrationByID(ctx, entityUUID)
+		if err == nil {
+			email = pending.Email
+		}
+	} else {
+		// Get from user table
+		user, err := queries.GetUserByID(ctx, entityID)
+		if err == nil {
+			email = user.UserEmail.String
+		}
+	}
+
+	if email == "" {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not determine email for OTP resend"})
+	}
 
 	// Regenerate and send OTP
-	if err := generateAndStoreOTP(req.UserID, entry.Email, entry.Purpose); err != nil {
+	if err := GenerateAndStoreOTP(ctx, entityID, email, purpose); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(entityID),
+			Category: LogCategoryOTP,
+			Action:   "otp_resend_failed",
+			Message:  fmt.Sprintf("Failed to resend OTP: %s", err.Error()),
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email": email,
+				"error": err.Error(),
+			},
+		})
 		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
 	}
+
+	// Log successful resend
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(entityID),
+		Category: LogCategoryOTP,
+		Action:   "otp_resend_success",
+		Message:  "OTP resent successfully",
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"email":   email,
+			"purpose": purpose,
+		},
+	})
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Verification code resent successfully",
@@ -1322,12 +2296,487 @@ func ResendOTPHandler(c echo.Context) error {
 	})
 }
 
-// Start OTP cleanup goroutine (call this in InitAuth)
-func startOTPCleanup() {
-	ticker := time.NewTicker(1 * time.Minute)
+// Update OTP cleanup to use database
+func startOTPCleanup(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Minute) // Clean every 15 minutes
 	go func() {
-		for range ticker.C {
-			cleanupExpiredOTPs()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				// Delete OTPs that reached their scheduled deletion time
+				if err := queries.DeleteScheduledOTPCodes(ctx); err != nil {
+					log.Info().Msgf("Error cleaning up scheduled OTP deletions: %v", err)
+				} else {
+					log.Info().Msg("Cleaned up scheduled OTP codes from database")
+				}
+			case <-otpCleanupShutdown:
+				log.Info().Msg("OTP cleanup stopped")
+				return
+			}
 		}
 	}()
+}
+
+func startPendingRegCleanup() {
+	ticker := time.NewTicker(15 * time.Minute)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Info().Msg("Running pending registration cleanup...")
+				// Use a new background context
+				if err := queries.DeleteExpiredPendingRegistrations(context.Background()); err != nil {
+					log.Info().Msgf("Error cleaning up expired pending registrations: %v", err)
+				} else {
+					log.Info().Msg("Cleaned up expired pending registrations.")
+				}
+			case <-pendingRegShutdown:
+				log.Info().Msg("Pending registration cleanup goroutine stopped")
+				return
+			}
+		}
+	}()
+}
+
+// LogAuthActivity logs auth events to the console (via Zerolog) and the DB.
+func LogAuthActivity(ctx context.Context, c echo.Context, entry AuthLogEntry) {
+	var logger *zerolog.Logger
+	val := c.Get("logger") // Get from our new middleware
+	if val == nil {
+		// Fallback to global logger if middleware isn't set up
+		l := log.With().Logger() // Create a copy
+		logger = &l
+		logger.Warn().Msg("Logger not found in context, using global logger.")
+	} else {
+		logger = val.(*zerolog.Logger)
+	}
+
+	// --- 2. Gather data (your existing code) ---
+	realIP := utility.GetRealIP(c)
+	var ipAddrParsed *netip.Addr
+	ipStr := strings.Split(realIP, ":")[0]
+	if ipStr != "" {
+		if ip, err := netip.ParseAddr(ipStr); err == nil {
+			ipAddrParsed = &ip
+		}
+	}
+	userAgent := c.Request().UserAgent()
+	metadataJSON, _ := json.Marshal(entry.Metadata)
+	var dbUserID pgtype.Text
+	if entry.UserID != nil {
+		dbUserID = pgtype.Text{String: *entry.UserID, Valid: true}
+	} else {
+		dbUserID = pgtype.Text{Valid: false}
+	}
+
+	// --- 3. Log to Database (your existing code) ---
+	_, err := queries.CreateAuthLog(ctx, database.CreateAuthLogParams{
+		UserID:      dbUserID,
+		LogCategory: entry.Category,
+		LogAction:   entry.Action,
+		LogMessage:  entry.Message,
+		LogLevel:    pgtype.Text{String: entry.Level, Valid: true},
+		IpAddress:   ipAddrParsed,
+		UserAgent:   pgtype.Text{String: userAgent, Valid: true},
+		Metadata:    metadataJSON,
+	})
+	if err != nil {
+		// Log the failure *using the new logger*
+		logger.Error().Err(err).Msg("Failed to log auth activity to database")
+	}
+
+	// --- 4. Log to Console using zerolog ---
+	// This replaces your old c.Logger().Infof(...)
+
+	// Create a new log event based on the entry's level
+	var logEvent *zerolog.Event
+	switch entry.Level {
+	case LogLevelInfo:
+		logEvent = logger.Info()
+	case LogLevelWarning:
+		logEvent = logger.Warn()
+	case LogLevelError:
+		logEvent = logger.Error()
+	default:
+		logEvent = logger.Debug()
+	}
+
+	// Add all structured fields
+	if entry.UserID != nil {
+		logEvent.Str("user_id", *entry.UserID)
+	}
+
+	logEvent.Str("category", entry.Category).
+		Str("action", entry.Action).
+		Str("ip_address", realIP).
+		Str("user_agent", userAgent)
+
+	// Add metadata fields individually for better searchability
+	if entry.Metadata != nil {
+		logEvent.Interface("metadata", entry.Metadata)
+	}
+
+	// Send the log with the final message
+	logEvent.Msg(entry.Message)
+}
+
+// LinkGoogleAccountHandler handles linking a Google account to an existing traditional account
+func LinkGoogleAccountHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	claims, ok := c.Get("user_claims").(*JwtCustomClaims)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+	userID := claims.UserID
+
+	if userID == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid user token"})
+	}
+
+	user, err := queries.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Error().Msgf("UnlinkGoogleAccountHandler: Error fetching user: %v", err)
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	}
+
+	// ind the request body
+	req := new(LinkGoogleRequest)
+	if err := c.Bind(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request. 'id_token' is required."})
+	}
+
+	// 3. Validate the Google ID Token
+	userInfo, err := verifyGoogleIDToken(req.IDToken)
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(userID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Google token verification failed during linking attempt",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid Google token: " + err.Error()})
+	}
+
+	// Check if the Google email matches the user's current email
+	if !strings.EqualFold(user.UserEmail.String, userInfo.Email) {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Google account email mismatch. Current: " + user.UserEmail.String + ", Attempted: " + userInfo.Email,
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Google account email does not match your current account email."})
+	}
+
+	// Check if this Google account is already linked to ANOTHER user
+	existingGoogleUser, err := queries.GetUserProviderID(ctx, pgtype.Text{String: userInfo.Sub, Valid: true})
+	if err == nil && existingGoogleUser.UserID != "" && existingGoogleUser.UserID != user.UserID {
+		// This Google account is already tied to a different user.
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Attempted to link a Google account (sub:" + userInfo.Sub + ") that is already linked to another user (" + existingGoogleUser.UserID + ")",
+			Level:    LogLevelError,
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "This Google account is already linked to a different user."})
+	}
+
+	rawDataJSON, _ := json.Marshal(map[string]interface{}{
+		"sub":            userInfo.Sub,
+		"email":          userInfo.Email,
+		"email_verified": userInfo.EmailVerified,
+		"name":           userInfo.Name,
+		"picture":        userInfo.Picture,
+		"given_name":     userInfo.GivenName,
+		"family_name":    userInfo.FamilyName,
+	})
+
+	// 7. All checks passed. Update the user.
+	err = queries.UpdateUserGoogleLink(ctx, database.UpdateUserGoogleLinkParams{
+		UserNameAuth:       pgtype.Text{String: userInfo.Name, Valid: userInfo.Name != ""},
+		UserAvatarUrl:      pgtype.Text{String: userInfo.Picture, Valid: userInfo.Picture != ""},
+		UserProvider:       pgtype.Text{String: "google", Valid: true},
+		UserProviderUserID: pgtype.Text{String: userInfo.Sub, Valid: true},
+		UserRawData:        rawDataJSON,
+		UserEmailAuth:      pgtype.Text{String: userInfo.Email, Valid: true},
+		UserID:             user.UserID,
+	})
+
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Database error during Google account link: " + err.Error(),
+			Level:    LogLevelError,
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not link account. " + err.Error()})
+	}
+
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "profile",
+		Action:   "link_google_success",
+		Message:  "Successfully linked Google account.",
+		Level:    LogLevelInfo,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Google account linked successfully"})
+}
+
+// UnlinkGoogleAccountHandler detaches a Google account from a user, reverting them to a traditional user
+func UnlinkGoogleAccountHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// Get claims from middleware
+	claims, ok := c.Get("user_claims").(*JwtCustomClaims)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+	userID := claims.UserID
+
+	// Bind the request to get the password
+	var req UnlinkGoogleRequest
+	if err := c.Bind(&req); err != nil || req.Password == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password is required to unlink account"})
+	}
+
+	// Get full user object
+	user, err := queries.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Error().Msgf("UnlinkGoogleAccountHandler: Error fetching user: %v", err)
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	}
+
+	// 4. Check if account is actually linked to Google
+	if !user.UserProvider.Valid || user.UserProvider.String != "google" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "This account is not linked to Google."})
+	}
+
+	// 5. Check if user has a password to fall back on
+	if !user.UserPassword.Valid || user.UserPassword.String == "" {
+		// This is (or was) a "Google-only" user.
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error_code": "PASSWORD_NOT_SET",
+			"message":    "You must set a password for your account before you can unlink Google.",
+		})
+	}
+
+	// 6. Verify password to confirm identity
+	err = bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password))
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "unlink_google_failed",
+			Message:  "Failed to unlink Google - incorrect password",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Password is incorrect"})
+	}
+
+	// 7. All checks passed. Unlink the account.
+	err = queries.UnlinkGoogleAccount(ctx, userID)
+	if err != nil {
+		log.Error().Msgf("UnlinkGoogleAccountHandler: Error unlinking account: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to unlink account. Please try again."})
+	}
+
+	// 8. Log and return success
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "profile",
+		Action:   "unlink_google_success",
+		Message:  "User successfully unlinked their Google account.",
+		Level:    LogLevelInfo,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Google account unlinked successfully."})
+}
+
+func validatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
+	}
+	if len(password) > 128 {
+		return fmt.Errorf("password must be less than 128 characters")
+	}
+
+	var hasDigit, hasUpper, hasLower, hasSpecial bool
+	for _, char := range password {
+		switch {
+		case unicode.IsDigit(char):
+			hasDigit = true
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	if !hasDigit || !hasUpper || !hasLower || !hasSpecial {
+		return fmt.Errorf("password must contain uppercase, lowercase, digit, and special character")
+	}
+
+	// Check common passwords
+	commonPasswords := []string{
+		"123456", "123456789", "12345678", "password", "qwerty123", "qwerty1", "qwerty", "111111", "12345", "secret", "123123", "1234567890", "1234567", "000000", "qwerty", "abc123", "password1", "iloveyou", "11111111",
+	}
+	lowerPass := strings.ToLower(password)
+	for _, common := range commonPasswords {
+		if lowerPass == common {
+			return fmt.Errorf("password is too common")
+		}
+	}
+
+	return nil
+}
+
+func RequestPasswordResetHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	var req ResetRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	// 1. Find user by email (using GetUserByEmail for flexibility)
+	user, err := queries.GetUserByEmail(ctx, pgtype.Text{String: req.Email, Valid: true})
+	if err != nil {
+		// IMPORTANT: Do not reveal if the email exists. Respond generically.
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: "password_reset",
+			Action:   "reset_request_user_not_found",
+			Message:  fmt.Sprintf("Reset request for non-existent email: %s", req.Email),
+			Level:    LogLevelWarning,
+		})
+		// Beri respons 200 OK untuk menghindari brute force email scanning
+		return c.JSON(http.StatusOK, map[string]string{"message": "If the account exists, a reset code has been sent to your email."})
+	}
+
+	// Only traditional users can reset this way (OAuth users must use Google)
+	if user.UserProvider.Valid && user.UserProvider.String != "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "This account uses OAuth. Please reset your password through your OAuth provider.",
+		})
+	}
+
+	// Check if user has a valid password hash (not NULL)
+	if !user.UserPassword.Valid || user.UserPassword.String == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "This account does not have a traditional password to reset.",
+		})
+	}
+
+	// 2. Generate and Send OTP (Purpose: reset)
+	if err := GenerateAndStoreOTP(ctx, user.UserID, user.UserEmail.String, "Reset Password"); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryOTP,
+			Action:   "otp_send_failed",
+			Message:  "Failed to send password reset OTP",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to send reset code. Try again later."})
+	}
+
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "password_reset",
+		Action:   "reset_otp_sent",
+		Message:  "Password reset OTP sent successfully",
+		Level:    LogLevelInfo,
+	})
+
+	// 3. Inform client to proceed to verification
+	return c.JSON(http.StatusAccepted, map[string]interface{}{
+		"message":    "Verification code sent to your email.",
+		"user_id":    user.UserID,
+		"next_step":  "/complete-reset", // Endpoint for the next step
+		"expires_in": int(OtpExpiryDuration.Seconds()),
+	})
+}
+
+// ResetPasswordHandler verifies OTP and sets the new password
+func ResetPasswordHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	var req CompleteResetRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	if req.UserID == "" || req.OtpCode == "" || req.NewPassword == "" || req.NewPassword != req.ConfirmPassword {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "All fields are required, and new passwords must match"})
+	}
+
+	if len(req.NewPassword) < 8 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New password must be at least 8 characters"})
+	}
+
+	// 1. Verify OTP
+	valid, err := VerifyOTPCode(ctx, req.UserID, req.OtpCode)
+	if err != nil || !valid {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(req.UserID),
+			Category: LogCategoryOTP,
+			Action:   "reset_otp_verification_failed",
+			Message:  fmt.Sprintf("OTP verification failed during reset: %s", err),
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired reset code."})
+	}
+
+	// OTP is valid. Now fetch user.
+	user, err := queries.GetUserByID(ctx, req.UserID)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not found."})
+	}
+
+	// 2. Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("Error hashing new password: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to reset password"})
+	}
+
+	// 3. Update password in database
+	err = queries.UpdateUserPassword(ctx, database.UpdateUserPasswordParams{
+		UserID:       user.UserID,
+		UserPassword: pgtype.Text{String: string(hashedPassword), Valid: true},
+	})
+
+	if err != nil {
+		log.Printf("Error updating password during reset: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update password"})
+	}
+
+	// 4. Revoke all existing refresh tokens for security
+	queries.RevokeAllUserRefreshTokens(ctx, user.UserID)
+
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "password_reset",
+		Action:   "password_reset_success",
+		Message:  "User password successfully reset via OTP",
+		Level:    LogLevelInfo,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Password has been successfully reset. Please log in with your new password.",
+	})
+}
+
+func StopCleanup() {
+	log.Info().Msg("Signaling cleanup goroutines to stop...")
+	close(otpCleanupShutdown)
+	close(pendingRegShutdown)
 }

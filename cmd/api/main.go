@@ -3,15 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	user "Glupulse_V0.2/internal/User"
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
 	"Glupulse_V0.2/internal/server"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 func gracefulShutdown(apiServer *http.Server, done chan bool) {
@@ -22,7 +25,7 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 	// Listen for the interrupt signal.
 	<-ctx.Done()
 
-	log.Println("shutting down gracefully, press Ctrl+C again to force")
+	log.Info().Msg("shutting down gracefully, press Ctrl+C again to force")
 	stop() // Allow Ctrl+C to force shutdown
 
 	// The context is used to inform the server it has 5 seconds to finish
@@ -30,28 +33,33 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := apiServer.Shutdown(ctx); err != nil {
-		log.Printf("Server forced to shutdown with error: %v", err)
+		log.Info().Msgf("Server forced to shutdown with error: %v", err)
 	}
 
-	log.Println("Server exiting")
+	log.Info().Msg("Server exiting")
 
 	// Notify the main goroutine that the shutdown is complete
 	done <- true
 }
 
 func main() {
-	// FIX: Initialize the database connection first.
-	// This call runs the code in NewService(), which populates the exported 'database.Dbpool' variable.
+
+	log.Logger = log.Output(zerolog.ConsoleWriter{
+		Out:        os.Stderr,
+		TimeFormat: time.RFC3339, // Use a human-readable time format
+	})
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	log.Info().Msg("Zerolog initialized...")
+
 	dbService := database.NewService()
 	defer dbService.Close() // Ensure the database connection is closed on exit.
 
-	// FIX: Now that database.Dbpool is initialized and exported, this call will work.
 	if err := auth.InitAuth(database.Dbpool); err != nil {
-		log.Fatalf("Fatal error: could not initialize authentication providers: %v", err)
+		log.Fatal().Err(err).Msgf("Fatal error: could not initialize authentication providers: %v", err)
 	}
 
-	// It's likely your NewServer will need the database service, so you would pass it here.
-	// Example: server := server.NewServer(dbService)
+	user.InitUserPackage(database.Dbpool)
+
 	server := server.NewServer()
 
 	// Create a done channel to signal when the shutdown is complete
@@ -67,5 +75,5 @@ func main() {
 
 	// Wait for the graceful shutdown to complete
 	<-done
-	log.Println("Graceful shutdown complete.")
+	log.Info().Msg("Graceful shutdown complete.")
 }

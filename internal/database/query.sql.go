@@ -38,6 +38,19 @@ func (q *Queries) CheckUsernameExists(ctx context.Context, userUsername pgtype.T
 	return exists, err
 }
 
+const countActiveOTPCodes = `-- name: CountActiveOTPCodes :one
+SELECT COUNT(*) FROM otp_codes
+WHERE expires_at > NOW()
+`
+
+// Count OTPs that haven't expired yet
+func (q *Queries) CountActiveOTPCodes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveOTPCodes)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUserAddresses = `-- name: CountUserAddresses :one
 SELECT COUNT(*) FROM user_addresses
 WHERE user_id = $1
@@ -48,6 +61,240 @@ func (q *Queries) CountUserAddresses(ctx context.Context, userID string) (int64,
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const createAuthLog = `-- name: CreateAuthLog :one
+INSERT INTO logs_auth (
+    user_id,
+    log_category,
+    log_action,
+    log_message,
+    log_level,
+    ip_address,
+    user_agent,
+    metadata
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+) RETURNING log_id, user_id, log_category, log_action, log_message, log_level, ip_address, user_agent, metadata, created_at
+`
+
+type CreateAuthLogParams struct {
+	UserID      pgtype.Text `json:"user_id"`
+	LogCategory string      `json:"log_category"`
+	LogAction   string      `json:"log_action"`
+	LogMessage  string      `json:"log_message"`
+	LogLevel    pgtype.Text `json:"log_level"`
+	IpAddress   *netip.Addr `json:"ip_address"`
+	UserAgent   pgtype.Text `json:"user_agent"`
+	Metadata    []byte      `json:"metadata"`
+}
+
+func (q *Queries) CreateAuthLog(ctx context.Context, arg CreateAuthLogParams) (LogsAuth, error) {
+	row := q.db.QueryRow(ctx, createAuthLog,
+		arg.UserID,
+		arg.LogCategory,
+		arg.LogAction,
+		arg.LogMessage,
+		arg.LogLevel,
+		arg.IpAddress,
+		arg.UserAgent,
+		arg.Metadata,
+	)
+	var i LogsAuth
+	err := row.Scan(
+		&i.LogID,
+		&i.UserID,
+		&i.LogCategory,
+		&i.LogAction,
+		&i.LogMessage,
+		&i.LogLevel,
+		&i.IpAddress,
+		&i.UserAgent,
+		&i.Metadata,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createEmailChangeRequest = `-- name: CreateEmailChangeRequest :one
+INSERT INTO user_email_change_requests (
+    user_id,
+    new_email,
+    verification_token,
+    expires_at
+) VALUES (
+    $1, $2, $3, $4
+)
+RETURNING request_id, user_id, new_email, verification_token, expires_at, created_at
+`
+
+type CreateEmailChangeRequestParams struct {
+	UserID            string             `json:"user_id"`
+	NewEmail          string             `json:"new_email"`
+	VerificationToken string             `json:"verification_token"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) CreateEmailChangeRequest(ctx context.Context, arg CreateEmailChangeRequestParams) (UserEmailChangeRequest, error) {
+	row := q.db.QueryRow(ctx, createEmailChangeRequest,
+		arg.UserID,
+		arg.NewEmail,
+		arg.VerificationToken,
+		arg.ExpiresAt,
+	)
+	var i UserEmailChangeRequest
+	err := row.Scan(
+		&i.RequestID,
+		&i.UserID,
+		&i.NewEmail,
+		&i.VerificationToken,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createHealthData = `-- name: CreateHealthData :one
+INSERT INTO user_healthdata (
+    healthdata_id,
+    user_id,
+    healthdata_weight,
+    healthdata_height,
+    healthdata_bmi,
+    healthdata_recordtime,
+    recorded_by,
+    healthdata_bloodpressure,
+    healthdata_heartrate,
+    healthdata_notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING healthdata_id, user_id, healthdata_recordtime, healthdata_weight, healthdata_height, healthdata_bmi, healthdata_bloodpressure, healthdata_heartrate, healthdata_notes, recorded_by
+`
+
+type CreateHealthDataParams struct {
+	HealthdataID            string             `json:"healthdata_id"`
+	UserID                  pgtype.Text        `json:"user_id"`
+	HealthdataWeight        pgtype.Numeric     `json:"healthdata_weight"`
+	HealthdataHeight        pgtype.Numeric     `json:"healthdata_height"`
+	HealthdataBmi           pgtype.Numeric     `json:"healthdata_bmi"`
+	HealthdataRecordtime    pgtype.Timestamptz `json:"healthdata_recordtime"`
+	RecordedBy              string             `json:"recorded_by"`
+	HealthdataBloodpressure pgtype.Text        `json:"healthdata_bloodpressure"`
+	HealthdataHeartrate     pgtype.Int4        `json:"healthdata_heartrate"`
+	HealthdataNotes         pgtype.Text        `json:"healthdata_notes"`
+}
+
+func (q *Queries) CreateHealthData(ctx context.Context, arg CreateHealthDataParams) (UserHealthdatum, error) {
+	row := q.db.QueryRow(ctx, createHealthData,
+		arg.HealthdataID,
+		arg.UserID,
+		arg.HealthdataWeight,
+		arg.HealthdataHeight,
+		arg.HealthdataBmi,
+		arg.HealthdataRecordtime,
+		arg.RecordedBy,
+		arg.HealthdataBloodpressure,
+		arg.HealthdataHeartrate,
+		arg.HealthdataNotes,
+	)
+	var i UserHealthdatum
+	err := row.Scan(
+		&i.HealthdataID,
+		&i.UserID,
+		&i.HealthdataRecordtime,
+		&i.HealthdataWeight,
+		&i.HealthdataHeight,
+		&i.HealthdataBmi,
+		&i.HealthdataBloodpressure,
+		&i.HealthdataHeartrate,
+		&i.HealthdataNotes,
+		&i.RecordedBy,
+	)
+	return i, err
+}
+
+const createOTPCode = `-- name: CreateOTPCode :one
+INSERT INTO otp_codes (
+    entity_id,
+    entity_role,
+    otp_secret,
+    otp_purpose,
+    otp_attempts,
+    expires_at,
+    deletion_scheduled_at
+) VALUES (
+    $1, $2, $3, $4, 0, $5, $6
+)
+RETURNING otp_id, entity_id, entity_role, otp_secret, otp_purpose, otp_attempts, expires_at, created_at, deletion_scheduled_at
+`
+
+type CreateOTPCodeParams struct {
+	EntityID            pgtype.UUID        `json:"entity_id"`
+	EntityRole          string             `json:"entity_role"`
+	OtpSecret           string             `json:"otp_secret"`
+	OtpPurpose          string             `json:"otp_purpose"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	DeletionScheduledAt pgtype.Timestamptz `json:"deletion_scheduled_at"`
+}
+
+func (q *Queries) CreateOTPCode(ctx context.Context, arg CreateOTPCodeParams) (OtpCode, error) {
+	row := q.db.QueryRow(ctx, createOTPCode,
+		arg.EntityID,
+		arg.EntityRole,
+		arg.OtpSecret,
+		arg.OtpPurpose,
+		arg.ExpiresAt,
+		arg.DeletionScheduledAt,
+	)
+	var i OtpCode
+	err := row.Scan(
+		&i.OtpID,
+		&i.EntityID,
+		&i.EntityRole,
+		&i.OtpSecret,
+		&i.OtpPurpose,
+		&i.OtpAttempts,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.DeletionScheduledAt,
+	)
+	return i, err
+}
+
+const createPendingRegistration = `-- name: CreatePendingRegistration :one
+INSERT INTO pending_registrations
+    (entity_role, email, username, hashed_password, first_name, last_name, raw_data, expires_at)
+VALUES
+    ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING pending_id
+`
+
+type CreatePendingRegistrationParams struct {
+	EntityRole     string             `json:"entity_role"`
+	Email          string             `json:"email"`
+	Username       pgtype.Text        `json:"username"`
+	HashedPassword string             `json:"hashed_password"`
+	FirstName      pgtype.Text        `json:"first_name"`
+	LastName       pgtype.Text        `json:"last_name"`
+	RawData        []byte             `json:"raw_data"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) CreatePendingRegistration(ctx context.Context, arg CreatePendingRegistrationParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, createPendingRegistration,
+		arg.EntityRole,
+		arg.Email,
+		arg.Username,
+		arg.HashedPassword,
+		arg.FirstName,
+		arg.LastName,
+		arg.RawData,
+		arg.ExpiresAt,
+	)
+	var pending_id pgtype.UUID
+	err := row.Scan(&pending_id)
+	return pending_id, err
 }
 
 const createRefreshToken = `-- name: CreateRefreshToken :one
@@ -104,22 +351,28 @@ INSERT INTO users (
     user_email,
     user_dob,
     user_gender,
-    user_accounttype
+    user_accounttype,
+    user_created_at_auth,
+    is_email_verified,
+    email_verified_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
-) RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+) RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
 type CreateUserParams struct {
-	UserID          string              `json:"user_id"`
-	UserUsername    pgtype.Text         `json:"user_username"`
-	UserPassword    pgtype.Text         `json:"user_password"`
-	UserFirstname   pgtype.Text         `json:"user_firstname"`
-	UserLastname    pgtype.Text         `json:"user_lastname"`
-	UserEmail       pgtype.Text         `json:"user_email"`
-	UserDob         pgtype.Date         `json:"user_dob"`
-	UserGender      NullUsersUserGender `json:"user_gender"`
-	UserAccounttype pgtype.Int2         `json:"user_accounttype"`
+	UserID            string              `json:"user_id"`
+	UserUsername      pgtype.Text         `json:"user_username"`
+	UserPassword      pgtype.Text         `json:"user_password"`
+	UserFirstname     pgtype.Text         `json:"user_firstname"`
+	UserLastname      pgtype.Text         `json:"user_lastname"`
+	UserEmail         pgtype.Text         `json:"user_email"`
+	UserDob           pgtype.Date         `json:"user_dob"`
+	UserGender        NullUsersUserGender `json:"user_gender"`
+	UserAccounttype   pgtype.Int2         `json:"user_accounttype"`
+	UserCreatedAtAuth pgtype.Timestamptz  `json:"user_created_at_auth"`
+	IsEmailVerified   pgtype.Bool         `json:"is_email_verified"`
+	EmailVerifiedAt   pgtype.Timestamptz  `json:"email_verified_at"`
 }
 
 // Traditional Auth Users
@@ -134,6 +387,9 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.UserDob,
 		arg.UserGender,
 		arg.UserAccounttype,
+		arg.UserCreatedAtAuth,
+		arg.IsEmailVerified,
+		arg.EmailVerifiedAt,
 	)
 	var i User
 	err := row.Scan(
@@ -155,6 +411,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UserUpdatedAtAuth,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -177,16 +435,16 @@ INSERT INTO user_addresses (
 `
 
 type CreateUserAddressParams struct {
-	UserID            string         `json:"user_id"`
-	AddressLine1      string         `json:"address_line1"`
-	AddressLine2      pgtype.Text    `json:"address_line2"`
-	AddressCity       string         `json:"address_city"`
-	AddressProvince   pgtype.Text    `json:"address_province"`
-	AddressPostalcode pgtype.Text    `json:"address_postalcode"`
-	AddressLatitude   pgtype.Numeric `json:"address_latitude"`
-	AddressLongitude  pgtype.Numeric `json:"address_longitude"`
-	AddressLabel      pgtype.Text    `json:"address_label"`
-	IsDefault         pgtype.Bool    `json:"is_default"`
+	UserID            string        `json:"user_id"`
+	AddressLine1      string        `json:"address_line1"`
+	AddressLine2      pgtype.Text   `json:"address_line2"`
+	AddressCity       string        `json:"address_city"`
+	AddressProvince   pgtype.Text   `json:"address_province"`
+	AddressPostalcode pgtype.Text   `json:"address_postalcode"`
+	AddressLatitude   pgtype.Float8 `json:"address_latitude"`
+	AddressLongitude  pgtype.Float8 `json:"address_longitude"`
+	AddressLabel      pgtype.Text   `json:"address_label"`
+	IsDefault         pgtype.Bool   `json:"is_default"`
 }
 
 // User Addresses
@@ -220,6 +478,27 @@ func (q *Queries) CreateUserAddress(ctx context.Context, arg CreateUserAddressPa
 	return i, err
 }
 
+const deleteEmailChangeRequest = `-- name: DeleteEmailChangeRequest :exec
+DELETE FROM user_email_change_requests
+WHERE
+    request_id = $1
+`
+
+func (q *Queries) DeleteEmailChangeRequest(ctx context.Context, requestID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteEmailChangeRequest, requestID)
+	return err
+}
+
+const deleteExpiredPendingRegistrations = `-- name: DeleteExpiredPendingRegistrations :exec
+DELETE FROM pending_registrations
+WHERE expires_at < NOW()
+`
+
+func (q *Queries) DeleteExpiredPendingRegistrations(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredPendingRegistrations)
+	return err
+}
+
 const deleteExpiredRefreshTokens = `-- name: DeleteExpiredRefreshTokens :exec
 DELETE FROM users_refresh_tokens
 WHERE expires_at < CURRENT_TIMESTAMP
@@ -227,6 +506,68 @@ WHERE expires_at < CURRENT_TIMESTAMP
 
 func (q *Queries) DeleteExpiredRefreshTokens(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredRefreshTokens)
+	return err
+}
+
+const deleteOTPCode = `-- name: DeleteOTPCode :exec
+DELETE FROM otp_codes
+WHERE otp_id = $1
+`
+
+func (q *Queries) DeleteOTPCode(ctx context.Context, otpID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteOTPCode, otpID)
+	return err
+}
+
+const deleteOTPCodeByEntityID = `-- name: DeleteOTPCodeByEntityID :exec
+DELETE FROM otp_codes
+WHERE entity_id = $1
+`
+
+func (q *Queries) DeleteOTPCodeByEntityID(ctx context.Context, entityID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteOTPCodeByEntityID, entityID)
+	return err
+}
+
+const deleteOldAuthLogs = `-- name: DeleteOldAuthLogs :exec
+DELETE FROM logs_auth
+WHERE created_at < $1
+`
+
+func (q *Queries) DeleteOldAuthLogs(ctx context.Context, createdAt pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, deleteOldAuthLogs, createdAt)
+	return err
+}
+
+const deletePendingRegistration = `-- name: DeletePendingRegistration :exec
+DELETE FROM pending_registrations
+WHERE pending_id = $1
+`
+
+func (q *Queries) DeletePendingRegistration(ctx context.Context, pendingID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deletePendingRegistration, pendingID)
+	return err
+}
+
+const deleteScheduledOTPCodes = `-- name: DeleteScheduledOTPCodes :exec
+DELETE FROM otp_codes
+WHERE deletion_scheduled_at IS NOT NULL 
+AND deletion_scheduled_at <= NOW()
+`
+
+// Delete OTPs that are scheduled for deletion and time has passed
+func (q *Queries) DeleteScheduledOTPCodes(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteScheduledOTPCodes)
+	return err
+}
+
+const deleteUser = `-- name: DeleteUser :exec
+DELETE FROM users
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUser(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteUser, userID)
 	return err
 }
 
@@ -274,6 +615,370 @@ func (q *Queries) GetAddressByID(ctx context.Context, arg GetAddressByIDParams) 
 	return i, err
 }
 
+const getAuthLogsByCategory = `-- name: GetAuthLogsByCategory :many
+SELECT log_id, user_id, log_category, log_action, log_message, log_level, ip_address, user_agent, metadata, created_at FROM logs_auth
+WHERE log_category = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type GetAuthLogsByCategoryParams struct {
+	LogCategory string `json:"log_category"`
+	Limit       int32  `json:"limit"`
+	Offset      int32  `json:"offset"`
+}
+
+func (q *Queries) GetAuthLogsByCategory(ctx context.Context, arg GetAuthLogsByCategoryParams) ([]LogsAuth, error) {
+	rows, err := q.db.Query(ctx, getAuthLogsByCategory, arg.LogCategory, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogsAuth
+	for rows.Next() {
+		var i LogsAuth
+		if err := rows.Scan(
+			&i.LogID,
+			&i.UserID,
+			&i.LogCategory,
+			&i.LogAction,
+			&i.LogMessage,
+			&i.LogLevel,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAuthLogsByDateRange = `-- name: GetAuthLogsByDateRange :many
+SELECT log_id, user_id, log_category, log_action, log_message, log_level, ip_address, user_agent, metadata, created_at FROM logs_auth
+WHERE created_at BETWEEN $1 AND $2
+ORDER BY created_at DESC
+LIMIT $3 OFFSET $4
+`
+
+type GetAuthLogsByDateRangeParams struct {
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+	Limit       int32              `json:"limit"`
+	Offset      int32              `json:"offset"`
+}
+
+func (q *Queries) GetAuthLogsByDateRange(ctx context.Context, arg GetAuthLogsByDateRangeParams) ([]LogsAuth, error) {
+	rows, err := q.db.Query(ctx, getAuthLogsByDateRange,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogsAuth
+	for rows.Next() {
+		var i LogsAuth
+		if err := rows.Scan(
+			&i.LogID,
+			&i.UserID,
+			&i.LogCategory,
+			&i.LogAction,
+			&i.LogMessage,
+			&i.LogLevel,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAuthLogsByUserID = `-- name: GetAuthLogsByUserID :many
+SELECT log_id, user_id, log_category, log_action, log_message, log_level, ip_address, user_agent, metadata, created_at FROM logs_auth
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type GetAuthLogsByUserIDParams struct {
+	UserID pgtype.Text `json:"user_id"`
+	Limit  int32       `json:"limit"`
+	Offset int32       `json:"offset"`
+}
+
+func (q *Queries) GetAuthLogsByUserID(ctx context.Context, arg GetAuthLogsByUserIDParams) ([]LogsAuth, error) {
+	rows, err := q.db.Query(ctx, getAuthLogsByUserID, arg.UserID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogsAuth
+	for rows.Next() {
+		var i LogsAuth
+		if err := rows.Scan(
+			&i.LogID,
+			&i.UserID,
+			&i.LogCategory,
+			&i.LogAction,
+			&i.LogMessage,
+			&i.LogLevel,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getEmailChangeRequestByToken = `-- name: GetEmailChangeRequestByToken :one
+SELECT request_id, user_id, new_email, verification_token, expires_at, created_at
+FROM user_email_change_requests
+WHERE
+    verification_token = $1
+`
+
+func (q *Queries) GetEmailChangeRequestByToken(ctx context.Context, verificationToken string) (UserEmailChangeRequest, error) {
+	row := q.db.QueryRow(ctx, getEmailChangeRequestByToken, verificationToken)
+	var i UserEmailChangeRequest
+	err := row.Scan(
+		&i.RequestID,
+		&i.UserID,
+		&i.NewEmail,
+		&i.VerificationToken,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getFailedLoginAttempts = `-- name: GetFailedLoginAttempts :many
+SELECT log_id, user_id, log_category, log_action, log_message, log_level, ip_address, user_agent, metadata, created_at FROM logs_auth
+WHERE log_category = 'login'
+  AND log_action = 'login_failed'
+  AND created_at > $1
+ORDER BY created_at DESC
+`
+
+func (q *Queries) GetFailedLoginAttempts(ctx context.Context, createdAt pgtype.Timestamptz) ([]LogsAuth, error) {
+	rows, err := q.db.Query(ctx, getFailedLoginAttempts, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogsAuth
+	for rows.Next() {
+		var i LogsAuth
+		if err := rows.Scan(
+			&i.LogID,
+			&i.UserID,
+			&i.LogCategory,
+			&i.LogAction,
+			&i.LogMessage,
+			&i.LogLevel,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOTPCodeByEntityID = `-- name: GetOTPCodeByEntityID :one
+SELECT otp_id, entity_id, entity_role, otp_secret, otp_purpose, otp_attempts, expires_at, created_at, deletion_scheduled_at FROM otp_codes
+WHERE entity_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// Don't check expires_at here, we'll handle expiry in code
+func (q *Queries) GetOTPCodeByEntityID(ctx context.Context, entityID pgtype.UUID) (OtpCode, error) {
+	row := q.db.QueryRow(ctx, getOTPCodeByEntityID, entityID)
+	var i OtpCode
+	err := row.Scan(
+		&i.OtpID,
+		&i.EntityID,
+		&i.EntityRole,
+		&i.OtpSecret,
+		&i.OtpPurpose,
+		&i.OtpAttempts,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.DeletionScheduledAt,
+	)
+	return i, err
+}
+
+const getOTPCodeWithCooldown = `-- name: GetOTPCodeWithCooldown :one
+SELECT otp_id, entity_id, entity_role, otp_secret, otp_purpose, otp_attempts, expires_at, created_at, deletion_scheduled_at FROM otp_codes
+WHERE entity_id = $1
+AND created_at > NOW() - INTERVAL '1 minute'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetOTPCodeWithCooldown(ctx context.Context, entityID pgtype.UUID) (OtpCode, error) {
+	row := q.db.QueryRow(ctx, getOTPCodeWithCooldown, entityID)
+	var i OtpCode
+	err := row.Scan(
+		&i.OtpID,
+		&i.EntityID,
+		&i.EntityRole,
+		&i.OtpSecret,
+		&i.OtpPurpose,
+		&i.OtpAttempts,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.DeletionScheduledAt,
+	)
+	return i, err
+}
+
+const getPendingRegistrationByEmail = `-- name: GetPendingRegistrationByEmail :one
+
+SELECT pending_id, entity_role, email, username, hashed_password, first_name, last_name, raw_data, expires_at, created_at FROM pending_registrations
+WHERE email = $1 AND expires_at > NOW()
+`
+
+// Return the new pending_id
+func (q *Queries) GetPendingRegistrationByEmail(ctx context.Context, email string) (PendingRegistration, error) {
+	row := q.db.QueryRow(ctx, getPendingRegistrationByEmail, email)
+	var i PendingRegistration
+	err := row.Scan(
+		&i.PendingID,
+		&i.EntityRole,
+		&i.Email,
+		&i.Username,
+		&i.HashedPassword,
+		&i.FirstName,
+		&i.LastName,
+		&i.RawData,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPendingRegistrationByID = `-- name: GetPendingRegistrationByID :one
+SELECT pending_id, entity_role, email, username, hashed_password, first_name, last_name, raw_data, expires_at, created_at FROM pending_registrations
+WHERE pending_id = $1 AND expires_at > NOW()
+`
+
+func (q *Queries) GetPendingRegistrationByID(ctx context.Context, pendingID pgtype.UUID) (PendingRegistration, error) {
+	row := q.db.QueryRow(ctx, getPendingRegistrationByID, pendingID)
+	var i PendingRegistration
+	err := row.Scan(
+		&i.PendingID,
+		&i.EntityRole,
+		&i.Email,
+		&i.Username,
+		&i.HashedPassword,
+		&i.FirstName,
+		&i.LastName,
+		&i.RawData,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPendingRegistrationByUsername = `-- name: GetPendingRegistrationByUsername :one
+SELECT pending_id, entity_role, email, username, hashed_password, first_name, last_name, raw_data, expires_at, created_at FROM pending_registrations
+WHERE username = $1 AND expires_at > NOW()
+`
+
+func (q *Queries) GetPendingRegistrationByUsername(ctx context.Context, username pgtype.Text) (PendingRegistration, error) {
+	row := q.db.QueryRow(ctx, getPendingRegistrationByUsername, username)
+	var i PendingRegistration
+	err := row.Scan(
+		&i.PendingID,
+		&i.EntityRole,
+		&i.Email,
+		&i.Username,
+		&i.HashedPassword,
+		&i.FirstName,
+		&i.LastName,
+		&i.RawData,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getRecentAuthActivity = `-- name: GetRecentAuthActivity :many
+SELECT log_id, user_id, log_category, log_action, log_message, log_level, ip_address, user_agent, metadata, created_at FROM logs_auth
+WHERE user_id = $1
+  AND created_at > $2
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type GetRecentAuthActivityParams struct {
+	UserID    pgtype.Text        `json:"user_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Limit     int32              `json:"limit"`
+}
+
+func (q *Queries) GetRecentAuthActivity(ctx context.Context, arg GetRecentAuthActivityParams) ([]LogsAuth, error) {
+	rows, err := q.db.Query(ctx, getRecentAuthActivity, arg.UserID, arg.CreatedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogsAuth
+	for rows.Next() {
+		var i LogsAuth
+		if err := rows.Scan(
+			&i.LogID,
+			&i.UserID,
+			&i.LogCategory,
+			&i.LogAction,
+			&i.LogMessage,
+			&i.LogLevel,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRefreshTokenByHash = `-- name: GetRefreshTokenByHash :one
 SELECT id, user_id, token_hash, device_info, ip_address, expires_at, created_at, revoked_at, replaced_by_token_id FROM users_refresh_tokens
 WHERE token_hash = $1 AND revoked_at IS NULL
@@ -304,6 +1009,7 @@ WHERE user_id = $1
 ORDER BY created_at DESC
 `
 
+// Unused queries
 func (q *Queries) GetUserActiveRefreshTokens(ctx context.Context, userID string) ([]UsersRefreshToken, error) {
 	rows, err := q.db.Query(ctx, getUserActiveRefreshTokens, userID)
 	if err != nil {
@@ -373,7 +1079,7 @@ func (q *Queries) GetUserAddresses(ctx context.Context, userID string) ([]UserAd
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_email = $1
 `
 
@@ -399,12 +1105,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, userEmail pgtype.Text) (Us
 		&i.UserUpdatedAtAuth,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_id = $1
 `
 
@@ -430,12 +1138,14 @@ func (q *Queries) GetUserByID(ctx context.Context, userID string) (User, error) 
 		&i.UserUpdatedAtAuth,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
 
 const getUserByOAuthEmail = `-- name: GetUserByOAuthEmail :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_email_auth = $1 AND user_provider IS NOT NULL
 `
 
@@ -461,48 +1171,14 @@ func (q *Queries) GetUserByOAuthEmail(ctx context.Context, userEmailAuth pgtype.
 		&i.UserUpdatedAtAuth,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
-	)
-	return i, err
-}
-
-const getUserByProviderID = `-- name: GetUserByProviderID :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth FROM users
-WHERE user_provider = $1 AND user_provider_user_id = $2
-`
-
-type GetUserByProviderIDParams struct {
-	UserProvider       pgtype.Text `json:"user_provider"`
-	UserProviderUserID pgtype.Text `json:"user_provider_user_id"`
-}
-
-func (q *Queries) GetUserByProviderID(ctx context.Context, arg GetUserByProviderIDParams) (User, error) {
-	row := q.db.QueryRow(ctx, getUserByProviderID, arg.UserProvider, arg.UserProviderUserID)
-	var i User
-	err := row.Scan(
-		&i.UserID,
-		&i.UserUsername,
-		&i.UserPassword,
-		&i.UserFirstname,
-		&i.UserLastname,
-		&i.UserEmail,
-		&i.UserDob,
-		&i.UserGender,
-		&i.UserAccounttype,
-		&i.UserNameAuth,
-		&i.UserAvatarUrl,
-		&i.UserProvider,
-		&i.UserProviderUserID,
-		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
-		&i.UserLastLoginAt,
-		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_username = $1
 `
 
@@ -528,6 +1204,8 @@ func (q *Queries) GetUserByUsername(ctx context.Context, userUsername pgtype.Tex
 		&i.UserUpdatedAtAuth,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -553,6 +1231,39 @@ func (q *Queries) GetUserDefaultAddress(ctx context.Context, userID string) (Use
 		&i.AddressLongitude,
 		&i.AddressLabel,
 		&i.IsDefault,
+	)
+	return i, err
+}
+
+const getUserProviderID = `-- name: GetUserProviderID :one
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
+WHERE user_provider_user_id = $1 LIMIT 1
+`
+
+func (q *Queries) GetUserProviderID(ctx context.Context, userProviderUserID pgtype.Text) (User, error) {
+	row := q.db.QueryRow(ctx, getUserProviderID, userProviderUserID)
+	var i User
+	err := row.Scan(
+		&i.UserID,
+		&i.UserUsername,
+		&i.UserPassword,
+		&i.UserFirstname,
+		&i.UserLastname,
+		&i.UserEmail,
+		&i.UserDob,
+		&i.UserGender,
+		&i.UserAccounttype,
+		&i.UserNameAuth,
+		&i.UserAvatarUrl,
+		&i.UserProvider,
+		&i.UserProviderUserID,
+		&i.UserRawData,
+		&i.UserCreatedAtAuth,
+		&i.UserUpdatedAtAuth,
+		&i.UserLastLoginAt,
+		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -595,6 +1306,35 @@ func (q *Queries) SetDefaultAddress(ctx context.Context, arg SetDefaultAddressPa
 	return err
 }
 
+const unlinkGoogleAccount = `-- name: UnlinkGoogleAccount :exec
+UPDATE users
+SET 
+  user_name_auth = NULL,
+  user_provider = NULL,
+  user_provider_user_id = NULL,
+  user_avatar_url = NULL,   -- Clear the avatar linked to Google
+  user_raw_data = NULL,     -- Clear the raw data from Google
+  user_updated_at_auth = NOW()
+WHERE 
+  user_id = $1
+`
+
+func (q *Queries) UnlinkGoogleAccount(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, unlinkGoogleAccount, userID)
+	return err
+}
+
+const updateOTPAttempts = `-- name: UpdateOTPAttempts :exec
+UPDATE otp_codes
+SET otp_attempts = otp_attempts + 1
+WHERE otp_id = $1
+`
+
+func (q *Queries) UpdateOTPAttempts(ctx context.Context, otpID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, updateOTPAttempts, otpID)
+	return err
+}
+
 const updateRefreshTokenReplacement = `-- name: UpdateRefreshTokenReplacement :exec
 UPDATE users_refresh_tokens
 SET replaced_by_token_id = $2
@@ -627,16 +1367,16 @@ RETURNING address_id, user_id, address_line1, address_line2, address_city, addre
 `
 
 type UpdateUserAddressParams struct {
-	AddressID         int64          `json:"address_id"`
-	UserID            string         `json:"user_id"`
-	AddressLine1      string         `json:"address_line1"`
-	AddressLine2      pgtype.Text    `json:"address_line2"`
-	AddressCity       string         `json:"address_city"`
-	AddressProvince   pgtype.Text    `json:"address_province"`
-	AddressPostalcode pgtype.Text    `json:"address_postalcode"`
-	AddressLatitude   pgtype.Numeric `json:"address_latitude"`
-	AddressLongitude  pgtype.Numeric `json:"address_longitude"`
-	AddressLabel      pgtype.Text    `json:"address_label"`
+	AddressID         int64         `json:"address_id"`
+	UserID            string        `json:"user_id"`
+	AddressLine1      string        `json:"address_line1"`
+	AddressLine2      pgtype.Text   `json:"address_line2"`
+	AddressCity       string        `json:"address_city"`
+	AddressProvince   pgtype.Text   `json:"address_province"`
+	AddressPostalcode pgtype.Text   `json:"address_postalcode"`
+	AddressLatitude   pgtype.Float8 `json:"address_latitude"`
+	AddressLongitude  pgtype.Float8 `json:"address_longitude"`
+	AddressLabel      pgtype.Text   `json:"address_label"`
 }
 
 func (q *Queries) UpdateUserAddress(ctx context.Context, arg UpdateUserAddressParams) (UserAddress, error) {
@@ -669,6 +1409,60 @@ func (q *Queries) UpdateUserAddress(ctx context.Context, arg UpdateUserAddressPa
 	return i, err
 }
 
+const updateUserEmail = `-- name: UpdateUserEmail :exec
+UPDATE users
+SET user_email = $2,
+    user_updated_at_auth = NOW()
+WHERE user_id = $1
+`
+
+type UpdateUserEmailParams struct {
+	UserID    string      `json:"user_id"`
+	UserEmail pgtype.Text `json:"user_email"`
+}
+
+func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error {
+	_, err := q.db.Exec(ctx, updateUserEmail, arg.UserID, arg.UserEmail)
+	return err
+}
+
+const updateUserGoogleLink = `-- name: UpdateUserGoogleLink :exec
+UPDATE users
+SET 
+  user_name_auth = $1,
+  user_avatar_url = $2,
+  user_provider = $3,
+  user_provider_user_id = $4,
+  user_raw_data = $5,
+  user_email_auth = $6,
+  user_updated_at_auth = NOW()
+WHERE 
+  user_id = $7
+`
+
+type UpdateUserGoogleLinkParams struct {
+	UserNameAuth       pgtype.Text `json:"user_name_auth"`
+	UserAvatarUrl      pgtype.Text `json:"user_avatar_url"`
+	UserProvider       pgtype.Text `json:"user_provider"`
+	UserProviderUserID pgtype.Text `json:"user_provider_user_id"`
+	UserRawData        []byte      `json:"user_raw_data"`
+	UserEmailAuth      pgtype.Text `json:"user_email_auth"`
+	UserID             string      `json:"user_id"`
+}
+
+func (q *Queries) UpdateUserGoogleLink(ctx context.Context, arg UpdateUserGoogleLinkParams) error {
+	_, err := q.db.Exec(ctx, updateUserGoogleLink,
+		arg.UserNameAuth,
+		arg.UserAvatarUrl,
+		arg.UserProvider,
+		arg.UserProviderUserID,
+		arg.UserRawData,
+		arg.UserEmailAuth,
+		arg.UserID,
+	)
+	return err
+}
+
 const updateUserLastLogin = `-- name: UpdateUserLastLogin :exec
 UPDATE users
 SET user_last_login_at = CURRENT_TIMESTAMP
@@ -677,6 +1471,23 @@ WHERE user_id = $1
 
 func (q *Queries) UpdateUserLastLogin(ctx context.Context, userID string) error {
 	_, err := q.db.Exec(ctx, updateUserLastLogin, userID)
+	return err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users
+SET user_password = $2,
+    user_updated_at_auth = NOW()
+WHERE user_id = $1
+`
+
+type UpdateUserPasswordParams struct {
+	UserID       string      `json:"user_id"`
+	UserPassword pgtype.Text `json:"user_password"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.UserID, arg.UserPassword)
 	return err
 }
 
@@ -689,7 +1500,7 @@ SET
     user_dob = COALESCE($5, user_dob),
     user_gender = COALESCE($6, user_gender)
 WHERE user_id = $1
-RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth
+RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
 type UpdateUserProfileParams struct {
@@ -730,8 +1541,27 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.UserUpdatedAtAuth,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
+}
+
+const updateUserUsername = `-- name: UpdateUserUsername :exec
+UPDATE users
+SET user_username = $2,
+    user_updated_at_auth = NOW()
+WHERE user_id = $1
+`
+
+type UpdateUserUsernameParams struct {
+	UserID       string      `json:"user_id"`
+	UserUsername pgtype.Text `json:"user_username"`
+}
+
+func (q *Queries) UpdateUserUsername(ctx context.Context, arg UpdateUserUsernameParams) error {
+	_, err := q.db.Exec(ctx, updateUserUsername, arg.UserID, arg.UserUsername)
+	return err
 }
 
 const upsertOAuthUser = `-- name: UpsertOAuthUser :one
@@ -759,7 +1589,7 @@ DO UPDATE SET
     user_raw_data = EXCLUDED.user_raw_data,
     user_last_login_at = EXCLUDED.user_last_login_at, -- Menggunakan nilai login time dari EXCLUDED ($8)
     user_updated_at_auth = CURRENT_TIMESTAMP -- Menggunakan CURRENT_TIMESTAMP untuk mencatat pembaruan skema auth
-RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth
+RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
 type UpsertOAuthUserParams struct {
@@ -811,6 +1641,42 @@ func (q *Queries) UpsertOAuthUser(ctx context.Context, arg UpsertOAuthUserParams
 		&i.UserUpdatedAtAuth,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
+		&i.IsEmailVerified,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
+}
+
+const verifyOTPAtomic = `-- name: VerifyOTPAtomic :one
+SELECT verify_otp_atomic FROM verify_otp_atomic($1, $2)
+`
+
+type VerifyOTPAtomicParams struct {
+	PEntityID    pgtype.UUID `json:"p_entity_id"`
+	PMaxAttempts int32       `json:"p_max_attempts"`
+}
+
+func (q *Queries) VerifyOTPAtomic(ctx context.Context, arg VerifyOTPAtomicParams) (interface{}, error) {
+	row := q.db.QueryRow(ctx, verifyOTPAtomic, arg.PEntityID, arg.PMaxAttempts)
+	var verify_otp_atomic interface{}
+	err := row.Scan(&verify_otp_atomic)
+	return verify_otp_atomic, err
+}
+
+const verifyUserEmail = `-- name: VerifyUserEmail :exec
+UPDATE users
+SET is_email_verified = $2,
+    email_verified_at = $3
+WHERE user_id = $1
+`
+
+type VerifyUserEmailParams struct {
+	UserID          string             `json:"user_id"`
+	IsEmailVerified pgtype.Bool        `json:"is_email_verified"`
+	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
+}
+
+func (q *Queries) VerifyUserEmail(ctx context.Context, arg VerifyUserEmailParams) error {
+	_, err := q.db.Exec(ctx, verifyUserEmail, arg.UserID, arg.IsEmailVerified, arg.EmailVerifiedAt)
+	return err
 }

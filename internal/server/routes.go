@@ -7,14 +7,17 @@ import (
 	"text/template"
 
 	"fmt"
-	"log"
+	//"log"
 	"time"
 
+	user "Glupulse_V0.2/internal/User"
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/rs/zerolog/log"
 )
 
 // TemplateRenderer is a custom html/template renderer for Echo framework
@@ -42,7 +45,6 @@ func (s *Server) RegisterRoutes() http.Handler {
 	}))
 
 	renderer := &TemplateRenderer{
-		// FIX: Include login.html and register.html in glob pattern if they are in web/
 		templates: template.Must(template.ParseGlob("web/*.html")),
 	}
 	e.Renderer = renderer
@@ -52,6 +54,8 @@ func (s *Server) RegisterRoutes() http.Handler {
 	e.POST("/login", auth.LoginHandler)   // POST route for traditional login (mobile/web API)
 	e.POST("/verify-otp", auth.VerifyOTPHandler)
 	e.POST("/resend-otp", auth.ResendOTPHandler)
+	e.POST("/password/reset/request", auth.RequestPasswordResetHandler)
+	e.POST("/password/reset/complete", auth.ResetPasswordHandler)
 
 	// Public routes (Web pages)
 	e.GET("/health", s.healthHandler)
@@ -66,19 +70,34 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	// Mobile auth route - Android/iOS Google Sign-In
 	e.POST("/auth/mobile/google", auth.MobileGoogleAuthHandler)
+	e.POST("/auth/mobile/google/link", auth.LinkGoogleAccountHandler)
 
 	// Refresh token endpoint (both web and mobile)
 	e.POST("/auth/refresh", auth.RefreshHandler)
+
+	e.GET("/auth/verify-email-change", user.VerifyEmailChangeHandler)
+
+	e.Use(LoggerMiddleware)
 
 	// Protected routes
 	protected := e.Group("")
 	protected.Use(auth.JwtAuthMiddleware)
 
 	// Split protected welcome routes
-	protected.GET("/welcome/web", s.welcomeWebHandler)       // Web client landing page
-	protected.GET("/welcome/mobile", s.welcomeMobileHandler) // Mobile client JSON response
-
+	protected.GET("/welcome/web", s.welcomeWebHandler)
+	protected.GET("/welcome/mobile", s.welcomeMobileHandler)
 	protected.GET("/logout", auth.LogoutHandler)
+
+	// User's functions Routes
+	protected.GET("/profile", user.GetUserProfileHandler)
+	protected.PUT("/profile", user.UpdateUserProfileHandler)
+	protected.PUT("/profile/password", user.UpdatePasswordHandler)
+	protected.POST("/profile/update-email", user.RequestEmailChangeHandler)
+	protected.PUT("/profile/username", user.UpdateUsernameHandler)
+	protected.DELETE("/profile", user.DeleteAccountHandler)
+	protected.POST("/profile/health", user.InputHealthDataHandler)
+	protected.POST("/auth/mobile/google/link", auth.LinkGoogleAccountHandler)
+	protected.POST("/auth/mobile/google/unlink", auth.UnlinkGoogleAccountHandler)
 
 	return e
 }
@@ -93,7 +112,7 @@ func (s *Server) websocketHandler(c echo.Context) error {
 	socket, err := websocket.Accept(w, r, nil)
 
 	if err != nil {
-		log.Printf("could not open websocket: %v", err)
+		log.Info().Msgf("could not open websocket: %v", err)
 		_, _ = w.Write([]byte("could not open websocket"))
 		w.WriteHeader(http.StatusInternalServerError)
 		return nil
@@ -131,24 +150,33 @@ func (s *Server) OTPHandler(c echo.Context) error {
 
 // getUserDataFromContext extracts and combines user and Goth raw data from the context.
 func getUserDataFromContext(c echo.Context) (map[string]interface{}, error) {
-	// The type from the context is *database.User
-	user, ok := c.Get("user").(*database.User)
+	// Try to get user from context
+	userInterface := c.Get("user")
+	if userInterface == nil {
+		return nil, fmt.Errorf("user not found in context")
+	}
+
+	user, ok := userInterface.(*database.User)
 	if !ok {
-		return nil, fmt.Errorf("could not get user from context")
+		return nil, fmt.Errorf("user context has wrong type: %T", userInterface)
 	}
 
 	// Create a map to hold the unmarshalled raw JSON data from OAuth
 	var rawGothData map[string]interface{}
 
 	// Check if raw data exists and try to unmarshal it
-	if user.UserRawData != nil {
+	if len(user.UserRawData) > 0 {
 		if err := json.Unmarshal(user.UserRawData, &rawGothData); err != nil {
-			log.Printf("welcomeHandler: could not unmarshal raw user data: %v", err)
-			// Continue even if unmarshalling fails
+			log.Info().Msgf("getUserDataFromContext: could not unmarshal raw user data: %v", err)
+			// Continue even if unmarshalling fails - set empty map
+			rawGothData = make(map[string]interface{})
 		}
+	} else {
+		// No raw data (traditional user) - set empty map
+		rawGothData = make(map[string]interface{})
 	}
 
-	// Create a combined response map to send all relevant data.
+	// Create a combined response map to send all relevant data
 	response := map[string]interface{}{
 		"user":     user,
 		"gothData": rawGothData,
@@ -161,7 +189,7 @@ func getUserDataFromContext(c echo.Context) (map[string]interface{}, error) {
 func (s *Server) welcomeWebHandler(c echo.Context) error {
 	data, err := getUserDataFromContext(c)
 	if err != nil {
-		log.Println("welcomeWebHandler:", err)
+		log.Error().Err(err).Msg("welcomeWebHandler")
 		return c.Redirect(http.StatusTemporaryRedirect, "/login")
 	}
 
@@ -173,10 +201,27 @@ func (s *Server) welcomeWebHandler(c echo.Context) error {
 func (s *Server) welcomeMobileHandler(c echo.Context) error {
 	data, err := getUserDataFromContext(c)
 	if err != nil {
-		log.Println("welcomeMobileHandler:", err)
+		log.Error().Err(err).Msg("welcomeWebHandler")
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized or session expired"})
 	}
 
 	// Return the combined data as JSON for the mobile client
 	return c.JSON(http.StatusOK, data)
+}
+
+func LoggerMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		requestID := c.Request().Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+		c.Set("request_id", requestID)
+		c.Response().Header().Set("X-Request-ID", requestID)
+
+		logger := log.With().Str("request_id", requestID).Logger()
+
+		c.Set("logger", &logger)
+
+		return next(c)
+	}
 }

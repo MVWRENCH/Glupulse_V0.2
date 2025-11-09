@@ -333,6 +333,69 @@ $$;
 
 ALTER FUNCTION public.update_updated_at_column() OWNER TO postgres;
 
+--
+-- Name: verify_otp_atomic(uuid, integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.verify_otp_atomic(p_entity_id uuid, p_max_attempts integer) RETURNS TABLE(secret text, is_valid boolean, attempts integer, status text)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_record RECORD;
+BEGIN
+    -- Single atomic operation
+    UPDATE otp_codes
+    SET otp_attempts = CASE 
+        WHEN expires_at < NOW() THEN otp_attempts  -- Don't increment if expired
+        WHEN otp_attempts >= p_max_attempts THEN otp_attempts
+        ELSE otp_attempts + 1
+    END
+    WHERE entity_id = p_entity_id
+    RETURNING 
+        otp_secret,
+        otp_attempts,
+        expires_at,
+        otp_id
+    INTO v_record;
+    
+    IF NOT FOUND THEN
+        -- Return dummy data for not found
+        RETURN QUERY SELECT 
+            ''::TEXT as secret,
+            FALSE as is_valid,
+            0 as attempts,
+            'not_found'::TEXT as status;
+        RETURN;
+    END IF;
+    
+    -- Check conditions
+    IF v_record.expires_at < NOW() THEN
+        RETURN QUERY SELECT 
+            v_record.otp_secret,
+            FALSE,
+            v_record.otp_attempts,
+            'expired'::TEXT;
+    ELSIF v_record.otp_attempts > p_max_attempts THEN
+        -- Delete on max attempts
+        DELETE FROM otp_codes WHERE otp_id = v_record.otp_id;
+        RETURN QUERY SELECT 
+            v_record.otp_secret,
+            FALSE,
+            v_record.otp_attempts,
+            'max_attempts'::TEXT;
+    ELSE
+        RETURN QUERY SELECT 
+            v_record.otp_secret,
+            TRUE,
+            v_record.otp_attempts,
+            'active'::TEXT;
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION public.verify_otp_atomic(p_entity_id uuid, p_max_attempts integer) OWNER TO postgres;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -976,6 +1039,26 @@ CREATE TABLE public.glucose_manual (
 ALTER TABLE public.glucose_manual OWNER TO postgres;
 
 --
+-- Name: logs_auth; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.logs_auth (
+    log_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id character varying(255),
+    log_category character varying(50) NOT NULL,
+    log_action character varying(100) NOT NULL,
+    log_message text NOT NULL,
+    log_level character varying(20) DEFAULT 'info'::character varying,
+    ip_address inet,
+    user_agent text,
+    metadata jsonb,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.logs_auth OWNER TO postgres;
+
+--
 -- Name: message_attachments; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1052,6 +1135,47 @@ ALTER SEQUENCE public.notifications_notification_id_seq OWNER TO postgres;
 
 ALTER SEQUENCE public.notifications_notification_id_seq OWNED BY public.notifications.notification_id;
 
+
+--
+-- Name: otp_codes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.otp_codes (
+    otp_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    entity_id uuid NOT NULL,
+    entity_role character varying(20) NOT NULL,
+    otp_secret text NOT NULL,
+    otp_purpose character varying(50) NOT NULL,
+    otp_attempts integer DEFAULT 0 NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    deletion_scheduled_at timestamp with time zone,
+    CONSTRAINT otp_codes_entity_role_check CHECK (((entity_role)::text = ANY ((ARRAY['user'::character varying, 'doctor'::character varying, 'seller'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.otp_codes OWNER TO postgres;
+
+--
+-- Name: pending_registrations; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.pending_registrations (
+    pending_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    entity_role character varying(20) NOT NULL,
+    email character varying(255) NOT NULL,
+    username character varying(100),
+    hashed_password text NOT NULL,
+    first_name text,
+    last_name text,
+    raw_data jsonb,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT pending_registrations_entity_role_check CHECK (((entity_role)::text = ANY ((ARRAY['user'::character varying, 'doctor'::character varying, 'seller'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.pending_registrations OWNER TO postgres;
 
 --
 -- Name: seller; Type: TABLE; Schema: public; Owner: postgres
@@ -1169,14 +1293,14 @@ ALTER SEQUENCE public.seller_reviews_review_id_seq OWNED BY public.seller_review
 
 CREATE TABLE public.user_addresses (
     address_id bigint NOT NULL,
-    user_id character varying(20) NOT NULL,
+    user_id character varying(36) NOT NULL,
     address_line1 character varying(255) NOT NULL,
     address_line2 character varying(255) DEFAULT NULL::character varying,
     address_city character varying(100) NOT NULL,
     address_province character varying(100) DEFAULT NULL::character varying,
     address_postalcode character varying(20) DEFAULT NULL::character varying,
-    address_latitude numeric(10,7) DEFAULT NULL::numeric,
-    address_longitude numeric(10,7) DEFAULT NULL::numeric,
+    address_latitude double precision DEFAULT NULL::numeric,
+    address_longitude double precision DEFAULT NULL::numeric,
     address_label character varying(50) DEFAULT NULL::character varying,
     is_default boolean DEFAULT false
 );
@@ -1238,6 +1362,22 @@ CREATE TABLE public.user_cartitems (
 ALTER TABLE public.user_cartitems OWNER TO postgres;
 
 --
+-- Name: user_email_change_requests; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.user_email_change_requests (
+    request_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id character varying(100) NOT NULL,
+    new_email character varying(255) NOT NULL,
+    verification_token text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.user_email_change_requests OWNER TO postgres;
+
+--
 -- Name: user_healthdata; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1249,8 +1389,7 @@ CREATE TABLE public.user_healthdata (
     healthdata_height numeric(5,2) DEFAULT NULL::numeric,
     healthdata_bmi numeric(5,2) DEFAULT NULL::numeric,
     healthdata_bloodpressure character varying(20) DEFAULT NULL::character varying,
-    healthdata_heartrate bigint,
-    healthdata_glucose numeric(5,2) DEFAULT NULL::numeric,
+    healthdata_heartrate integer,
     healthdata_notes text,
     recorded_by character varying(50) NOT NULL
 );
@@ -1355,7 +1494,7 @@ ALTER TABLE public.user_vip OWNER TO postgres;
 --
 
 CREATE TABLE public.users (
-    user_id character varying(36) NOT NULL,
+    user_id character varying(100) NOT NULL,
     user_username character varying(50),
     user_password character varying(255),
     user_firstname character varying(50),
@@ -1372,7 +1511,9 @@ CREATE TABLE public.users (
     user_created_at_auth timestamp with time zone,
     user_updated_at_auth timestamp with time zone,
     user_last_login_at timestamp with time zone,
-    user_email_auth character varying(255)
+    user_email_auth character varying(255),
+    is_email_verified boolean DEFAULT false,
+    email_verified_at timestamp with time zone
 );
 
 
@@ -1425,6 +1566,13 @@ COMMENT ON COLUMN public.users.user_provider_user_id IS 'User ID from OAuth prov
 --
 
 COMMENT ON COLUMN public.users.user_email_auth IS 'Email from OAuth provider (may differ from primary email)';
+
+
+--
+-- Name: COLUMN users.is_email_verified; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.users.is_email_verified IS 'Whether user has verified their email via OTP';
 
 
 --
@@ -1909,11 +2057,67 @@ ALTER TABLE ONLY public.user_vip
 
 
 --
+-- Name: logs_auth logs_auth_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.logs_auth
+    ADD CONSTRAINT logs_auth_pkey PRIMARY KEY (log_id);
+
+
+--
+-- Name: otp_codes otp_codes_entity_id_entity_role_otp_purpose_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.otp_codes
+    ADD CONSTRAINT otp_codes_entity_id_entity_role_otp_purpose_key UNIQUE (entity_id, entity_role, otp_purpose);
+
+
+--
+-- Name: otp_codes otp_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.otp_codes
+    ADD CONSTRAINT otp_codes_pkey PRIMARY KEY (otp_id);
+
+
+--
+-- Name: pending_registrations pending_registrations_email_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pending_registrations
+    ADD CONSTRAINT pending_registrations_email_key UNIQUE (email);
+
+
+--
+-- Name: pending_registrations pending_registrations_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.pending_registrations
+    ADD CONSTRAINT pending_registrations_pkey PRIMARY KEY (pending_id);
+
+
+--
 -- Name: users uq_user_oauth_provider; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT uq_user_oauth_provider UNIQUE (user_provider, user_provider_user_id);
+
+
+--
+-- Name: user_email_change_requests user_email_change_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_email_change_requests
+    ADD CONSTRAINT user_email_change_requests_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: user_email_change_requests user_email_change_requests_verification_token_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_email_change_requests
+    ADD CONSTRAINT user_email_change_requests_verification_token_key UNIQUE (verification_token);
 
 
 --
@@ -2316,6 +2520,97 @@ CREATE INDEX idx_17566_user_id ON public.user_vip USING btree (user_id);
 
 
 --
+-- Name: idx_email_change_token; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_email_change_token ON public.user_email_change_requests USING btree (verification_token);
+
+
+--
+-- Name: idx_logs_auth_category; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_logs_auth_category ON public.logs_auth USING btree (log_category);
+
+
+--
+-- Name: idx_logs_auth_created_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_logs_auth_created_at ON public.logs_auth USING btree (created_at DESC);
+
+
+--
+-- Name: idx_logs_auth_level; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_logs_auth_level ON public.logs_auth USING btree (log_level);
+
+
+--
+-- Name: idx_logs_auth_user_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_logs_auth_user_id ON public.logs_auth USING btree (user_id);
+
+
+--
+-- Name: idx_otp_codes_created_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_otp_codes_created_at ON public.otp_codes USING btree (entity_id, created_at DESC);
+
+
+--
+-- Name: idx_otp_codes_deletion_scheduled; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_otp_codes_deletion_scheduled ON public.otp_codes USING btree (deletion_scheduled_at) WHERE (deletion_scheduled_at IS NOT NULL);
+
+
+--
+-- Name: idx_otp_codes_expires_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_otp_codes_expires_at ON public.otp_codes USING btree (expires_at);
+
+
+--
+-- Name: idx_pending_reg_email; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pending_reg_email ON public.pending_registrations USING btree (email);
+
+
+--
+-- Name: idx_pending_reg_expires; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pending_reg_expires ON public.pending_registrations USING btree (expires_at);
+
+
+--
+-- Name: idx_pending_registrations_email; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pending_registrations_email ON public.pending_registrations USING btree (email);
+
+
+--
+-- Name: idx_pending_registrations_expires_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pending_registrations_expires_at ON public.pending_registrations USING btree (expires_at);
+
+
+--
+-- Name: idx_pending_registrations_username; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_pending_registrations_username ON public.pending_registrations USING btree (username);
+
+
+--
 -- Name: idx_refresh_tokens_expires_at; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -2376,6 +2671,13 @@ CREATE INDEX idx_users_provider ON public.users USING btree (user_provider, user
 --
 
 CREATE INDEX idx_users_provider_user_id ON public.users_auth USING btree (provider, provider_user_id);
+
+
+--
+-- Name: idx_users_unverified; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_users_unverified ON public.users USING btree (is_email_verified, user_created_at_auth) WHERE (is_email_verified = false);
 
 
 --
@@ -2638,6 +2940,14 @@ ALTER TABLE ONLY public.seller_reviews
 
 ALTER TABLE ONLY public.user_cartitems
     ADD CONSTRAINT user_cartitems_ibfk_2 FOREIGN KEY (food_id) REFERENCES public.food(food_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
+
+
+--
+-- Name: user_email_change_requests user_email_change_requests_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_email_change_requests
+    ADD CONSTRAINT user_email_change_requests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
 
 
 --
