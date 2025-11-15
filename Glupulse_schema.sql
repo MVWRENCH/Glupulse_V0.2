@@ -206,6 +206,31 @@ CREATE TYPE public.users_user_gender AS ENUM (
 ALTER TYPE public.users_user_gender OWNER TO postgres;
 
 --
+-- Name: ensure_one_default_address(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.ensure_one_default_address() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- ...
+    -- If setting a new default, unset others
+    IF NEW.is_default = true THEN
+        UPDATE user_addresses 
+        SET is_default = false 
+        WHERE user_id = NEW.user_id 
+        AND address_id != NEW.address_id 
+        AND is_default = true;
+    END IF;
+    
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.ensure_one_default_address() OWNER TO postgres;
+
+--
 -- Name: on_update_current_timestamp_chat_conversations(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -332,6 +357,22 @@ $$;
 
 
 ALTER FUNCTION public.update_updated_at_column() OWNER TO postgres;
+
+--
+-- Name: update_user_addresses_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.update_user_addresses_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.update_user_addresses_updated_at() OWNER TO postgres;
 
 --
 -- Name: verify_otp_atomic(uuid, integer); Type: FUNCTION; Schema: public; Owner: postgres
@@ -491,260 +532,6 @@ CREATE TABLE public.chat_messages (
 
 
 ALTER TABLE public.chat_messages OWNER TO postgres;
-
---
--- Name: counter_activity_recommendationitem; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_activity_recommendationitem (
-    counter_date date NOT NULL,
-    counter bigint DEFAULT '1'::bigint
-);
-
-
-ALTER TABLE public.counter_activity_recommendationitem OWNER TO postgres;
-
---
--- Name: counter_activityid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_activityid (
-    counter bigint NOT NULL
-);
-
-
-ALTER TABLE public.counter_activityid OWNER TO postgres;
-
---
--- Name: counter_cartid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_cartid (
-    user_id character varying(20) NOT NULL,
-    date_code date NOT NULL,
-    counter bigint DEFAULT '1'::bigint
-);
-
-
-ALTER TABLE public.counter_cartid OWNER TO postgres;
-
---
--- Name: counter_cartitemid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_cartitemid (
-    user_id character varying(20) NOT NULL,
-    date_code date NOT NULL,
-    counter bigint DEFAULT '1'::bigint
-);
-
-
-ALTER TABLE public.counter_cartitemid OWNER TO postgres;
-
---
--- Name: counter_foodid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_foodid (
-    seller_id character varying(20) NOT NULL,
-    counter_value bigint DEFAULT '0'::bigint
-);
-
-
-ALTER TABLE public.counter_foodid OWNER TO postgres;
-
---
--- Name: counter_foodrecommendationitem; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_foodrecommendationitem (
-    user_id character varying(20) NOT NULL,
-    timestamp_date date DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    counter bigint DEFAULT '0'::bigint
-);
-
-
-ALTER TABLE public.counter_foodrecommendationitem OWNER TO postgres;
-
---
--- Name: counter_glucoseid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_glucoseid (
-    user_id character varying(10) NOT NULL,
-    counter_date date NOT NULL,
-    counter bigint DEFAULT '1'::bigint
-);
-
-
-ALTER TABLE public.counter_glucoseid OWNER TO postgres;
-
---
--- Name: counter_healthdataid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_healthdataid (
-    user_id character varying(20) NOT NULL,
-    date_stamp date NOT NULL,
-    counter bigint DEFAULT '0'::bigint
-);
-
-
-ALTER TABLE public.counter_healthdataid OWNER TO postgres;
-
---
--- Name: counter_id; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_id (
-    registration_date date NOT NULL,
-    counter bigint NOT NULL
-);
-
-
-ALTER TABLE public.counter_id OWNER TO postgres;
-
---
--- Name: counter_orderid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_orderid (
-    user_id character varying(20) NOT NULL,
-    date_code date NOT NULL,
-    counter bigint DEFAULT '1'::bigint
-);
-
-
-ALTER TABLE public.counter_orderid OWNER TO postgres;
-
---
--- Name: counter_transactionid; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.counter_transactionid (
-    payment_date date NOT NULL,
-    user_id character varying(20) NOT NULL,
-    counter bigint DEFAULT '1'::bigint
-);
-
-
-ALTER TABLE public.counter_transactionid OWNER TO postgres;
-
---
--- Name: delivery_log; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.delivery_log (
-    log_id bigint NOT NULL,
-    delivery_id bigint NOT NULL,
-    log_status character varying(50) DEFAULT NULL::character varying,
-    log_message text,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-
-
-ALTER TABLE public.delivery_log OWNER TO postgres;
-
---
--- Name: delivery_log_log_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.delivery_log_log_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.delivery_log_log_id_seq OWNER TO postgres;
-
---
--- Name: delivery_log_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.delivery_log_log_id_seq OWNED BY public.delivery_log.log_id;
-
-
---
--- Name: delivery_orders; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.delivery_orders (
-    delivery_id bigint NOT NULL,
-    order_id character varying(30) NOT NULL,
-    courier_orderid character varying(100) NOT NULL,
-    delivery_status character varying(50) DEFAULT NULL::character varying,
-    delivery_fee bigint,
-    pickup_address text,
-    dropoff_address text,
-    scheduled_time timestamp with time zone,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp with time zone
-);
-
-
-ALTER TABLE public.delivery_orders OWNER TO postgres;
-
---
--- Name: delivery_orders_delivery_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.delivery_orders_delivery_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.delivery_orders_delivery_id_seq OWNER TO postgres;
-
---
--- Name: delivery_orders_delivery_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.delivery_orders_delivery_id_seq OWNED BY public.delivery_orders.delivery_id;
-
-
---
--- Name: delivery_recipients; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.delivery_recipients (
-    recipient_id bigint NOT NULL,
-    delivery_id bigint NOT NULL,
-    recipient_name character varying(100) DEFAULT NULL::character varying,
-    recipient_phone character varying(20) DEFAULT NULL::character varying,
-    recipient_address text,
-    recipient_latitude numeric(10,7) DEFAULT NULL::numeric,
-    recipient_longitude numeric(10,7) DEFAULT NULL::numeric,
-    recipient_notes text
-);
-
-
-ALTER TABLE public.delivery_recipients OWNER TO postgres;
-
---
--- Name: delivery_recipients_recipient_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.delivery_recipients_recipient_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.delivery_recipients_recipient_id_seq OWNER TO postgres;
-
---
--- Name: delivery_recipients_recipient_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.delivery_recipients_recipient_id_seq OWNED BY public.delivery_recipients.recipient_id;
-
 
 --
 -- Name: doctor; Type: TABLE; Schema: public; Owner: postgres
@@ -926,28 +713,6 @@ ALTER SEQUENCE public.doctor_reviews_review_id_seq OWNED BY public.doctor_review
 
 
 --
--- Name: food; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.food (
-    food_id character varying(40) NOT NULL,
-    seller_id character varying(20) DEFAULT NULL::character varying,
-    food_categoryid character varying(10) NOT NULL,
-    food_name character varying(100) NOT NULL,
-    food_price bigint NOT NULL,
-    food_calories integer,
-    food_carbohydrate double precision,
-    food_proteins double precision,
-    food_fat double precision,
-    food_sugar double precision,
-    food_ingredients character varying(255) DEFAULT NULL::character varying,
-    food_description text
-);
-
-
-ALTER TABLE public.food OWNER TO postgres;
-
---
 -- Name: food_category; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1010,33 +775,64 @@ CREATE TABLE public.food_recommendation (
 ALTER TABLE public.food_recommendation OWNER TO postgres;
 
 --
--- Name: food_recommendation_items; Type: TABLE; Schema: public; Owner: postgres
+-- Name: foods; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.food_recommendation_items (
-    item_id character varying(30) NOT NULL,
-    recommendation_id character varying(40) NOT NULL,
-    food_id character varying(30) NOT NULL,
-    timestamp_date date DEFAULT CURRENT_TIMESTAMP NOT NULL
+CREATE TABLE public.foods (
+    food_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    seller_id uuid NOT NULL,
+    food_name text NOT NULL,
+    description text,
+    price numeric(10,2) NOT NULL,
+    currency character varying(3) DEFAULT 'IDR'::character varying NOT NULL,
+    photo_url text,
+    thumbnail_url text,
+    is_available boolean DEFAULT true,
+    stock_count integer DEFAULT '-1'::integer,
+    tags text[],
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    serving_size_g numeric(10,2),
+    calories numeric(10,2),
+    protein_g numeric(10,2),
+    fat_g numeric(10,2),
+    carbohydrate_g numeric(10,2),
+    dietary_fiber_g numeric(10,2),
+    sugars_g numeric(10,2),
+    saturated_fat_g numeric(10,2),
+    polyunsaturated_fat_g numeric(10,2),
+    monounsaturated_fat_g numeric(10,2),
+    trans_fat_g numeric(10,2),
+    cholesterol_mg numeric(10,2),
+    sodium_mg numeric(10,2),
+    potassium_mg numeric(10,2),
+    water_g numeric(10,2),
+    vitamin_a_mcg numeric(10,2),
+    vitamin_c_mg numeric(10,2),
+    vitamin_d_mcg numeric(10,2),
+    vitamin_e_mg numeric(10,2),
+    vitamin_k_mcg numeric(10,2),
+    thiamin_mg numeric(10,2),
+    riboflavin_mg numeric(10,2),
+    niacin_mg numeric(10,2),
+    vitamin_b5_mg numeric(10,2),
+    vitamin_b6_mg numeric(10,2),
+    folate_mcg numeric(10,2),
+    vitamin_b12_mcg numeric(10,2),
+    calcium_mg numeric(10,2),
+    copper_mg numeric(10,2),
+    iron_mg numeric(10,2),
+    magnesium_mg numeric(10,2),
+    manganese_mg numeric(10,2),
+    phosphorus_mg numeric(10,2),
+    selenium_mcg numeric(10,2),
+    zinc_mg numeric(10,2),
+    caffeine_mg numeric(10,2),
+    nutrition_density numeric(10,2)
 );
 
 
-ALTER TABLE public.food_recommendation_items OWNER TO postgres;
-
---
--- Name: glucose_manual; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.glucose_manual (
-    glucose_id character varying(30) NOT NULL,
-    user_id character varying(20) NOT NULL,
-    glucose_inputdate timestamp with time zone,
-    glucose_value double precision NOT NULL,
-    glucose_level bigint NOT NULL
-);
-
-
-ALTER TABLE public.glucose_manual OWNER TO postgres;
+ALTER TABLE public.foods OWNER TO postgres;
 
 --
 -- Name: logs_auth; Type: TABLE; Schema: public; Owner: postgres
@@ -1097,46 +893,6 @@ ALTER SEQUENCE public.message_attachments_attachment_id_seq OWNED BY public.mess
 
 
 --
--- Name: notifications; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.notifications (
-    notification_id bigint NOT NULL,
-    user_id character varying(20) DEFAULT NULL::character varying,
-    seller_id character varying(20) DEFAULT NULL::character varying,
-    doctor_id character varying(20) DEFAULT NULL::character varying,
-    message text NOT NULL,
-    type character varying(50) NOT NULL,
-    is_read boolean DEFAULT false,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    link character varying(255) DEFAULT NULL::character varying
-);
-
-
-ALTER TABLE public.notifications OWNER TO postgres;
-
---
--- Name: notifications_notification_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.notifications_notification_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.notifications_notification_id_seq OWNER TO postgres;
-
---
--- Name: notifications_notification_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.notifications_notification_id_seq OWNED BY public.notifications.notification_id;
-
-
---
 -- Name: otp_codes; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1178,188 +934,89 @@ CREATE TABLE public.pending_registrations (
 ALTER TABLE public.pending_registrations OWNER TO postgres;
 
 --
--- Name: seller; Type: TABLE; Schema: public; Owner: postgres
+-- Name: seller_profiles; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.seller (
-    seller_id character varying(20) NOT NULL,
-    seller_username character varying(50) NOT NULL,
-    seller_password character varying(255) NOT NULL,
-    seller_name character varying(50) NOT NULL,
-    seller_businessname character varying(50) NOT NULL,
-    seller_email character varying(50) NOT NULL,
-    seller_phonenumber bigint NOT NULL,
+CREATE TABLE public.seller_profiles (
+    seller_username character varying(50) CONSTRAINT seller_seller_username_not_null NOT NULL,
+    seller_password character varying(255) CONSTRAINT seller_seller_password_not_null NOT NULL,
+    seller_name character varying(50) CONSTRAINT seller_seller_name_not_null NOT NULL,
+    seller_businessname character varying(50) CONSTRAINT seller_seller_businessname_not_null NOT NULL,
+    seller_email character varying(50) CONSTRAINT seller_seller_email_not_null NOT NULL,
+    seller_phonenumber bigint CONSTRAINT seller_seller_phonenumber_not_null NOT NULL,
     seller_province character varying(50) DEFAULT NULL::character varying,
     seller_city character varying(50) DEFAULT NULL::character varying,
     seller_district character varying(50) DEFAULT NULL::character varying,
     seller_gmapslink character varying(50) DEFAULT NULL::character varying,
     seller_lat character varying(50) DEFAULT NULL::character varying,
     seller_long character varying(50) DEFAULT NULL::character varying,
-    seller_address text NOT NULL,
+    seller_address text CONSTRAINT seller_seller_address_not_null NOT NULL,
     seller_logopath text,
     seller_bannerpath character varying(255) DEFAULT NULL::character varying,
     seller_joindate date DEFAULT CURRENT_TIMESTAMP,
-    seller_status public.seller_seller_status DEFAULT 'active'::public.seller_seller_status
+    seller_status public.seller_seller_status DEFAULT 'active'::public.seller_seller_status,
+    seller_id uuid CONSTRAINT seller_seller_id_not_null NOT NULL
 );
 
 
-ALTER TABLE public.seller OWNER TO postgres;
-
---
--- Name: seller_promotions; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.seller_promotions (
-    promotion_id bigint NOT NULL,
-    promotion_code character varying(50) NOT NULL,
-    promotion_type public.seller_promotions_promotion_type NOT NULL,
-    promotion_value bigint NOT NULL,
-    minimum_order bigint DEFAULT '0'::bigint,
-    start_date timestamp with time zone NOT NULL,
-    end_date timestamp with time zone NOT NULL,
-    usage_limit bigint,
-    per_user_limit bigint,
-    applies_to_sellerid character varying(20) DEFAULT NULL::character varying,
-    applies_to_foodid character varying(40) DEFAULT NULL::character varying,
-    applies_to_categoryid character varying(10) DEFAULT NULL::character varying,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone
-);
-
-
-ALTER TABLE public.seller_promotions OWNER TO postgres;
-
---
--- Name: seller_promotions_promotion_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.seller_promotions_promotion_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.seller_promotions_promotion_id_seq OWNER TO postgres;
-
---
--- Name: seller_promotions_promotion_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.seller_promotions_promotion_id_seq OWNED BY public.seller_promotions.promotion_id;
-
-
---
--- Name: seller_reviews; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.seller_reviews (
-    review_id bigint NOT NULL,
-    seller_id character varying(20) NOT NULL,
-    user_id character varying(20) NOT NULL,
-    review_rating smallint NOT NULL,
-    review_comment text,
-    review_date date DEFAULT CURRENT_TIMESTAMP
-);
-
-
-ALTER TABLE public.seller_reviews OWNER TO postgres;
-
---
--- Name: seller_reviews_review_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.seller_reviews_review_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.seller_reviews_review_id_seq OWNER TO postgres;
-
---
--- Name: seller_reviews_review_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.seller_reviews_review_id_seq OWNED BY public.seller_reviews.review_id;
-
+ALTER TABLE public.seller_profiles OWNER TO postgres;
 
 --
 -- Name: user_addresses; Type: TABLE; Schema: public; Owner: postgres
 --
 
 CREATE TABLE public.user_addresses (
-    address_id bigint NOT NULL,
-    user_id character varying(36) NOT NULL,
-    address_line1 character varying(255) NOT NULL,
-    address_line2 character varying(255) DEFAULT NULL::character varying,
-    address_city character varying(100) NOT NULL,
-    address_province character varying(100) DEFAULT NULL::character varying,
-    address_postalcode character varying(20) DEFAULT NULL::character varying,
-    address_latitude double precision DEFAULT NULL::numeric,
-    address_longitude double precision DEFAULT NULL::numeric,
-    address_label character varying(50) DEFAULT NULL::character varying,
-    is_default boolean DEFAULT false
+    address_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id text NOT NULL,
+    address_line1 text NOT NULL,
+    address_line2 text,
+    address_city text NOT NULL,
+    address_province text,
+    address_postalcode text,
+    address_latitude double precision,
+    address_longitude double precision,
+    address_label text DEFAULT 'Home'::text NOT NULL,
+    recipient_name text,
+    recipient_phone text,
+    delivery_notes text,
+    is_default boolean DEFAULT false NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
 ALTER TABLE public.user_addresses OWNER TO postgres;
 
 --
--- Name: user_addresses_address_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+-- Name: user_cart_items; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE SEQUENCE public.user_addresses_address_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.user_addresses_address_id_seq OWNER TO postgres;
-
---
--- Name: user_addresses_address_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.user_addresses_address_id_seq OWNED BY public.user_addresses.address_id;
-
-
---
--- Name: user_cart; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.user_cart (
-    cart_id character varying(30) NOT NULL,
-    user_id character varying(20) DEFAULT NULL::character varying,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    total_price bigint DEFAULT '0'::bigint,
-    cart_status public.user_cart_cart_status DEFAULT 'active'::public.user_cart_cart_status NOT NULL
+CREATE TABLE public.user_cart_items (
+    cart_item_id uuid DEFAULT gen_random_uuid() CONSTRAINT cart_items_cart_item_id_not_null NOT NULL,
+    cart_id uuid CONSTRAINT cart_items_cart_id_not_null NOT NULL,
+    food_id uuid CONSTRAINT cart_items_food_id_not_null NOT NULL,
+    quantity integer CONSTRAINT cart_items_quantity_not_null NOT NULL,
+    CONSTRAINT cart_items_quantity_check CHECK ((quantity > 0))
 );
 
 
-ALTER TABLE public.user_cart OWNER TO postgres;
+ALTER TABLE public.user_cart_items OWNER TO postgres;
 
 --
--- Name: user_cartitems; Type: TABLE; Schema: public; Owner: postgres
+-- Name: user_carts; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.user_cartitems (
-    cartitem_id character varying(30) NOT NULL,
-    cart_id character varying(30) DEFAULT NULL::character varying,
-    user_id character varying(20) DEFAULT NULL::character varying,
-    food_id character varying(30) DEFAULT NULL::character varying,
-    food_price bigint,
-    quantity integer NOT NULL,
-    subtotal bigint DEFAULT '0'::bigint
+CREATE TABLE public.user_carts (
+    cart_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id text NOT NULL,
+    seller_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
-ALTER TABLE public.user_cartitems OWNER TO postgres;
+ALTER TABLE public.user_carts OWNER TO postgres;
 
 --
 -- Name: user_email_change_requests; Type: TABLE; Schema: public; Owner: postgres
@@ -1378,116 +1035,39 @@ CREATE TABLE public.user_email_change_requests (
 ALTER TABLE public.user_email_change_requests OWNER TO postgres;
 
 --
--- Name: user_healthdata; Type: TABLE; Schema: public; Owner: postgres
+-- Name: user_order_items; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.user_healthdata (
-    healthdata_id character varying(30) NOT NULL,
-    user_id character varying(20) DEFAULT NULL::character varying,
-    healthdata_recordtime timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    healthdata_weight numeric(5,2) DEFAULT NULL::numeric,
-    healthdata_height numeric(5,2) DEFAULT NULL::numeric,
-    healthdata_bmi numeric(5,2) DEFAULT NULL::numeric,
-    healthdata_bloodpressure character varying(20) DEFAULT NULL::character varying,
-    healthdata_heartrate integer,
-    healthdata_notes text,
-    recorded_by character varying(50) NOT NULL
+CREATE TABLE public.user_order_items (
+    order_item_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid NOT NULL,
+    food_id uuid NOT NULL,
+    quantity integer NOT NULL,
+    price_at_purchase numeric(10,2) NOT NULL,
+    food_name_snapshot text NOT NULL
 );
 
 
-ALTER TABLE public.user_healthdata OWNER TO postgres;
+ALTER TABLE public.user_order_items OWNER TO postgres;
 
 --
--- Name: user_order; Type: TABLE; Schema: public; Owner: postgres
+-- Name: user_orders; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.user_order (
-    order_id character varying(30) NOT NULL,
-    user_id character varying(20) NOT NULL,
-    seller_id character varying(20) DEFAULT NULL::character varying,
-    cart_id character varying(30) NOT NULL,
-    order_date timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    total_amount bigint NOT NULL,
-    payment_status public.user_order_payment_status DEFAULT 'Pending'::public.user_order_payment_status,
-    shipping_address text,
-    order_status public.user_order_order_status DEFAULT 'Processing'::public.user_order_order_status,
-    order_notes text,
-    order_rejectreason text NOT NULL
+CREATE TABLE public.user_orders (
+    order_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id text NOT NULL,
+    seller_id uuid NOT NULL,
+    total_price numeric(10,2) NOT NULL,
+    status character varying(50) DEFAULT 'pending'::character varying NOT NULL,
+    delivery_address_json jsonb NOT NULL,
+    payment_status character varying(50) DEFAULT 'unpaid'::character varying NOT NULL,
+    payment_method character varying(50),
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
-ALTER TABLE public.user_order OWNER TO postgres;
-
---
--- Name: user_sellerfavorites; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.user_sellerfavorites (
-    favorite_id bigint NOT NULL,
-    user_id character varying(20) NOT NULL,
-    seller_id character varying(20) NOT NULL
-);
-
-
-ALTER TABLE public.user_sellerfavorites OWNER TO postgres;
-
---
--- Name: user_sellerfavorites_favorite_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.user_sellerfavorites_favorite_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.user_sellerfavorites_favorite_id_seq OWNER TO postgres;
-
---
--- Name: user_sellerfavorites_favorite_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.user_sellerfavorites_favorite_id_seq OWNED BY public.user_sellerfavorites.favorite_id;
-
-
---
--- Name: user_transaction; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.user_transaction (
-    payment_id character varying(30) NOT NULL,
-    order_id character varying(30) NOT NULL,
-    user_id character varying(20) NOT NULL,
-    payment_method character varying(30) DEFAULT NULL::character varying,
-    payment_amount bigint NOT NULL,
-    payment_status public.user_transaction_payment_status DEFAULT 'Pending'::public.user_transaction_payment_status,
-    gateway_transaction_id character varying(100) DEFAULT NULL::character varying,
-    gateway_response text,
-    approval_code character varying(50) DEFAULT NULL::character varying,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    paid_at timestamp with time zone
-);
-
-
-ALTER TABLE public.user_transaction OWNER TO postgres;
-
---
--- Name: user_vip; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.user_vip (
-    user_id character varying(20) NOT NULL,
-    activated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    expires_at timestamp with time zone,
-    payment_id character varying(30) DEFAULT NULL::character varying,
-    notes text,
-    vip_status public.user_vip_vip_status DEFAULT 'Pending'::public.user_vip_vip_status
-);
-
-
-ALTER TABLE public.user_vip OWNER TO postgres;
+ALTER TABLE public.user_orders OWNER TO postgres;
 
 --
 -- Name: users; Type: TABLE; Schema: public; Owner: postgres
@@ -1615,27 +1195,6 @@ CREATE TABLE public.users_refresh_tokens (
 ALTER TABLE public.users_refresh_tokens OWNER TO postgres;
 
 --
--- Name: delivery_log log_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_log ALTER COLUMN log_id SET DEFAULT nextval('public.delivery_log_log_id_seq'::regclass);
-
-
---
--- Name: delivery_orders delivery_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_orders ALTER COLUMN delivery_id SET DEFAULT nextval('public.delivery_orders_delivery_id_seq'::regclass);
-
-
---
--- Name: delivery_recipients recipient_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_recipients ALTER COLUMN recipient_id SET DEFAULT nextval('public.delivery_recipients_recipient_id_seq'::regclass);
-
-
---
 -- Name: doctor_appointments appointment_id; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
@@ -1678,38 +1237,27 @@ ALTER TABLE ONLY public.message_attachments ALTER COLUMN attachment_id SET DEFAU
 
 
 --
--- Name: notifications notification_id; Type: DEFAULT; Schema: public; Owner: postgres
+-- Name: user_cart_items cart_items_cart_id_food_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.notifications ALTER COLUMN notification_id SET DEFAULT nextval('public.notifications_notification_id_seq'::regclass);
-
-
---
--- Name: seller_promotions promotion_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.seller_promotions ALTER COLUMN promotion_id SET DEFAULT nextval('public.seller_promotions_promotion_id_seq'::regclass);
+ALTER TABLE ONLY public.user_cart_items
+    ADD CONSTRAINT cart_items_cart_id_food_id_key UNIQUE (cart_id, food_id);
 
 
 --
--- Name: seller_reviews review_id; Type: DEFAULT; Schema: public; Owner: postgres
+-- Name: user_cart_items cart_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.seller_reviews ALTER COLUMN review_id SET DEFAULT nextval('public.seller_reviews_review_id_seq'::regclass);
-
-
---
--- Name: user_addresses address_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_addresses ALTER COLUMN address_id SET DEFAULT nextval('public.user_addresses_address_id_seq'::regclass);
+ALTER TABLE ONLY public.user_cart_items
+    ADD CONSTRAINT cart_items_pkey PRIMARY KEY (cart_item_id);
 
 
 --
--- Name: user_sellerfavorites favorite_id; Type: DEFAULT; Schema: public; Owner: postgres
+-- Name: foods foods_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.user_sellerfavorites ALTER COLUMN favorite_id SET DEFAULT nextval('public.user_sellerfavorites_favorite_id_seq'::regclass);
+ALTER TABLE ONLY public.foods
+    ADD CONSTRAINT foods_pkey PRIMARY KEY (food_id);
 
 
 --
@@ -1761,110 +1309,6 @@ ALTER TABLE ONLY public.chat_messages
 
 
 --
--- Name: counter_activity_recommendationitem idx_17170_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_activity_recommendationitem
-    ADD CONSTRAINT idx_17170_primary PRIMARY KEY (counter_date);
-
-
---
--- Name: counter_cartid idx_17175_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_cartid
-    ADD CONSTRAINT idx_17175_primary PRIMARY KEY (user_id, date_code);
-
-
---
--- Name: counter_cartitemid idx_17181_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_cartitemid
-    ADD CONSTRAINT idx_17181_primary PRIMARY KEY (user_id, date_code);
-
-
---
--- Name: counter_foodid idx_17187_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_foodid
-    ADD CONSTRAINT idx_17187_primary PRIMARY KEY (seller_id);
-
-
---
--- Name: counter_foodrecommendationitem idx_17192_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_foodrecommendationitem
-    ADD CONSTRAINT idx_17192_primary PRIMARY KEY (user_id, timestamp_date);
-
-
---
--- Name: counter_glucoseid idx_17199_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_glucoseid
-    ADD CONSTRAINT idx_17199_primary PRIMARY KEY (user_id, counter_date);
-
-
---
--- Name: counter_healthdataid idx_17205_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_healthdataid
-    ADD CONSTRAINT idx_17205_primary PRIMARY KEY (user_id, date_stamp);
-
-
---
--- Name: counter_id idx_17211_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_id
-    ADD CONSTRAINT idx_17211_primary PRIMARY KEY (registration_date);
-
-
---
--- Name: counter_orderid idx_17216_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_orderid
-    ADD CONSTRAINT idx_17216_primary PRIMARY KEY (user_id, date_code);
-
-
---
--- Name: counter_transactionid idx_17222_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.counter_transactionid
-    ADD CONSTRAINT idx_17222_primary PRIMARY KEY (payment_date, user_id);
-
-
---
--- Name: delivery_log idx_17229_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_log
-    ADD CONSTRAINT idx_17229_primary PRIMARY KEY (log_id);
-
-
---
--- Name: delivery_orders idx_17241_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_orders
-    ADD CONSTRAINT idx_17241_primary PRIMARY KEY (delivery_id);
-
-
---
--- Name: delivery_recipients idx_17254_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_recipients
-    ADD CONSTRAINT idx_17254_primary PRIMARY KEY (recipient_id);
-
-
---
 -- Name: doctor idx_17266_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1905,14 +1349,6 @@ ALTER TABLE ONLY public.doctor_reviews
 
 
 --
--- Name: food idx_17336_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food
-    ADD CONSTRAINT idx_17336_primary PRIMARY KEY (food_id);
-
-
---
 -- Name: food_category idx_17347_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1937,123 +1373,11 @@ ALTER TABLE ONLY public.food_recommendation
 
 
 --
--- Name: food_recommendation_items idx_17370_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food_recommendation_items
-    ADD CONSTRAINT idx_17370_primary PRIMARY KEY (item_id);
-
-
---
--- Name: glucose_manual idx_17378_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.glucose_manual
-    ADD CONSTRAINT idx_17378_primary PRIMARY KEY (glucose_id, user_id);
-
-
---
 -- Name: message_attachments idx_17386_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.message_attachments
     ADD CONSTRAINT idx_17386_primary PRIMARY KEY (attachment_id);
-
-
---
--- Name: notifications idx_17399_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.notifications
-    ADD CONSTRAINT idx_17399_primary PRIMARY KEY (notification_id);
-
-
---
--- Name: seller idx_17414_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.seller
-    ADD CONSTRAINT idx_17414_primary PRIMARY KEY (seller_id);
-
-
---
--- Name: seller_promotions idx_17437_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.seller_promotions
-    ADD CONSTRAINT idx_17437_primary PRIMARY KEY (promotion_id);
-
-
---
--- Name: seller_reviews idx_17453_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.seller_reviews
-    ADD CONSTRAINT idx_17453_primary PRIMARY KEY (review_id);
-
-
---
--- Name: user_addresses idx_17481_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_addresses
-    ADD CONSTRAINT idx_17481_primary PRIMARY KEY (address_id);
-
-
---
--- Name: user_cart idx_17498_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_cart
-    ADD CONSTRAINT idx_17498_primary PRIMARY KEY (cart_id);
-
-
---
--- Name: user_cartitems idx_17507_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_cartitems
-    ADD CONSTRAINT idx_17507_primary PRIMARY KEY (cartitem_id);
-
-
---
--- Name: user_healthdata idx_17516_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_healthdata
-    ADD CONSTRAINT idx_17516_primary PRIMARY KEY (healthdata_id);
-
-
---
--- Name: user_order idx_17530_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_order
-    ADD CONSTRAINT idx_17530_primary PRIMARY KEY (order_id);
-
-
---
--- Name: user_sellerfavorites idx_17545_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_sellerfavorites
-    ADD CONSTRAINT idx_17545_primary PRIMARY KEY (favorite_id);
-
-
---
--- Name: user_transaction idx_17552_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_transaction
-    ADD CONSTRAINT idx_17552_primary PRIMARY KEY (payment_id);
-
-
---
--- Name: user_vip idx_17566_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_vip
-    ADD CONSTRAINT idx_17566_primary PRIMARY KEY (user_id);
 
 
 --
@@ -2097,11 +1421,43 @@ ALTER TABLE ONLY public.pending_registrations
 
 
 --
+-- Name: seller_profiles seller_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.seller_profiles
+    ADD CONSTRAINT seller_pkey PRIMARY KEY (seller_id);
+
+
+--
 -- Name: users uq_user_oauth_provider; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT uq_user_oauth_provider UNIQUE (user_provider, user_provider_user_id);
+
+
+--
+-- Name: user_addresses user_addresses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_addresses
+    ADD CONSTRAINT user_addresses_pkey PRIMARY KEY (address_id);
+
+
+--
+-- Name: user_carts user_carts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_carts
+    ADD CONSTRAINT user_carts_pkey PRIMARY KEY (cart_id);
+
+
+--
+-- Name: user_carts user_carts_user_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_carts
+    ADD CONSTRAINT user_carts_user_id_key UNIQUE (user_id);
 
 
 --
@@ -2118,6 +1474,22 @@ ALTER TABLE ONLY public.user_email_change_requests
 
 ALTER TABLE ONLY public.user_email_change_requests
     ADD CONSTRAINT user_email_change_requests_verification_token_key UNIQUE (verification_token);
+
+
+--
+-- Name: user_order_items user_order_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_order_items
+    ADD CONSTRAINT user_order_items_pkey PRIMARY KEY (order_item_id);
+
+
+--
+-- Name: user_orders user_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_orders
+    ADD CONSTRAINT user_orders_pkey PRIMARY KEY (order_id);
 
 
 --
@@ -2212,27 +1584,6 @@ CREATE INDEX idx_17154_conversation_id ON public.chat_messages USING btree (conv
 
 
 --
--- Name: idx_17229_delivery_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17229_delivery_id ON public.delivery_log USING btree (delivery_id);
-
-
---
--- Name: idx_17241_order_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17241_order_id ON public.delivery_orders USING btree (order_id);
-
-
---
--- Name: idx_17254_delivery_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17254_delivery_id ON public.delivery_recipients USING btree (delivery_id);
-
-
---
 -- Name: idx_17289_doctor_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -2275,20 +1626,6 @@ CREATE INDEX idx_17325_user_id ON public.doctor_reviews USING btree (user_id);
 
 
 --
--- Name: idx_17336_kategoriid; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17336_kategoriid ON public.food USING btree (food_categoryid);
-
-
---
--- Name: idx_17336_seller_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17336_seller_id ON public.food USING btree (seller_id);
-
-
---
 -- Name: idx_17353_food_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -2303,27 +1640,6 @@ CREATE INDEX idx_17361_user_id ON public.food_recommendation USING btree (user_i
 
 
 --
--- Name: idx_17370_food_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17370_food_id ON public.food_recommendation_items USING btree (food_id);
-
-
---
--- Name: idx_17370_recommendation_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17370_recommendation_id ON public.food_recommendation_items USING btree (recommendation_id);
-
-
---
--- Name: idx_17378_userid; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17378_userid ON public.glucose_manual USING btree (user_id);
-
-
---
 -- Name: idx_17386_message_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -2331,192 +1647,31 @@ CREATE INDEX idx_17386_message_id ON public.message_attachments USING btree (mes
 
 
 --
--- Name: idx_17399_doctor_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17399_doctor_id ON public.notifications USING btree (doctor_id);
-
-
---
--- Name: idx_17399_seller_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17399_seller_id ON public.notifications USING btree (seller_id);
-
-
---
--- Name: idx_17399_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17399_user_id ON public.notifications USING btree (user_id);
-
-
---
 -- Name: idx_17414_idx_email; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE UNIQUE INDEX idx_17414_idx_email ON public.seller USING btree (seller_email);
+CREATE UNIQUE INDEX idx_17414_idx_email ON public.seller_profiles USING btree (seller_email);
 
 
 --
 -- Name: idx_17414_idx_username; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE UNIQUE INDEX idx_17414_idx_username ON public.seller USING btree (seller_username);
+CREATE UNIQUE INDEX idx_17414_idx_username ON public.seller_profiles USING btree (seller_username);
 
 
 --
--- Name: idx_17414_penjualid; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_cart_items_cart_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE UNIQUE INDEX idx_17414_penjualid ON public.seller USING btree (seller_id);
-
-
---
--- Name: idx_17437_applies_to_category_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17437_applies_to_category_id ON public.seller_promotions USING btree (applies_to_categoryid);
+CREATE INDEX idx_cart_items_cart_id ON public.user_cart_items USING btree (cart_id);
 
 
 --
--- Name: idx_17437_applies_to_food_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_carts_user_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX idx_17437_applies_to_food_id ON public.seller_promotions USING btree (applies_to_foodid);
-
-
---
--- Name: idx_17437_applies_to_seller_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17437_applies_to_seller_id ON public.seller_promotions USING btree (applies_to_sellerid);
-
-
---
--- Name: idx_17437_coupon_code; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE UNIQUE INDEX idx_17437_coupon_code ON public.seller_promotions USING btree (promotion_code);
-
-
---
--- Name: idx_17453_seller_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17453_seller_id ON public.seller_reviews USING btree (seller_id);
-
-
---
--- Name: idx_17453_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17453_user_id ON public.seller_reviews USING btree (user_id);
-
-
---
--- Name: idx_17481_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17481_user_id ON public.user_addresses USING btree (user_id);
-
-
---
--- Name: idx_17498_fk_cart_user; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17498_fk_cart_user ON public.user_cart USING btree (user_id);
-
-
---
--- Name: idx_17507_fk_item_cart; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17507_fk_item_cart ON public.user_cartitems USING btree (cart_id);
-
-
---
--- Name: idx_17507_fk_item_food; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17507_fk_item_food ON public.user_cartitems USING btree (food_id);
-
-
---
--- Name: idx_17507_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17507_user_id ON public.user_cartitems USING btree (user_id);
-
-
---
--- Name: idx_17516_fk_user_health; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17516_fk_user_health ON public.user_healthdata USING btree (user_id);
-
-
---
--- Name: idx_17530_cart_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17530_cart_id ON public.user_order USING btree (cart_id);
-
-
---
--- Name: idx_17530_seller_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17530_seller_id ON public.user_order USING btree (seller_id);
-
-
---
--- Name: idx_17530_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17530_user_id ON public.user_order USING btree (user_id);
-
-
---
--- Name: idx_17545_seller_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17545_seller_id ON public.user_sellerfavorites USING btree (seller_id);
-
-
---
--- Name: idx_17545_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17545_user_id ON public.user_sellerfavorites USING btree (user_id);
-
-
---
--- Name: idx_17552_order_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17552_order_id ON public.user_transaction USING btree (order_id);
-
-
---
--- Name: idx_17552_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17552_user_id ON public.user_transaction USING btree (user_id);
-
-
---
--- Name: idx_17566_payment_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17566_payment_id ON public.user_vip USING btree (payment_id);
-
-
---
--- Name: idx_17566_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17566_user_id ON public.user_vip USING btree (user_id);
+CREATE INDEX idx_carts_user_id ON public.user_carts USING btree (user_id);
 
 
 --
@@ -2524,6 +1679,27 @@ CREATE INDEX idx_17566_user_id ON public.user_vip USING btree (user_id);
 --
 
 CREATE INDEX idx_email_change_token ON public.user_email_change_requests USING btree (verification_token);
+
+
+--
+-- Name: idx_foods_name; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_foods_name ON public.foods USING btree (food_name);
+
+
+--
+-- Name: idx_foods_seller_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_foods_seller_id ON public.foods USING btree (seller_id);
+
+
+--
+-- Name: idx_foods_tags; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_foods_tags ON public.foods USING gin (tags);
 
 
 --
@@ -2552,6 +1728,27 @@ CREATE INDEX idx_logs_auth_level ON public.logs_auth USING btree (log_level);
 --
 
 CREATE INDEX idx_logs_auth_user_id ON public.logs_auth USING btree (user_id);
+
+
+--
+-- Name: idx_order_items_order_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_order_items_order_id ON public.user_order_items USING btree (order_id);
+
+
+--
+-- Name: idx_orders_seller_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_orders_seller_id ON public.user_orders USING btree (seller_id);
+
+
+--
+-- Name: idx_orders_user_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_orders_user_id ON public.user_orders USING btree (user_id);
 
 
 --
@@ -2632,10 +1829,24 @@ CREATE INDEX idx_refresh_tokens_user_id ON public.users_refresh_tokens USING btr
 
 
 --
+-- Name: idx_user_addresses_active; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_user_addresses_active ON public.user_addresses USING btree (user_id, is_active) WHERE (is_active = true);
+
+
+--
 -- Name: idx_user_addresses_default; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX idx_user_addresses_default ON public.user_addresses USING btree (user_id, is_default);
+CREATE INDEX idx_user_addresses_default ON public.user_addresses USING btree (user_id, is_default) WHERE (is_default = true);
+
+
+--
+-- Name: idx_user_addresses_one_default; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX idx_user_addresses_one_default ON public.user_addresses USING btree (user_id) WHERE (is_default = true);
 
 
 --
@@ -2688,17 +1899,17 @@ CREATE INDEX idx_users_username ON public.users USING btree (user_username);
 
 
 --
+-- Name: user_addresses Trigger_Ensure_One_Default_Address; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "Trigger_Ensure_One_Default_Address" BEFORE INSERT OR UPDATE ON public.user_addresses FOR EACH ROW EXECUTE FUNCTION public.ensure_one_default_address();
+
+
+--
 -- Name: chat_conversations on_update_current_timestamp; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.chat_conversations FOR EACH ROW EXECUTE FUNCTION public.on_update_current_timestamp_chat_conversations();
-
-
---
--- Name: delivery_orders on_update_current_timestamp; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.delivery_orders FOR EACH ROW EXECUTE FUNCTION public.on_update_current_timestamp_delivery_orders();
 
 
 --
@@ -2716,24 +1927,10 @@ CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.doctor_consul
 
 
 --
--- Name: glucose_manual on_update_current_timestamp; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: user_addresses trigger_user_addresses_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.glucose_manual FOR EACH ROW EXECUTE FUNCTION public.on_update_current_timestamp_glucose_manual();
-
-
---
--- Name: seller_promotions on_update_current_timestamp; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.seller_promotions FOR EACH ROW EXECUTE FUNCTION public.on_update_current_timestamp_seller_promotions();
-
-
---
--- Name: user_addresses update_user_addresses_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER update_user_addresses_updated_at BEFORE UPDATE ON public.user_addresses FOR EACH ROW EXECUTE FUNCTION public.update_address_updated_at();
+CREATE TRIGGER trigger_user_addresses_updated_at BEFORE UPDATE ON public.user_addresses FOR EACH ROW EXECUTE FUNCTION public.update_user_addresses_updated_at();
 
 
 --
@@ -2767,35 +1964,27 @@ ALTER TABLE ONLY public.activity_recommendation_items
 
 
 --
+-- Name: user_cart_items cart_items_cart_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_cart_items
+    ADD CONSTRAINT cart_items_cart_id_fkey FOREIGN KEY (cart_id) REFERENCES public.user_carts(cart_id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_cart_items cart_items_food_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_cart_items
+    ADD CONSTRAINT cart_items_food_id_fkey FOREIGN KEY (food_id) REFERENCES public.foods(food_id) ON DELETE CASCADE;
+
+
+--
 -- Name: chat_messages chat_messages_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.chat_messages
     ADD CONSTRAINT chat_messages_ibfk_1 FOREIGN KEY (conversation_id) REFERENCES public.chat_conversations(conversation_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
--- Name: delivery_log delivery_log_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_log
-    ADD CONSTRAINT delivery_log_ibfk_1 FOREIGN KEY (delivery_id) REFERENCES public.delivery_orders(delivery_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
-
-
---
--- Name: delivery_orders delivery_orders_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_orders
-    ADD CONSTRAINT delivery_orders_ibfk_1 FOREIGN KEY (order_id) REFERENCES public.user_order(order_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
-
-
---
--- Name: delivery_recipients delivery_recipients_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.delivery_recipients
-    ADD CONSTRAINT delivery_recipients_ibfk_1 FOREIGN KEY (delivery_id) REFERENCES public.delivery_orders(delivery_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
 
 
 --
@@ -2839,43 +2028,11 @@ ALTER TABLE ONLY public.activity
 
 
 --
--- Name: user_cartitems fk_item_cart; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: foods foods_seller_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.user_cartitems
-    ADD CONSTRAINT fk_item_cart FOREIGN KEY (cart_id) REFERENCES public.user_cart(cart_id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: food food_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food
-    ADD CONSTRAINT food_ibfk_1 FOREIGN KEY (food_categoryid) REFERENCES public.food_category(food_categoryid) ON UPDATE RESTRICT ON DELETE RESTRICT;
-
-
---
--- Name: food food_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food
-    ADD CONSTRAINT food_ibfk_2 FOREIGN KEY (seller_id) REFERENCES public.seller(seller_id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: food_recommendation_items food_recommendation_items_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food_recommendation_items
-    ADD CONSTRAINT food_recommendation_items_ibfk_1 FOREIGN KEY (recommendation_id) REFERENCES public.food_recommendation(recommendation_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
-
-
---
--- Name: food_recommendation_items food_recommendation_items_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food_recommendation_items
-    ADD CONSTRAINT food_recommendation_items_ibfk_2 FOREIGN KEY (food_id) REFERENCES public.food(food_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
+ALTER TABLE ONLY public.foods
+    ADD CONSTRAINT foods_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.seller_profiles(seller_id);
 
 
 --
@@ -2887,59 +2044,27 @@ ALTER TABLE ONLY public.message_attachments
 
 
 --
--- Name: notifications notifications_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_addresses user_addresses_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.notifications
-    ADD CONSTRAINT notifications_ibfk_2 FOREIGN KEY (seller_id) REFERENCES public.seller(seller_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
--- Name: notifications notifications_ibfk_3; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.notifications
-    ADD CONSTRAINT notifications_ibfk_3 FOREIGN KEY (doctor_id) REFERENCES public.doctor(doctor_id) ON UPDATE RESTRICT ON DELETE CASCADE;
+ALTER TABLE ONLY public.user_addresses
+    ADD CONSTRAINT user_addresses_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
 
 
 --
--- Name: seller_promotions seller_promotions_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_carts user_carts_seller_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.seller_promotions
-    ADD CONSTRAINT seller_promotions_ibfk_1 FOREIGN KEY (applies_to_sellerid) REFERENCES public.seller(seller_id) ON UPDATE RESTRICT ON DELETE SET NULL;
-
-
---
--- Name: seller_promotions seller_promotions_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.seller_promotions
-    ADD CONSTRAINT seller_promotions_ibfk_2 FOREIGN KEY (applies_to_foodid) REFERENCES public.food(food_id) ON UPDATE RESTRICT ON DELETE SET NULL;
+ALTER TABLE ONLY public.user_carts
+    ADD CONSTRAINT user_carts_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.seller_profiles(seller_id) ON DELETE SET NULL;
 
 
 --
--- Name: seller_promotions seller_promotions_ibfk_3; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_carts user_carts_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.seller_promotions
-    ADD CONSTRAINT seller_promotions_ibfk_3 FOREIGN KEY (applies_to_categoryid) REFERENCES public.food_category(food_categoryid) ON UPDATE RESTRICT ON DELETE SET NULL;
-
-
---
--- Name: seller_reviews seller_reviews_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.seller_reviews
-    ADD CONSTRAINT seller_reviews_ibfk_1 FOREIGN KEY (seller_id) REFERENCES public.seller(seller_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
--- Name: user_cartitems user_cartitems_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_cartitems
-    ADD CONSTRAINT user_cartitems_ibfk_2 FOREIGN KEY (food_id) REFERENCES public.food(food_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
+ALTER TABLE ONLY public.user_carts
+    ADD CONSTRAINT user_carts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
 
 
 --
@@ -2951,43 +2076,35 @@ ALTER TABLE ONLY public.user_email_change_requests
 
 
 --
--- Name: user_order user_order_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_order_items user_order_items_food_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.user_order
-    ADD CONSTRAINT user_order_ibfk_2 FOREIGN KEY (cart_id) REFERENCES public.user_cart(cart_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
-
-
---
--- Name: user_order user_order_ibfk_3; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_order
-    ADD CONSTRAINT user_order_ibfk_3 FOREIGN KEY (seller_id) REFERENCES public.seller(seller_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
+ALTER TABLE ONLY public.user_order_items
+    ADD CONSTRAINT user_order_items_food_id_fkey FOREIGN KEY (food_id) REFERENCES public.foods(food_id);
 
 
 --
--- Name: user_sellerfavorites user_sellerfavorites_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_order_items user_order_items_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.user_sellerfavorites
-    ADD CONSTRAINT user_sellerfavorites_ibfk_2 FOREIGN KEY (seller_id) REFERENCES public.seller(seller_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
-
-
---
--- Name: user_transaction user_transaction_ibfk_3; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_transaction
-    ADD CONSTRAINT user_transaction_ibfk_3 FOREIGN KEY (order_id) REFERENCES public.user_order(order_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
+ALTER TABLE ONLY public.user_order_items
+    ADD CONSTRAINT user_order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.user_orders(order_id) ON DELETE CASCADE;
 
 
 --
--- Name: user_vip user_vip_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_orders user_orders_seller_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.user_vip
-    ADD CONSTRAINT user_vip_ibfk_2 FOREIGN KEY (payment_id) REFERENCES public.user_transaction(payment_id) ON UPDATE RESTRICT ON DELETE RESTRICT;
+ALTER TABLE ONLY public.user_orders
+    ADD CONSTRAINT user_orders_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.seller_profiles(seller_id);
+
+
+--
+-- Name: user_orders user_orders_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_orders
+    ADD CONSTRAINT user_orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id);
 
 
 --

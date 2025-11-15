@@ -51,4 +51,5 @@ var RecommendationSchema = &GeminiSchema{
 			},
 		},
 	},
+	Required: []string{"food_recommendations", "activity_recommendations"},
 }

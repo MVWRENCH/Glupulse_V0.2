@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -14,7 +16,6 @@ import (
 
 // --- Gemini API Configuration ---
 const (
-	geminiAPIKey       = "" // Leave as an empty string
 	geminiAPIURL       = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key="
 	maxRetries         = 3
 	initialBackoff     = 1 * time.Second
@@ -36,17 +37,18 @@ type GeminiContent struct {
 }
 
 type GeminiPart struct {
-	Text   string        `json:"text,omitempty"`
-	Schema *GeminiSchema `json:"schema,omitempty"`
+	Text string `json:"text,omitempty"`
 }
 
 type GenerationConfig struct {
-	ResponseMimeType string `json:"responseMimeType"`
+	ResponseMimeType string        `json:"responseMimeType"`
+	ResponseSchema   *GeminiSchema `json:"response_schema,omitempty"`
 }
 
 type GeminiSchema struct {
 	Type       string                 `json:"type"`
 	Properties map[string]GeminiField `json:"properties"`
+	Required   []string               `json:"required"`
 }
 
 type GeminiField struct {
@@ -69,17 +71,23 @@ type GeminiResponse struct {
 // GenerateRecommendation is the main entry point to this package.
 // It takes a user prompt, combines it with the system prompt & schema,
 // and returns the structured JSON response from Gemini.
-func GenerateRecommendation(logger *zerolog.Logger, userPrompt string) (string, error) {
+func GenerateRecommendation(log *zerolog.Logger, userPrompt string) (string, error) {
 	// Get the prompt templates and schema from prompts.go
 	systemPrompt := SystemPrompt
-	schema := RecommendationSchema
+	ResponseSchema := RecommendationSchema
 
 	// Call the private function that handles the API logic
-	return callStructuredGemini(logger, systemPrompt, userPrompt, schema)
+	return callStructuredGemini(log, systemPrompt, userPrompt, ResponseSchema)
 }
 
 // callStructuredGemini handles the actual HTTP request to the Gemini API
-func callStructuredGemini(logger *zerolog.Logger, systemPrompt, userPrompt string, schema *GeminiSchema) (string, error) {
+func callStructuredGemini(log *zerolog.Logger, systemPrompt, userPrompt string, ResponseSchema *GeminiSchema) (string, error) {
+
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		log.Error().Msg("FATAL: GEMINI_API_KEY environment variable is not set.")
+		return "", fmt.Errorf("server is not configured for AI recommendations")
+	}
 
 	// Build the payload
 	payload := GeminiPayload{
@@ -91,14 +99,9 @@ func callStructuredGemini(logger *zerolog.Logger, systemPrompt, userPrompt strin
 		},
 		GenerationConfig: &GenerationConfig{
 			ResponseMimeType: structuredMimeType,
+			ResponseSchema:   ResponseSchema,
 		},
 	}
-
-	// The schema is added to the *last* part of the *last* content entry
-	payload.Contents[len(payload.Contents)-1].Parts = append(
-		payload.Contents[len(payload.Contents)-1].Parts,
-		GeminiPart{Schema: schema},
-	)
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -113,26 +116,34 @@ func callStructuredGemini(logger *zerolog.Logger, systemPrompt, userPrompt strin
 		reqCtx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(reqCtx, "POST", geminiAPIURL+geminiAPIKey, bytes.NewBuffer(payloadBytes))
+		req, err := http.NewRequestWithContext(reqCtx, "POST", geminiAPIURL+apiKey, bytes.NewBuffer(payloadBytes))
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		logger.Info().Msgf("Attempt %d: Calling Gemini API...", i+1)
+		log.Info().Msgf("Attempt %d: Calling Gemini API...", i+1)
 
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request failed: %w", err)
-			logger.Warn().Err(lastErr).Msgf("Attempt %d failed", i+1)
+			log.Warn().Err(lastErr).Msgf("Attempt %d failed", i+1)
+
+			// Exponential backoff
 			time.Sleep(initialBackoff * time.Duration(math.Pow(2, float64(i))))
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("API returned non-200 status: %s", resp.Status)
-			logger.Warn().Err(lastErr).Msgf("Attempt %d failed", i+1)
-			resp.Body.Close() // Make sure to close the body on failure
+			// --- ADDED THIS ERROR LOGGING ---
+			// Read the error body from Google
+			body, _ := io.ReadAll(resp.Body)
+			lastErr = fmt.Errorf("API returned non-200 status: %s, Body: %s", resp.Status, string(body))
+			log.Warn().Err(lastErr).Msgf("Attempt %d failed", i+1)
+			// --- END ADDED BLOCK ---
+
+			resp.Body.Close() // Make sure to close the body
+			// Exponential backoff
 			time.Sleep(initialBackoff * time.Duration(math.Pow(2, float64(i))))
 			continue
 		}

@@ -3,11 +3,12 @@ package utility
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"strings"
-	"time"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,7 +17,7 @@ import (
 )
 
 var (
-	IPRateLimiter      = sync.Map{}
+	IPRateLimiter = sync.Map{}
 )
 
 // GetRealIP is a helper function to get the user's real IP address
@@ -121,10 +122,34 @@ func CheckIPRateLimit(ip string) error {
 	}
 
 	if len(recent) >= maxAttempts {
-		return fmt.Errorf("too many signup attempts, please try again later")
+		return fmt.Errorf("too many attempts, please try again later")
 	}
 
 	recent = append(recent, now)
 	IPRateLimiter.Store(ip, recent)
 	return nil
+}
+
+func Min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// GetUserIDFromContext safely retrieves user ID from Echo context
+func GetUserIDFromContext(c echo.Context) (string, error) {
+	userID, ok := c.Get("user_id").(string)
+	if !ok || userID == "" {
+		return "", fmt.Errorf("user ID not found in context")
+	}
+	return userID, nil
+}
+
+func GenerateSecureToken(length int) (string, error) {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

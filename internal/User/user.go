@@ -1,10 +1,8 @@
 package user
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,6 +11,7 @@ import (
 
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
+	"Glupulse_V0.2/internal/geminiservice"
 	"Glupulse_V0.2/internal/utility"
 	"github.com/go-gomail/gomail"
 	"github.com/google/uuid"
@@ -20,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -83,47 +84,67 @@ type UserProfileResponse struct {
 	AvatarURL       string  `json:"avatar_url,omitempty"`
 }
 
-type HealthDataRequest struct {
-	Weight float64 `json:"weight" form:"weight" validate:"required"`
-	Height float64 `json:"height" form:"height" validate:"required"`
-
-	// Optional metrics
-	BloodPressure string `json:"blood_pressure" form:"blood_pressure"`
-	HeartRate     int16  `json:"heart_rate" form:"heart_rate"`
-	Notes         string `json:"notes" form:"notes"`
-
-	// Internal field (user shouldn't send this, but helpful for logic)
-	RecordedBy string `json:"recorded_by" form:"recorded_by"`
+type HealthProfile struct {
+	Goal          string   `json:"goal"`
+	Condition     string   `json:"condition"`
+	Age           int      `json:"age"`
+	AvgGlucose    float64  `json:"avgGlucose"` // in mg/dL
+	WeightKg      float64  `json:"weightKg"`
+	HeightCm      float64  `json:"heightCm"`
+	ActivityLevel string   `json:"activityLevel"`
+	DietaryPrefs  []string `json:"dietaryPrefs"`
 }
 
-func generateSecureToken(length int) (string, error) {
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
+type AddToCartRequest struct {
+	FoodID   uuid.UUID `json:"food_id" validate:"required"`
+	Quantity int32     `json:"quantity" validate:"required"`
+}
+
+type UpdateCartRequest struct {
+	FoodID   uuid.UUID `json:"food_id" validate:"required"`
+	Quantity int32     `json:"quantity" validate:"required"` // Set to 0 to remove
+}
+
+type RemoveFromCartRequest struct {
+	FoodID uuid.UUID `json:"food_id" validate:"required"`
+}
+
+// FullCartResponse defines the structure for getting the user's cart
+type FullCartResponse struct {
+	Cart     database.UserCart          `json:"cart"`
+	Items    []database.GetCartItemsRow `json:"items"`
+	Subtotal float64                    `json:"subtotal"`
+	SellerID *uuid.UUID                 `json:"seller_id"`
+	Seller   *database.SellerProfile    `json:"seller_profile,omitempty"`
+}
+
+// --- Structs for Checkout ---
+
+type CheckoutRequest struct {
+	AddressID     uuid.UUID `json:"address_id" validate:"required"`
+	PaymentMethod string    `json:"payment_method" validate:"required"`
 }
 
 // InitUserPackage is called by the server package to initialize the database connection
 func InitUserPackage(dbpool *pgxpool.Pool) {
 	queries = database.New(dbpool)
-	log.Println("User package initialized with database queries.")
+	log.Info().Msg("User package initialized with database queries.")
 
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, reading from environment")
+		log.Fatal().Msg("No .env file found, reading from environment")
 	}
 
 	// Load the success change email HTML template
 	var err error
 	successHTML, err = os.ReadFile("web/success_change_email.html")
 	if err != nil {
-		log.Fatalf("FATAL: Could not read success_change_email.html: %v", err)
+		log.Fatal().Err(err).Msg("FATAL: Could not read success_change_email.html")
 	}
 
 	// Load the failed change email HTML template
 	failedHTML, err = os.ReadFile("web/failed_change_email.html")
 	if err != nil {
-		log.Fatalf("FATAL: Could not read failed_change_email.html: %v", err)
+		log.Fatal().Err(err).Msg("FATAL: Could not read failed_change_email.html")
 	}
 }
 
@@ -464,7 +485,7 @@ func RequestEmailChangeHandler(c echo.Context) error {
 	}
 
 	// Generate a secure token and expiry
-	tokenString, err := generateSecureToken(32) // 64-char hex string
+	tokenString, err := utility.GenerateSecureToken(32) // 64-char hex string
 	if err != nil {
 		log.Printf("Error generating secure token: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not process request"})
@@ -808,70 +829,75 @@ func calculateBMI(weightKg, heightCm float64) float64 {
 	return weightKg / (heightM * heightM)
 }
 
-// InputHealthDataHandler allows users to record their weekly health metrics.
-func InputHealthDataHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	user, ok := c.Get("user").(*database.User)
+// GetRecommendationHandler generates food and activity recommendations
+func GetRecommendationHandler(c echo.Context) error {
+	//ctx := c.Request().Context()
+	logger := c.Get("logger").(*zerolog.Logger)
+
+	// Get user claims from JWT
+	claims, ok := c.Get("user_claims").(*auth.JwtCustomClaims)
 	if !ok {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 	}
 
-	var req HealthDataRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request format"})
+	logger.Info().Str("user_id", claims.UserID).Msg("Generating recommendations...")
+
+	// --- STEP 1: Get User Health Data ---
+	// TODO: Replace this hardcoded profile with a real database call
+	// using claims.UserID, e.g., profile, err := queries.GetUserHealthProfile(ctx, claims.UserID)
+	profile := HealthProfile{
+		Goal:          "Lower A1c and lose 10kg",
+		Condition:     "Type 2 Diabetes",
+		Age:           45,
+		AvgGlucose:    160.5,
+		WeightKg:      95.0,
+		HeightCm:      170.0,
+		ActivityLevel: "Sedentary (office job)",
+		DietaryPrefs:  []string{"Loves chicken", "Dislikes fish"},
 	}
+	profileJSON, _ := json.MarshalIndent(profile, "", "  ")
 
-	if req.Weight <= 0 || req.Height <= 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Weight and Height must be greater than zero."})
-	}
+	// --- STEP 2: Get Dummy Data ---
+	// TODO: Replace this with data from your database (e.g., from 'sellers')
+	dummyData := `
+	Available Foods:
+	- Grilled Chicken Breast
+	- Brown Rice
+	- Steamed Broccoli
+	- Quinoa Salad
+	- Lentil Soup
+	- Apple Slices
+	- Greek Yogurt
+	- White Bread
+	- Soda
+	- Fried Chicken
+	
+	Available Activities:
+	- Walking
+	- Office Desk Stretches
+	- Swimming
+	- Weightlifting (light)
+	- Watching TV
+	`
 
-	// Automatically calculate BMI
-	bmi := calculateBMI(req.Weight, req.Height)
+	// --- STEP 3: Build the Prompt ---
+	// Get the template from the 'ai' package and fill it in
+	finalUserPrompt := fmt.Sprintf(
+		geminiservice.UserPromptTemplate,
+		string(profileJSON),
+		dummyData,
+	)
 
-	// Convert required fields (Weight, Height, BMI) to pgtype.Numeric
-	var weightNumeric, heightNumeric, bmiNumeric pgtype.Numeric
-	weightNumeric.Scan(req.Weight)
-	heightNumeric.Scan(req.Height)
-	bmiNumeric.Scan(bmi)
-
-	// Generate UUID for HealthDataID
-	healthDataID := uuid.New().String() // Assuming UUID for HealthData_ID
-
-	// Prepare CreateHealthDataParams
-	params := database.CreateHealthDataParams{ // Assuming this struct/query exists
-		HealthdataID:         healthDataID,
-		UserID:               pgtype.Text{String: user.UserID, Valid: true},
-		HealthdataWeight:     weightNumeric,
-		HealthdataHeight:     heightNumeric,
-		HealthdataBmi:        bmiNumeric,
-		HealthdataRecordtime: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		RecordedBy:           "USER", // Hardcoded as user inputting their own data
-
-		// Optional Fields
-		HealthdataBloodpressure: pgtype.Text{String: req.BloodPressure, Valid: req.BloodPressure != ""},
-		HealthdataHeartrate:     pgtype.Int4{Int32: int32(req.HeartRate), Valid: req.HeartRate > 0},
-		HealthdataNotes:         pgtype.Text{String: req.Notes, Valid: req.Notes != ""},
-	}
-
-	// Insert into database
-	_, err := queries.CreateHealthData(ctx, params) // Assuming CreateHealthData query is available
+	// --- STEP 4: Call AI Service ---
+	// Call the simple function from the 'ai' package
+	jsonString, err := geminiservice.GenerateRecommendation(logger, finalUserPrompt)
 	if err != nil {
-		log.Printf("Error creating health data for user %s: %v", user.UserID, err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save health data"})
+		logger.Error().Err(err).Msg("Failed to get recommendations from Gemini API")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get recommendations"})
 	}
 
-	// Log activity
-	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: "health",
-		Action:   "health_data_recorded",
-		Message:  fmt.Sprintf("New health metrics recorded. BMI: %.2f", bmi),
-		Level:    auth.LogLevelInfo,
-	})
-
-	return c.JSON(http.StatusCreated, map[string]interface{}{
-		"message":        "Health data recorded successfully.",
-		"bmi":            fmt.Sprintf("%.2f", bmi),
-		"health_data_id": healthDataID,
-	})
+	// --- STEP 5: Return the JSON response ---
+	// The response from Gemini is *already* a JSON string.
+	// We return it directly.
+	return c.Blob(http.StatusOK, "application/json", []byte(jsonString))
 }

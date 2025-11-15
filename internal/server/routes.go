@@ -70,7 +70,6 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	// Mobile auth route - Android/iOS Google Sign-In
 	e.POST("/auth/mobile/google", auth.MobileGoogleAuthHandler)
-	e.POST("/auth/mobile/google/link", auth.LinkGoogleAccountHandler)
 
 	// Refresh token endpoint (both web and mobile)
 	e.POST("/auth/refresh", auth.RefreshHandler)
@@ -95,9 +94,16 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.POST("/profile/update-email", user.RequestEmailChangeHandler)
 	protected.PUT("/profile/username", user.UpdateUsernameHandler)
 	protected.DELETE("/profile", user.DeleteAccountHandler)
-	protected.POST("/profile/health", user.InputHealthDataHandler)
 	protected.POST("/auth/mobile/google/link", auth.LinkGoogleAccountHandler)
 	protected.POST("/auth/mobile/google/unlink", auth.UnlinkGoogleAccountHandler)
+	protected.GET("/recommendations", user.GetRecommendationHandler)
+
+	//User's Addresses Management
+	protected.POST("/addresses", user.CreateAddressHandler)
+	protected.GET("/addresses", user.GetAddressesHandler)
+	protected.PUT("/addresses/:address_id", user.UpdateAddressHandler)
+	protected.DELETE("/addresses/:address_id", user.DeleteAddressHandler)
+	protected.POST("/addresses/:address_id/set-default", user.SetDefaultAddressHandler)
 
 	return e
 }

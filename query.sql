@@ -138,28 +138,6 @@ UPDATE users_refresh_tokens
 SET revoked_at = CURRENT_TIMESTAMP
 WHERE user_id = $1 AND revoked_at IS NULL;
 
--- User Addresses
--- name: CreateUserAddress :one
-INSERT INTO user_addresses (
-    user_id,
-    address_line1,
-    address_line2,
-    address_city,
-    address_province,
-    address_postalcode,
-    address_latitude,
-    address_longitude,
-    address_label,
-    is_default
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-) RETURNING *;
-
--- name: GetUserAddresses :many
-SELECT * FROM user_addresses
-WHERE user_id = $1
-ORDER BY is_default DESC, address_id DESC;
-
 -- name: CreateAuthLog :one
 INSERT INTO logs_auth (
     user_id,
@@ -223,23 +201,6 @@ UPDATE users
 SET is_email_verified = $2,
     email_verified_at = $3
 WHERE user_id = $1;
-
--- name: CreateHealthData :one
-INSERT INTO user_healthdata (
-    healthdata_id,
-    user_id,
-    healthdata_weight,
-    healthdata_height,
-    healthdata_bmi,
-    healthdata_recordtime,
-    recorded_by,
-    healthdata_bloodpressure,
-    healthdata_heartrate,
-    healthdata_notes
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-)
-RETURNING *;
 
 -- name: GetUserProviderID :one
 SELECT * FROM users
@@ -324,6 +285,204 @@ AND created_at > NOW() - INTERVAL '1 minute'
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: CreateUserAddress :one
+INSERT INTO user_addresses (
+    user_id,
+    address_line1,
+    address_line2,
+    address_city,
+    address_province,
+    address_postalcode,
+    address_latitude,
+    address_longitude,
+    address_label,
+    recipient_name,
+    recipient_phone,
+    delivery_notes,
+    is_default
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+) RETURNING *;
+
+-- name: GetUserAddresses :many
+SELECT * FROM user_addresses
+WHERE user_id = $1 AND is_active = true
+ORDER BY is_default DESC, created_at DESC;
+
+-- name: GetUserAddressByID :one
+SELECT * FROM user_addresses
+WHERE address_id = $1 AND user_id = $2 AND is_active = true;
+
+-- name: GetDefaultAddress :one
+SELECT * FROM user_addresses
+WHERE user_id = $1 AND is_default = true AND is_active = true
+LIMIT 1;
+
+-- name: UpdateUserAddress :one
+UPDATE user_addresses
+SET 
+    address_line1 = COALESCE(sqlc.narg('address_line1'), address_line1),
+    address_line2 = COALESCE(sqlc.narg('address_line2'), address_line2),
+    address_city = COALESCE(sqlc.narg('address_city'), address_city),
+    address_province = COALESCE(sqlc.narg('address_province'), address_province),
+    address_postalcode = COALESCE(sqlc.narg('address_postalcode'), address_postalcode),
+    address_latitude = COALESCE(sqlc.narg('address_latitude'), address_latitude),
+    address_longitude = COALESCE(sqlc.narg('address_longitude'), address_longitude),
+    address_label = COALESCE(sqlc.narg('address_label'), address_label),
+    recipient_name = COALESCE(sqlc.narg('recipient_name'), recipient_name),
+    recipient_phone = COALESCE(sqlc.narg('recipient_phone'), recipient_phone),
+    delivery_notes = COALESCE(sqlc.narg('delivery_notes'), delivery_notes)
+WHERE address_id = $1 AND user_id = $2 AND is_active = true
+RETURNING *;
+
+-- name: SetDefaultAddress :one
+UPDATE user_addresses
+SET is_default = true
+WHERE address_id = $1 AND user_id = $2 AND is_active = true
+RETURNING *;
+
+-- name: UnsetDefaultAddress :exec
+UPDATE user_addresses
+SET is_default = false
+WHERE user_id = $1 AND address_id != $2 AND is_default = true;
+
+-- name: DeleteUserAddress :exec
+UPDATE user_addresses
+SET is_active = false, is_default = false
+WHERE address_id = $1 AND user_id = $2;
+
+-- name: HardDeleteUserAddress :exec
+DELETE FROM user_addresses
+WHERE address_id = $1 AND user_id = $2;
+
+-- name: CountUserAddresses :one
+SELECT COUNT(*) FROM user_addresses
+WHERE user_id = $1 AND is_active = true;
+
+-- name: CheckAddressOwnership :one
+SELECT EXISTS(
+    SELECT 1 FROM user_addresses
+    WHERE address_id = $1 AND user_id = $2 AND is_active = true
+);
+
+-- name: IfAddressIsDefault :one
+SELECT is_default FROM user_addresses
+WHERE address_id = $1;
+
+-- name: CleanupExpiredRefreshTokens :exec
+DELETE FROM users_refresh_tokens
+WHERE expires_at < NOW() - INTERVAL '7 days';
+
+-- name: CleanupRevokedRefreshTokens :exec
+DELETE FROM users_refresh_tokens
+WHERE revoked_at < NOW() - INTERVAL '30 days';
+
+-- name: GetCartByUserID :one
+SELECT * FROM user_carts
+WHERE user_id = $1;
+
+-- name: CreateCart :one
+INSERT INTO user_carts (user_id)
+VALUES ($1)
+RETURNING *;
+
+-- name: GetCartItems :many
+SELECT 
+    ci.*,
+    f.food_name,
+    f.price,
+    f.photo_url,
+    f.seller_id
+FROM user_cart_items ci
+JOIN foods f ON ci.food_id = f.food_id
+WHERE ci.cart_id = $1;
+
+-- name: UpsertCartItem :one
+-- Adds an item to the cart, or increases its quantity if it already exists
+INSERT INTO user_cart_items (
+    cart_id,
+    food_id,
+    quantity
+) VALUES (
+    $1, $2, $3
+)
+ON CONFLICT (cart_id, food_id)
+DO UPDATE SET
+    quantity = user_cart_items.quantity + $3
+RETURNING *;
+
+-- name: UpdateCartItemQuantity :one
+UPDATE user_cart_items
+SET quantity = $3
+WHERE cart_id = $1 AND food_id = $2
+RETURNING *;
+
+-- name: DeleteCartItem :exec
+DELETE FROM user_cart_items
+WHERE cart_id = $1 AND food_id = $2;
+
+-- name: ClearCart :exec
+-- Deletes all items from a cart
+DELETE FROM user_cart_items
+WHERE cart_id = $1;
+
+-- name: SetCartSeller :exec
+UPDATE user_carts
+SET seller_id = $2, updated_at = NOW()
+WHERE user_id = $1;
+
+-- name: ClearCartSeller :exec
+-- This is called when the last item is removed from a cart
+UPDATE user_carts
+SET seller_id = NULL, updated_at = NOW()
+WHERE cart_id = $1;
+
+-- name: GetFoodForUpdate :one
+-- Locks the food row to check stock during a transaction
+SELECT food_id, food_name, price, stock_count, is_available FROM foods
+WHERE food_id = $1
+FOR UPDATE;
+
+-- name: CreateOrder :one
+INSERT INTO user_orders (
+    user_id,
+    seller_id,
+    total_price,
+    status,
+    delivery_address_json,
+    payment_status,
+    payment_method
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+RETURNING *;
+
+-- name: CreateOrderItem :one
+INSERT INTO user_order_items (
+    order_id,
+    food_id,
+    quantity,
+    price_at_purchase,
+    food_name_snapshot
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+RETURNING *;
+
+-- name: GetUserOrders :many
+SELECT * FROM user_orders
+WHERE user_id = $1
+ORDER BY created_at DESC;
+
+-- name: GetOrderDetails :one
+-- Secure: checks that the order_id also belongs to the user_id
+SELECT * FROM user_orders
+WHERE order_id = $1 AND user_id = $2;
+
+-- name: GetOrderItems :many
+SELECT * FROM user_order_items
+WHERE order_id = $1;
+
 -- Unused queries
 -- name: GetUserActiveRefreshTokens :many
 SELECT * FROM users_refresh_tokens
@@ -332,50 +491,10 @@ WHERE user_id = $1
   AND expires_at > CURRENT_TIMESTAMP
 ORDER BY created_at DESC;
 
--- name: DeleteExpiredRefreshTokens :exec
-DELETE FROM users_refresh_tokens
-WHERE expires_at < CURRENT_TIMESTAMP;
-
 -- name: UpdateRefreshTokenReplacement :exec
 UPDATE users_refresh_tokens
 SET replaced_by_token_id = $2
 WHERE id = $1;
-
--- name: GetUserDefaultAddress :one
-SELECT * FROM user_addresses
-WHERE user_id = $1 AND is_default = true
-LIMIT 1;
-
--- name: GetAddressByID :one
-SELECT * FROM user_addresses
-WHERE address_id = $1 AND user_id = $2;
-
--- name: UpdateUserAddress :one
-UPDATE user_addresses
-SET
-    address_line1 = COALESCE($3, address_line1),
-    address_line2 = COALESCE($4, address_line2),
-    address_city = COALESCE($5, address_city),
-    address_province = COALESCE($6, address_province),
-    address_postalcode = COALESCE($7, address_postalcode),
-    address_latitude = COALESCE($8, address_latitude),
-    address_longitude = COALESCE($9, address_longitude),
-    address_label = COALESCE($10, address_label)
-WHERE address_id = $1 AND user_id = $2
-RETURNING *;
-
--- name: SetDefaultAddress :exec
-UPDATE user_addresses
-SET is_default = (address_id = $2)
-WHERE user_id = $1;
-
--- name: DeleteUserAddress :exec
-DELETE FROM user_addresses
-WHERE address_id = $1 AND user_id = $2;
-
--- name: CountUserAddresses :one
-SELECT COUNT(*) FROM user_addresses
-WHERE user_id = $1;
 
 -- name: GetAuthLogsByUserID :many
 SELECT * FROM logs_auth

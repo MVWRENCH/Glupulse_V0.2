@@ -670,99 +670,6 @@ type ChatMessage struct {
 	IsRead         pgtype.Bool            `json:"is_read"`
 }
 
-type CounterActivityRecommendationitem struct {
-	CounterDate pgtype.Date `json:"counter_date"`
-	Counter     pgtype.Int8 `json:"counter"`
-}
-
-type CounterActivityid struct {
-	Counter int64 `json:"counter"`
-}
-
-type CounterCartid struct {
-	UserID   string      `json:"user_id"`
-	DateCode pgtype.Date `json:"date_code"`
-	Counter  pgtype.Int8 `json:"counter"`
-}
-
-type CounterCartitemid struct {
-	UserID   string      `json:"user_id"`
-	DateCode pgtype.Date `json:"date_code"`
-	Counter  pgtype.Int8 `json:"counter"`
-}
-
-type CounterFoodid struct {
-	SellerID     string      `json:"seller_id"`
-	CounterValue pgtype.Int8 `json:"counter_value"`
-}
-
-type CounterFoodrecommendationitem struct {
-	UserID        string      `json:"user_id"`
-	TimestampDate pgtype.Date `json:"timestamp_date"`
-	Counter       pgtype.Int8 `json:"counter"`
-}
-
-type CounterGlucoseid struct {
-	UserID      string      `json:"user_id"`
-	CounterDate pgtype.Date `json:"counter_date"`
-	Counter     pgtype.Int8 `json:"counter"`
-}
-
-type CounterHealthdataid struct {
-	UserID    string      `json:"user_id"`
-	DateStamp pgtype.Date `json:"date_stamp"`
-	Counter   pgtype.Int8 `json:"counter"`
-}
-
-type CounterID struct {
-	RegistrationDate pgtype.Date `json:"registration_date"`
-	Counter          int64       `json:"counter"`
-}
-
-type CounterOrderid struct {
-	UserID   string      `json:"user_id"`
-	DateCode pgtype.Date `json:"date_code"`
-	Counter  pgtype.Int8 `json:"counter"`
-}
-
-type CounterTransactionid struct {
-	PaymentDate pgtype.Date `json:"payment_date"`
-	UserID      string      `json:"user_id"`
-	Counter     pgtype.Int8 `json:"counter"`
-}
-
-type DeliveryLog struct {
-	LogID      int64              `json:"log_id"`
-	DeliveryID int64              `json:"delivery_id"`
-	LogStatus  pgtype.Text        `json:"log_status"`
-	LogMessage pgtype.Text        `json:"log_message"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
-}
-
-type DeliveryOrder struct {
-	DeliveryID     int64              `json:"delivery_id"`
-	OrderID        string             `json:"order_id"`
-	CourierOrderid string             `json:"courier_orderid"`
-	DeliveryStatus pgtype.Text        `json:"delivery_status"`
-	DeliveryFee    pgtype.Int8        `json:"delivery_fee"`
-	PickupAddress  pgtype.Text        `json:"pickup_address"`
-	DropoffAddress pgtype.Text        `json:"dropoff_address"`
-	ScheduledTime  pgtype.Timestamptz `json:"scheduled_time"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-}
-
-type DeliveryRecipient struct {
-	RecipientID        int64          `json:"recipient_id"`
-	DeliveryID         int64          `json:"delivery_id"`
-	RecipientName      pgtype.Text    `json:"recipient_name"`
-	RecipientPhone     pgtype.Text    `json:"recipient_phone"`
-	RecipientAddress   pgtype.Text    `json:"recipient_address"`
-	RecipientLatitude  pgtype.Numeric `json:"recipient_latitude"`
-	RecipientLongitude pgtype.Numeric `json:"recipient_longitude"`
-	RecipientNotes     pgtype.Text    `json:"recipient_notes"`
-}
-
 type Doctor struct {
 	DoctorID               string      `json:"doctor_id"`
 	DoctorUsername         string      `json:"doctor_username"`
@@ -824,18 +731,56 @@ type DoctorReview struct {
 }
 
 type Food struct {
-	FoodID           string        `json:"food_id"`
-	SellerID         pgtype.Text   `json:"seller_id"`
-	FoodCategoryid   string        `json:"food_categoryid"`
-	FoodName         string        `json:"food_name"`
-	FoodPrice        int64         `json:"food_price"`
-	FoodCalories     pgtype.Int4   `json:"food_calories"`
-	FoodCarbohydrate pgtype.Float8 `json:"food_carbohydrate"`
-	FoodProteins     pgtype.Float8 `json:"food_proteins"`
-	FoodFat          pgtype.Float8 `json:"food_fat"`
-	FoodSugar        pgtype.Float8 `json:"food_sugar"`
-	FoodIngredients  pgtype.Text   `json:"food_ingredients"`
-	FoodDescription  pgtype.Text   `json:"food_description"`
+	FoodID              pgtype.UUID        `json:"food_id"`
+	SellerID            pgtype.UUID        `json:"seller_id"`
+	FoodName            string             `json:"food_name"`
+	Description         pgtype.Text        `json:"description"`
+	Price               pgtype.Numeric     `json:"price"`
+	Currency            string             `json:"currency"`
+	PhotoUrl            pgtype.Text        `json:"photo_url"`
+	ThumbnailUrl        pgtype.Text        `json:"thumbnail_url"`
+	IsAvailable         pgtype.Bool        `json:"is_available"`
+	StockCount          pgtype.Int4        `json:"stock_count"`
+	Tags                []string           `json:"tags"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ServingSizeG        pgtype.Numeric     `json:"serving_size_g"`
+	Calories            pgtype.Numeric     `json:"calories"`
+	ProteinG            pgtype.Numeric     `json:"protein_g"`
+	FatG                pgtype.Numeric     `json:"fat_g"`
+	CarbohydrateG       pgtype.Numeric     `json:"carbohydrate_g"`
+	DietaryFiberG       pgtype.Numeric     `json:"dietary_fiber_g"`
+	SugarsG             pgtype.Numeric     `json:"sugars_g"`
+	SaturatedFatG       pgtype.Numeric     `json:"saturated_fat_g"`
+	PolyunsaturatedFatG pgtype.Numeric     `json:"polyunsaturated_fat_g"`
+	MonounsaturatedFatG pgtype.Numeric     `json:"monounsaturated_fat_g"`
+	TransFatG           pgtype.Numeric     `json:"trans_fat_g"`
+	CholesterolMg       pgtype.Numeric     `json:"cholesterol_mg"`
+	SodiumMg            pgtype.Numeric     `json:"sodium_mg"`
+	PotassiumMg         pgtype.Numeric     `json:"potassium_mg"`
+	WaterG              pgtype.Numeric     `json:"water_g"`
+	VitaminAMcg         pgtype.Numeric     `json:"vitamin_a_mcg"`
+	VitaminCMg          pgtype.Numeric     `json:"vitamin_c_mg"`
+	VitaminDMcg         pgtype.Numeric     `json:"vitamin_d_mcg"`
+	VitaminEMg          pgtype.Numeric     `json:"vitamin_e_mg"`
+	VitaminKMcg         pgtype.Numeric     `json:"vitamin_k_mcg"`
+	ThiaminMg           pgtype.Numeric     `json:"thiamin_mg"`
+	RiboflavinMg        pgtype.Numeric     `json:"riboflavin_mg"`
+	NiacinMg            pgtype.Numeric     `json:"niacin_mg"`
+	VitaminB5Mg         pgtype.Numeric     `json:"vitamin_b5_mg"`
+	VitaminB6Mg         pgtype.Numeric     `json:"vitamin_b6_mg"`
+	FolateMcg           pgtype.Numeric     `json:"folate_mcg"`
+	VitaminB12Mcg       pgtype.Numeric     `json:"vitamin_b12_mcg"`
+	CalciumMg           pgtype.Numeric     `json:"calcium_mg"`
+	CopperMg            pgtype.Numeric     `json:"copper_mg"`
+	IronMg              pgtype.Numeric     `json:"iron_mg"`
+	MagnesiumMg         pgtype.Numeric     `json:"magnesium_mg"`
+	ManganeseMg         pgtype.Numeric     `json:"manganese_mg"`
+	PhosphorusMg        pgtype.Numeric     `json:"phosphorus_mg"`
+	SeleniumMcg         pgtype.Numeric     `json:"selenium_mcg"`
+	ZincMg              pgtype.Numeric     `json:"zinc_mg"`
+	CaffeineMg          pgtype.Numeric     `json:"caffeine_mg"`
+	NutritionDensity    pgtype.Numeric     `json:"nutrition_density"`
 }
 
 type FoodCategory struct {
@@ -856,21 +801,6 @@ type FoodRecommendation struct {
 	GeneratedAt      pgtype.Timestamptz `json:"generated_at"`
 	Notes            pgtype.Text        `json:"notes"`
 	SourceAgent      pgtype.Text        `json:"source_agent"`
-}
-
-type FoodRecommendationItem struct {
-	ItemID           string      `json:"item_id"`
-	RecommendationID string      `json:"recommendation_id"`
-	FoodID           string      `json:"food_id"`
-	TimestampDate    pgtype.Date `json:"timestamp_date"`
-}
-
-type GlucoseManual struct {
-	GlucoseID        string             `json:"glucose_id"`
-	UserID           string             `json:"user_id"`
-	GlucoseInputdate pgtype.Timestamptz `json:"glucose_inputdate"`
-	GlucoseValue     float64            `json:"glucose_value"`
-	GlucoseLevel     int64              `json:"glucose_level"`
 }
 
 type LogsAuth struct {
@@ -894,18 +824,6 @@ type MessageAttachment struct {
 	FileName      pgtype.Text        `json:"file_name"`
 	FileSizeBytes pgtype.Int8        `json:"file_size_bytes"`
 	UploadedAt    pgtype.Timestamptz `json:"uploaded_at"`
-}
-
-type Notification struct {
-	NotificationID int64              `json:"notification_id"`
-	UserID         pgtype.Text        `json:"user_id"`
-	SellerID       pgtype.Text        `json:"seller_id"`
-	DoctorID       pgtype.Text        `json:"doctor_id"`
-	Message        string             `json:"message"`
-	Type           string             `json:"type"`
-	IsRead         pgtype.Bool        `json:"is_read"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	Link           pgtype.Text        `json:"link"`
 }
 
 type OtpCode struct {
@@ -933,8 +851,7 @@ type PendingRegistration struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
-type Seller struct {
-	SellerID           string                 `json:"seller_id"`
+type SellerProfile struct {
 	SellerUsername     string                 `json:"seller_username"`
 	SellerPassword     string                 `json:"seller_password"`
 	SellerName         string                 `json:"seller_name"`
@@ -952,32 +869,7 @@ type Seller struct {
 	SellerBannerpath   pgtype.Text            `json:"seller_bannerpath"`
 	SellerJoindate     pgtype.Date            `json:"seller_joindate"`
 	SellerStatus       NullSellerSellerStatus `json:"seller_status"`
-}
-
-type SellerPromotion struct {
-	PromotionID         int64                         `json:"promotion_id"`
-	PromotionCode       string                        `json:"promotion_code"`
-	PromotionType       SellerPromotionsPromotionType `json:"promotion_type"`
-	PromotionValue      int64                         `json:"promotion_value"`
-	MinimumOrder        pgtype.Int8                   `json:"minimum_order"`
-	StartDate           pgtype.Timestamptz            `json:"start_date"`
-	EndDate             pgtype.Timestamptz            `json:"end_date"`
-	UsageLimit          pgtype.Int8                   `json:"usage_limit"`
-	PerUserLimit        pgtype.Int8                   `json:"per_user_limit"`
-	AppliesToSellerid   pgtype.Text                   `json:"applies_to_sellerid"`
-	AppliesToFoodid     pgtype.Text                   `json:"applies_to_foodid"`
-	AppliesToCategoryid pgtype.Text                   `json:"applies_to_categoryid"`
-	CreatedAt           pgtype.Timestamptz            `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz            `json:"updated_at"`
-}
-
-type SellerReview struct {
-	ReviewID      int64       `json:"review_id"`
-	SellerID      string      `json:"seller_id"`
-	UserID        string      `json:"user_id"`
-	ReviewRating  int16       `json:"review_rating"`
-	ReviewComment pgtype.Text `json:"review_comment"`
-	ReviewDate    pgtype.Date `json:"review_date"`
+	SellerID           pgtype.UUID            `json:"seller_id"`
 }
 
 // Unified user table supporting both traditional username/password and OAuth authentication
@@ -1012,35 +904,38 @@ type User struct {
 }
 
 type UserAddress struct {
-	AddressID         int64         `json:"address_id"`
-	UserID            string        `json:"user_id"`
-	AddressLine1      string        `json:"address_line1"`
-	AddressLine2      pgtype.Text   `json:"address_line2"`
-	AddressCity       string        `json:"address_city"`
-	AddressProvince   pgtype.Text   `json:"address_province"`
-	AddressPostalcode pgtype.Text   `json:"address_postalcode"`
-	AddressLatitude   pgtype.Float8 `json:"address_latitude"`
-	AddressLongitude  pgtype.Float8 `json:"address_longitude"`
-	AddressLabel      pgtype.Text   `json:"address_label"`
-	IsDefault         pgtype.Bool   `json:"is_default"`
+	AddressID         pgtype.UUID        `json:"address_id"`
+	UserID            string             `json:"user_id"`
+	AddressLine1      string             `json:"address_line1"`
+	AddressLine2      pgtype.Text        `json:"address_line2"`
+	AddressCity       string             `json:"address_city"`
+	AddressProvince   pgtype.Text        `json:"address_province"`
+	AddressPostalcode pgtype.Text        `json:"address_postalcode"`
+	AddressLatitude   pgtype.Float8      `json:"address_latitude"`
+	AddressLongitude  pgtype.Float8      `json:"address_longitude"`
+	AddressLabel      string             `json:"address_label"`
+	RecipientName     pgtype.Text        `json:"recipient_name"`
+	RecipientPhone    pgtype.Text        `json:"recipient_phone"`
+	DeliveryNotes     pgtype.Text        `json:"delivery_notes"`
+	IsDefault         bool               `json:"is_default"`
+	IsActive          bool               `json:"is_active"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type UserCart struct {
-	CartID     string             `json:"cart_id"`
-	UserID     pgtype.Text        `json:"user_id"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	TotalPrice pgtype.Int8        `json:"total_price"`
-	CartStatus UserCartCartStatus `json:"cart_status"`
+	CartID    pgtype.UUID        `json:"cart_id"`
+	UserID    string             `json:"user_id"`
+	SellerID  pgtype.UUID        `json:"seller_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
-type UserCartitem struct {
-	CartitemID string      `json:"cartitem_id"`
-	CartID     pgtype.Text `json:"cart_id"`
-	UserID     pgtype.Text `json:"user_id"`
-	FoodID     pgtype.Text `json:"food_id"`
-	FoodPrice  pgtype.Int8 `json:"food_price"`
+type UserCartItem struct {
+	CartItemID pgtype.UUID `json:"cart_item_id"`
+	CartID     pgtype.UUID `json:"cart_id"`
+	FoodID     pgtype.UUID `json:"food_id"`
 	Quantity   int32       `json:"quantity"`
-	Subtotal   pgtype.Int8 `json:"subtotal"`
 }
 
 type UserEmailChangeRequest struct {
@@ -1052,60 +947,25 @@ type UserEmailChangeRequest struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
-type UserHealthdatum struct {
-	HealthdataID            string             `json:"healthdata_id"`
-	UserID                  pgtype.Text        `json:"user_id"`
-	HealthdataRecordtime    pgtype.Timestamptz `json:"healthdata_recordtime"`
-	HealthdataWeight        pgtype.Numeric     `json:"healthdata_weight"`
-	HealthdataHeight        pgtype.Numeric     `json:"healthdata_height"`
-	HealthdataBmi           pgtype.Numeric     `json:"healthdata_bmi"`
-	HealthdataBloodpressure pgtype.Text        `json:"healthdata_bloodpressure"`
-	HealthdataHeartrate     pgtype.Int4        `json:"healthdata_heartrate"`
-	HealthdataNotes         pgtype.Text        `json:"healthdata_notes"`
-	RecordedBy              string             `json:"recorded_by"`
-}
-
 type UserOrder struct {
-	OrderID           string                     `json:"order_id"`
-	UserID            string                     `json:"user_id"`
-	SellerID          pgtype.Text                `json:"seller_id"`
-	CartID            string                     `json:"cart_id"`
-	OrderDate         pgtype.Timestamptz         `json:"order_date"`
-	TotalAmount       int64                      `json:"total_amount"`
-	PaymentStatus     NullUserOrderPaymentStatus `json:"payment_status"`
-	ShippingAddress   pgtype.Text                `json:"shipping_address"`
-	OrderStatus       NullUserOrderOrderStatus   `json:"order_status"`
-	OrderNotes        pgtype.Text                `json:"order_notes"`
-	OrderRejectreason string                     `json:"order_rejectreason"`
+	OrderID             pgtype.UUID        `json:"order_id"`
+	UserID              string             `json:"user_id"`
+	SellerID            pgtype.UUID        `json:"seller_id"`
+	TotalPrice          pgtype.Numeric     `json:"total_price"`
+	Status              string             `json:"status"`
+	DeliveryAddressJson []byte             `json:"delivery_address_json"`
+	PaymentStatus       string             `json:"payment_status"`
+	PaymentMethod       pgtype.Text        `json:"payment_method"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
-type UserSellerfavorite struct {
-	FavoriteID int64  `json:"favorite_id"`
-	UserID     string `json:"user_id"`
-	SellerID   string `json:"seller_id"`
-}
-
-type UserTransaction struct {
-	PaymentID            string                           `json:"payment_id"`
-	OrderID              string                           `json:"order_id"`
-	UserID               string                           `json:"user_id"`
-	PaymentMethod        pgtype.Text                      `json:"payment_method"`
-	PaymentAmount        int64                            `json:"payment_amount"`
-	PaymentStatus        NullUserTransactionPaymentStatus `json:"payment_status"`
-	GatewayTransactionID pgtype.Text                      `json:"gateway_transaction_id"`
-	GatewayResponse      pgtype.Text                      `json:"gateway_response"`
-	ApprovalCode         pgtype.Text                      `json:"approval_code"`
-	CreatedAt            pgtype.Timestamptz               `json:"created_at"`
-	PaidAt               pgtype.Timestamptz               `json:"paid_at"`
-}
-
-type UserVip struct {
-	UserID      string               `json:"user_id"`
-	ActivatedAt pgtype.Timestamptz   `json:"activated_at"`
-	ExpiresAt   pgtype.Timestamptz   `json:"expires_at"`
-	PaymentID   pgtype.Text          `json:"payment_id"`
-	Notes       pgtype.Text          `json:"notes"`
-	VipStatus   NullUserVipVipStatus `json:"vip_status"`
+type UserOrderItem struct {
+	OrderItemID      pgtype.UUID    `json:"order_item_id"`
+	OrderID          pgtype.UUID    `json:"order_id"`
+	FoodID           pgtype.UUID    `json:"food_id"`
+	Quantity         int32          `json:"quantity"`
+	PriceAtPurchase  pgtype.Numeric `json:"price_at_purchase"`
+	FoodNameSnapshot string         `json:"food_name_snapshot"`
 }
 
 type UsersAuth struct {

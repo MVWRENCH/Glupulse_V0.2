@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	AccessTokenDuration  = 15 * time.Minute
+	AccessTokenDuration  = 24 * time.Hour
 	RefreshTokenDuration = 30 * 24 * time.Hour
 	OtpExpiryDuration    = 60 * time.Second
 	OtpStoreRetention    = 30 * time.Minute
@@ -116,22 +116,28 @@ type GoogleUserInfo struct {
 }
 
 type SignupRequest struct {
-	Username     string  `json:"username" form:"username" validate:"required,min=3,max=50"`
-	Password     string  `json:"password" form:"password" validate:"required,min=8"`
-	Email        string  `json:"email" form:"email" validate:"required,email"`
-	FirstName    string  `json:"first_name" form:"first_name" validate:"required"`
-	LastName     string  `json:"last_name" form:"last_name" validate:"required"`
-	DOB          string  `json:"dob" form:"dob"`
-	Gender       string  `json:"gender" form:"gender"`
-	Created_At   string  `json:"created_at" form:"created_at"`
-	AddressLine1 string  `json:"address_line1" form:"address_line1"`
-	AddressLine2 string  `json:"address_line2" form:"address_line2"`
-	City         string  `json:"city" form:"city"`
-	Province     string  `json:"province" form:"province"`
-	PostalCode   string  `json:"postal_code" form:"postal_code"`
-	Latitude     float64 `json:"latitude" form:"latitude"`
-	Longitude    float64 `json:"longitude" form:"longitude"`
-	AddressLabel string  `json:"address_label" form:"address_label"`
+	Username  string `json:"username" form:"username" validate:"required,min=3,max=50"`
+	Password  string `json:"password" form:"password" validate:"required,min=8"`
+	Email     string `json:"email" form:"email" validate:"required,email"`
+	FirstName string `json:"first_name" form:"first_name" validate:"required"`
+	LastName  string `json:"last_name" form:"last_name" validate:"required"`
+	DOB       string `json:"dob" form:"dob"`
+	Gender    string `json:"gender" form:"gender"`
+
+	// Optional address fields during signup
+	AddressLine1      *string  `json:"address_line1,omitempty" form:"address_line1"`
+	AddressLine2      *string  `json:"address_line2,omitempty" form:"address_line2"`
+	AddressCity       *string  `json:"address_city,omitempty" form:"address_city"`
+	AddressProvince   *string  `json:"address_province,omitempty" form:"address_province"`
+	AddressPostalCode *string  `json:"address_postalcode,omitempty" form:"address_postalcode"`
+	AddressLatitude   *float64 `json:"address_latitude,omitempty" form:"address_latitude"`
+	AddressLongitude  *float64 `json:"address_longitude,omitempty" form:"address_longitude"`
+	AddressLabel      *string  `json:"address_label,omitempty" form:"address_label"`
+
+	// Optional recipient info
+	RecipientName  *string `json:"recipient_name,omitempty" form:"recipient_name"`
+	RecipientPhone *string `json:"recipient_phone,omitempty" form:"recipient_phone"`
+	DeliveryNotes  *string `json:"delivery_notes,omitempty" form:"delivery_notes"`
 }
 
 type LoginRequest struct {
@@ -203,16 +209,19 @@ type AuthLogEntry struct {
 	Metadata  map[string]interface{}
 }
 
-// AddressData stores user addresses
+// AddressData stores user address information (for raw_data JSON storage)
 type AddressData struct {
-	AddressLine1 string
-	AddressLine2 string
-	City         string
-	Province     string
-	PostalCode   string
-	Latitude     float64
-	Longitude    float64
-	AddressLabel string
+	AddressLine1   string   `json:"address_line1"`
+	AddressLine2   *string  `json:"address_line2,omitempty"`
+	City           string   `json:"address_city"`
+	Province       *string  `json:"address_province,omitempty"`
+	PostalCode     *string  `json:"address_postalcode,omitempty"`
+	Latitude       *float64 `json:"address_latitude,omitempty"`
+	Longitude      *float64 `json:"address_longitude,omitempty"`
+	AddressLabel   string   `json:"address_label"`
+	RecipientName  *string  `json:"recipient_name,omitempty"`
+	RecipientPhone *string  `json:"recipient_phone,omitempty"`
+	DeliveryNotes  *string  `json:"delivery_notes,omitempty"`
 }
 
 type LinkGoogleRequest struct {
@@ -448,7 +457,7 @@ func MobileGoogleAuthHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
 	}
 
-	refreshToken, err := generateAndStoreRefreshToken(ctx, user.UserID, c.Request())
+	refreshToken, err := generateAndStoreRefreshToken(ctx, c, queries, user.UserID, c.Request())
 	if err != nil {
 		LogAuthActivity(ctx, c, AuthLogEntry{
 			UserID:   utility.StringPtr(user.UserID),
@@ -625,7 +634,7 @@ func CallbackHandler(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "Error generating access token")
 	}
 
-	refreshToken, err := generateAndStoreRefreshToken(ctx, user.UserID, c.Request())
+	refreshToken, err := generateAndStoreRefreshToken(ctx, c, queries, user.UserID, c.Request())
 	if err != nil {
 		LogAuthActivity(ctx, c, AuthLogEntry{
 			UserID:   utility.StringPtr(user.UserID),
@@ -655,87 +664,6 @@ func CallbackHandler(c echo.Context) error {
 	// Set cookies and redirect
 	setAuthCookies(c, accessToken, refreshToken)
 	return c.Redirect(http.StatusTemporaryRedirect, "/welcome/web")
-}
-
-// RefreshHandler with logging
-func RefreshHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	var refreshToken string
-
-	// Try to get from Authorization header first (mobile)
-	authHeader := c.Request().Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		refreshToken = strings.TrimPrefix(authHeader, "Bearer ")
-	} else {
-		// Try cookie (web)
-		cookie, err := c.Cookie("refresh-token")
-		if err == nil {
-			refreshToken = cookie.Value
-		}
-	}
-
-	if refreshToken == "" {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRefresh,
-			Action:   "refresh_no_token",
-			Message:  "Refresh attempt without token",
-			Level:    LogLevelWarning,
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "No refresh token provided"})
-	}
-
-	user, newRefreshToken, err := useRefreshToken(ctx, refreshToken, c.Request())
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRefresh,
-			Action:   "refresh_invalid_token",
-			Message:  fmt.Sprintf("Invalid or expired refresh token: %s", err.Error()),
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired refresh token"})
-	}
-
-	accessToken, err := generateAccessToken(user)
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: LogCategoryRefresh,
-			Action:   "refresh_token_generation_error",
-			Message:  "Error generating access token during refresh",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
-	}
-
-	// Log successful refresh
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: LogCategoryRefresh,
-		Action:   "refresh_success",
-		Message:  "Token refreshed successfully",
-		Level:    LogLevelInfo,
-	})
-
-	isMobile := c.Request().Header.Get("X-Platform") == "mobile" || strings.HasPrefix(authHeader, "Bearer ")
-
-	if isMobile {
-		response := AuthResponse{
-			AccessToken:  accessToken,
-			RefreshToken: newRefreshToken,
-			TokenType:    "Bearer",
-			ExpiresIn:    int64(AccessTokenDuration.Seconds()),
-			User:         *user,
-		}
-		return c.JSON(http.StatusOK, response)
-	}
-
-	// Web: update cookies
-	setAuthCookies(c, accessToken, newRefreshToken)
-	return c.JSON(http.StatusOK, map[string]string{"message": "Token refreshed"})
 }
 
 func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
@@ -864,29 +792,121 @@ func generateAccessToken(user *database.User) (string, error) {
 	return token.SignedString(sessionSecret)
 }
 
-func generateAndStoreRefreshToken(ctx context.Context, userID string, r *http.Request) (string, error) {
+// RefreshHandler with logging
+func RefreshHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	var refreshToken string
 
+	var bodyReq struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := c.Bind(&bodyReq); err == nil && bodyReq.RefreshToken != "" {
+		refreshToken = bodyReq.RefreshToken
+		log.Info().Msg("Refresh token received from request body")
+	}
+
+	if refreshToken == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRefresh,
+			Action:   "refresh_no_token",
+			Message:  "Refresh attempt without token",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "No refresh token provided. Send in body",
+		})
+	}
+
+	log.Info().Msgf("Processing refresh token (first 10 chars): %s...", refreshToken[:min(10, len(refreshToken))])
+
+	user, newRefreshToken, err := useRefreshToken(ctx, c, refreshToken, c.Request())
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRefresh,
+			Action:   "refresh_invalid_token",
+			Message:  fmt.Sprintf("Invalid or expired refresh token: %s", err.Error()),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error":   "Invalid or expired refresh token",
+			"details": err.Error(), // Add details for debugging (remove in production)
+		})
+	}
+
+	accessToken, err := generateAccessToken(user)
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryRefresh,
+			Action:   "refresh_token_generation_error",
+			Message:  "Error generating access token during refresh",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
+	}
+
+	// Log successful refresh
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryRefresh,
+		Action:   "refresh_success",
+		Message:  "Token refreshed successfully",
+		Level:    LogLevelInfo,
+	})
+
+	// Determine platform
+	isMobile := c.Request().Header.Get("X-Platform") == "mobile" ||
+		strings.HasPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
+
+	if isMobile {
+		response := AuthResponse{
+			AccessToken:  accessToken,
+			RefreshToken: newRefreshToken,
+			TokenType:    "Bearer",
+			ExpiresIn:    int64(AccessTokenDuration.Seconds()),
+			User:         *user,
+		}
+		return c.JSON(http.StatusOK, response)
+	}
+
+	// Web: update cookies
+	setAuthCookies(c, accessToken, newRefreshToken)
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":       "Token refreshed",
+		"access_token":  accessToken,
+		"refresh_token": newRefreshToken,
+	})
+}
+
+func generateAndStoreRefreshToken(ctx context.Context, c echo.Context, q *database.Queries, userID string, r *http.Request) (string, error) {
+	// Generate 32 random bytes
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", err
 	}
+
+	// Create the token string that will be sent to client
 	token := base64.URLEncoding.EncodeToString(tokenBytes)
 
-	hash := sha256.Sum256([]byte(token))
+	// Hash the ORIGINAL raw bytes (not the base64 string)
+	hash := sha256.Sum256(tokenBytes)
 	tokenHash := base64.URLEncoding.EncodeToString(hash[:])
 
 	deviceInfo := r.UserAgent()
-	ipAddress := r.RemoteAddr
+	realIP := utility.GetRealIP(c)
 
 	var ipAddr *netip.Addr
-	ipStr := strings.Split(ipAddress, ":")[0]
-	if ip, err := netip.ParseAddr(ipStr); err == nil {
+	if ip, err := netip.ParseAddr(realIP); err == nil {
 		ipAddr = &ip
 	}
 
-	// No conversion needed - pass userID directly as string
-	_, err := queries.CreateRefreshToken(ctx, database.CreateRefreshTokenParams{
-		UserID:     userID, // Now string, not pgtype.UUID
+	// Store the hash
+	_, err := q.CreateRefreshToken(ctx, database.CreateRefreshTokenParams{
+		UserID:     userID,
 		TokenHash:  tokenHash,
 		DeviceInfo: pgtype.Text{String: deviceInfo, Valid: deviceInfo != ""},
 		IpAddress:  ipAddr,
@@ -894,16 +914,30 @@ func generateAndStoreRefreshToken(ctx context.Context, userID string, r *http.Re
 	})
 
 	if err != nil {
-		log.Info().Msgf("Database error creating refresh token for user %s: %v", userID, err)
+		log.Error().Err(err).Msgf("Database error creating refresh token for user %s", userID)
 		return "", err
 	}
+
+	log.Info().Msgf("Refresh token created for user %s. Token (first 10 chars): %s..., Hash (first 10 chars): %s...",
+		userID, token[:10], tokenHash[:10])
 
 	return token, nil
 }
 
-func useRefreshToken(ctx context.Context, token string, r *http.Request) (*database.User, string, error) {
-	hash := sha256.Sum256([]byte(token))
+func useRefreshToken(ctx context.Context, c echo.Context, token string, r *http.Request) (*database.User, string, error) {
+	// Decode the base64 token back to raw bytes
+	tokenBytes, err := base64.URLEncoding.DecodeString(token)
+	if err != nil {
+		log.Warn().Err(err).Msgf("Failed to decode refresh token")
+		return nil, "", fmt.Errorf("invalid token format")
+	}
+
+	// Hash the raw bytes (same as we did when storing)
+	hash := sha256.Sum256(tokenBytes)
 	tokenHash := base64.URLEncoding.EncodeToString(hash[:])
+
+	log.Info().Msgf("Looking up refresh token. Token (first 10 chars): %s..., Hash (first 10 chars): %s...",
+		token[:utility.Min(10, len(token))], tokenHash[:10])
 
 	tx, err := database.Dbpool.Begin(ctx)
 	if err != nil {
@@ -915,39 +949,48 @@ func useRefreshToken(ctx context.Context, token string, r *http.Request) (*datab
 
 	rt, err := qtx.GetRefreshTokenByHash(ctx, tokenHash)
 	if err != nil {
+		log.Warn().Err(err).Msgf("Refresh token not found in database. Hash: %s...", tokenHash[:10])
 		return nil, "", fmt.Errorf("invalid refresh token")
 	}
 
+	log.Info().Msgf("Refresh token found for user %s", rt.UserID)
+
 	// Check if token is revoked
 	if rt.RevokedAt.Valid {
+		log.Warn().Msgf("Attempted use of revoked refresh token for user %s", rt.UserID)
 		return nil, "", fmt.Errorf("token has been revoked")
 	}
 
 	// Check if token is expired
 	if rt.ExpiresAt.Valid && time.Now().After(rt.ExpiresAt.Time) {
+		log.Warn().Msgf("Attempted use of expired refresh token for user %s", rt.UserID)
 		return nil, "", fmt.Errorf("token has expired")
 	}
 
-	user, err := queries.GetUserByID(ctx, rt.UserID) // Use .String() as GetUserByID likely takes string
+	user, err := queries.GetUserByID(ctx, rt.UserID)
 	if err != nil {
+		log.Error().Err(err).Msgf("User not found for refresh token: %s", rt.UserID)
 		return nil, "", fmt.Errorf("user not found")
 	}
 
 	// Generate new refresh token
-	// Pass string representation of UUID
-	newToken, err := generateAndStoreRefreshToken(ctx, rt.UserID, r)
+	newToken, err := generateAndStoreRefreshToken(ctx, c, qtx, rt.UserID, r)
 	if err != nil {
+		log.Error().Err(err).Msgf("Failed to generate new refresh token for user %s", rt.UserID)
 		return nil, "", err
 	}
 
 	// Revoke old token
 	if err := qtx.RevokeRefreshToken(ctx, rt.ID); err != nil {
-		log.Info().Msgf("Warning: failed to revoke old refresh token: %v", err)
+		log.Warn().Err(err).Msgf("Failed to revoke old refresh token for user %s", rt.UserID)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		log.Error().Err(err).Msgf("Failed to commit transaction for user %s", rt.UserID)
 		return nil, "", err
 	}
+
+	log.Info().Msgf("Refresh token successfully rotated for user %s", rt.UserID)
 
 	return &user, newToken, nil
 }
@@ -1191,30 +1234,73 @@ func SignupHandler(c echo.Context) error {
 	}
 
 	// Prepare address data if provided
-	var addressData map[string]interface{}
-	if req.AddressLine1 != "" {
-		addressLabel := req.AddressLabel
-		if addressLabel == "" {
-			addressLabel = "Home"
+	var addressData *AddressData
+	if req.AddressLine1 != nil && *req.AddressLine1 != "" &&
+		req.AddressCity != nil && *req.AddressCity != "" {
+
+		// Validate address fields
+		if len(*req.AddressLine1) < 5 {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "Address line 1 must be at least 5 characters",
+			})
 		}
-		addressData = map[string]interface{}{
-			"address_line1": req.AddressLine1,
-			"address_line2": req.AddressLine2,
-			"city":          req.City,
-			"province":      req.Province,
-			"postal_code":   req.PostalCode,
-			"latitude":      req.Latitude,
-			"longitude":     req.Longitude,
-			"address_label": addressLabel,
+		if len(*req.AddressCity) < 2 {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "City must be at least 2 characters",
+			})
 		}
+
+		// Validate coordinates if provided
+		if req.AddressLatitude != nil {
+			if *req.AddressLatitude < -90 || *req.AddressLatitude > 90 {
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": "Invalid latitude value (must be between -90 and 90)",
+				})
+			}
+		}
+		if req.AddressLongitude != nil {
+			if *req.AddressLongitude < -180 || *req.AddressLongitude > 180 {
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": "Invalid longitude value (must be between -180 and 180)",
+				})
+			}
+		}
+
+		// Set default label if not provided
+		addressLabel := "Home"
+		if req.AddressLabel != nil && *req.AddressLabel != "" {
+			addressLabel = *req.AddressLabel
+		}
+
+		addressData = &AddressData{
+			AddressLine1:   *req.AddressLine1,
+			AddressLine2:   req.AddressLine2,
+			City:           *req.AddressCity,
+			Province:       req.AddressProvince,
+			PostalCode:     req.AddressPostalCode,
+			Latitude:       req.AddressLatitude,
+			Longitude:      req.AddressLongitude,
+			AddressLabel:   addressLabel,
+			RecipientName:  req.RecipientName,
+			RecipientPhone: req.RecipientPhone,
+			DeliveryNotes:  req.DeliveryNotes,
+		}
+
+		log.Info().Msgf("Address data provided for signup: %s, %s", addressLabel, *req.AddressCity)
 	}
 
 	// Store additional data in JSON
-	rawData, err := json.Marshal(map[string]interface{}{
-		"dob":     req.DOB,
-		"gender":  req.Gender,
-		"address": addressData,
-	})
+	rawDataMap := map[string]interface{}{
+		"dob":    req.DOB,
+		"gender": req.Gender,
+	}
+
+	// Add address to raw_data if provided
+	if addressData != nil {
+		rawDataMap["address"] = addressData
+	}
+
+	rawData, err := json.Marshal(rawDataMap)
 	if err != nil {
 		LogAuthActivity(ctx, c, AuthLogEntry{
 			UserID:   nil,
@@ -1675,7 +1761,10 @@ func sendOTPEmail(toEmail, otpCode, purpose string) error {
 				<div style="background: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; letter-spacing: 5px; font-weight: bold; margin: 20px 0;">
 					%s
 				</div>
-				<p><strong>Kode ini berlaku selama 5 menit.</strong></p>
+				<p><strong>Kode ini berlaku selama 1 menit.</strong></p>
+				<p>Jika Anda tidak mencoba login, segera amankan akun Anda.</p>
+				<hr>
+				<p style="color: #666; font-size: 12px;">Email otomatis dari GluPulse</p>
 			</body>
 			</html>
 		`, otpCode)
@@ -1861,28 +1950,28 @@ func VerifyOTPHandler(c echo.Context) error {
 	atomic.AddInt64(&metrics.OTPVerified, 1)
 
 	parsedUUID, err := uuid.Parse(entityID)
-    if err != nil {
-        LogAuthActivity(ctx, c, AuthLogEntry{
-            UserID:   utility.StringPtr(entityID),
-            Category: LogCategoryError,
-            Action:   "otp_verify_invalid_uuid",
-            Message:  "Invalid entity ID format",
-            Level:    LogLevelError,
-            Metadata: map[string]interface{}{"error": err.Error()},
-        })
-        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid entity ID"})
-    }
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(entityID),
+			Category: LogCategoryError,
+			Action:   "otp_verify_invalid_uuid",
+			Message:  "Invalid entity ID format",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid entity ID"})
+	}
 
-    var entityUUID pgtype.UUID
-    copy(entityUUID.Bytes[:], parsedUUID[:])
-    entityUUID.Valid = true
+	var entityUUID pgtype.UUID
+	copy(entityUUID.Bytes[:], parsedUUID[:])
+	entityUUID.Valid = true
 
 	if err := queries.DeleteOTPCodeByEntityID(ctx, entityUUID); err != nil {
-        log.Warn().Msgf("Warning: Failed to delete OTP after successful verification for entity %s: %v", entityID, err)
-        // Continue anyway - OTP already verified
-    } else {
-        log.Info().Msgf("OTP successfully deleted for entity %s after verification", entityID)
-    }
+		log.Warn().Msgf("Warning: Failed to delete OTP after successful verification for entity %s: %v", entityID, err)
+		// Continue anyway - OTP already verified
+	} else {
+		log.Info().Msgf("OTP successfully deleted for entity %s after verification", entityID)
+	}
 
 	var user database.User
 	var userResponse UserResponse
@@ -1966,7 +2055,7 @@ func VerifyOTPHandler(c echo.Context) error {
 			log.Error().Msgf("Failed to begin transaction: %v", err)
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
 		}
-		defer tx.Rollback(ctx) // Rollback on any error
+		defer tx.Rollback(ctx)
 
 		qtx := queries.WithTx(tx)
 
@@ -1988,7 +2077,7 @@ func VerifyOTPHandler(c echo.Context) error {
 
 		if err != nil {
 			LogAuthActivity(ctx, c, AuthLogEntry{
-				UserID:   utility.StringPtr(req.PendingID),
+				UserID:   utility.StringPtr(entityID),
 				Category: LogCategoryError,
 				Action:   "user_creation_failed",
 				Message:  "Failed to create user after OTP verification",
@@ -2002,40 +2091,75 @@ func VerifyOTPHandler(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create user account"})
 		}
 
-		// Create address if provided
-		if addressData, ok := rawData["address"].(map[string]interface{}); ok && addressData != nil {
-			if addressLine1, _ := addressData["address_line1"].(string); addressLine1 != "" {
-				addressLine2, _ := addressData["address_line2"].(string)
-				city, _ := addressData["city"].(string)
-				province, _ := addressData["province"].(string)
-				postalCode, _ := addressData["postal_code"].(string)
-				latitude, _ := addressData["latitude"].(float64)
-				longitude, _ := addressData["longitude"].(float64)
-				addressLabel, _ := addressData["address_label"].(string)
-				if addressLabel == "" {
-					addressLabel = "Home"
-				}
+		// Create address if provided in raw_data
+		if addressInterface, ok := rawData["address"]; ok && addressInterface != nil {
+			addressJSON, err := json.Marshal(addressInterface)
+			if err != nil {
+				log.Warn().Msgf("Warning: Failed to marshal address data: %v", err)
+			} else {
+				var addressData AddressData
+				if err := json.Unmarshal(addressJSON, &addressData); err != nil {
+					log.Warn().Msgf("Warning: Failed to unmarshal address data: %v", err)
+				} else if addressData.AddressLine1 != "" && addressData.City != "" {
 
-				_, err = qtx.CreateUserAddress(ctx, database.CreateUserAddressParams{
-					UserID:            userID,
-					AddressLine1:      addressLine1,
-					AddressLine2:      pgtype.Text{String: addressLine2, Valid: addressLine2 != ""},
-					AddressCity:       city,
-					AddressProvince:   pgtype.Text{String: province, Valid: province != ""},
-					AddressPostalcode: pgtype.Text{String: postalCode, Valid: postalCode != ""},
-					AddressLatitude:   pgtype.Float8{Float64: latitude, Valid: latitude != 0},
-					AddressLongitude:  pgtype.Float8{Float64: longitude, Valid: longitude != 0},
-					AddressLabel:      pgtype.Text{String: addressLabel, Valid: true},
-					IsDefault:         pgtype.Bool{Bool: true, Valid: true},
-				})
-				if err != nil {
-					log.Warn().Msgf("Warning: Failed to create address: %v", err)
+					addressParams := database.CreateUserAddressParams{
+						UserID:       userID,
+						AddressLine1: addressData.AddressLine1,
+						AddressCity:  addressData.City,
+						AddressLabel: addressData.AddressLabel,
+						IsDefault:    true,
+					}
+
+					// Optional text fields
+					if addressData.AddressLine2 != nil && *addressData.AddressLine2 != "" {
+						addressParams.AddressLine2 = pgtype.Text{String: *addressData.AddressLine2, Valid: true}
+					}
+					if addressData.Province != nil && *addressData.Province != "" {
+						addressParams.AddressProvince = pgtype.Text{String: *addressData.Province, Valid: true}
+					}
+					if addressData.PostalCode != nil && *addressData.PostalCode != "" {
+						addressParams.AddressPostalcode = pgtype.Text{String: *addressData.PostalCode, Valid: true}
+					}
+
+					if addressData.Latitude != nil {
+						addressParams.AddressLatitude = pgtype.Float8{
+							Float64: *addressData.Latitude,
+							Valid:   true,
+						}
+					}
+					if addressData.Longitude != nil {
+						addressParams.AddressLongitude = pgtype.Float8{
+							Float64: *addressData.Longitude,
+							Valid:   true,
+						}
+					}
+
+					if addressData.RecipientName != nil && *addressData.RecipientName != "" {
+						addressParams.RecipientName = pgtype.Text{String: *addressData.RecipientName, Valid: true}
+					}
+					if addressData.RecipientPhone != nil && *addressData.RecipientPhone != "" {
+						addressParams.RecipientPhone = pgtype.Text{String: *addressData.RecipientPhone, Valid: true}
+					}
+					if addressData.DeliveryNotes != nil && *addressData.DeliveryNotes != "" {
+						addressParams.DeliveryNotes = pgtype.Text{String: *addressData.DeliveryNotes, Valid: true}
+					}
+
+					createdAddress, err := qtx.CreateUserAddress(ctx, addressParams)
+					if err != nil {
+						log.Error().Err(err).Msgf("Failed to create address for user %s", userID)
+					} else {
+						log.Info().Msgf("Address created successfully for user %s: %s",
+							userID, createdAddress.AddressID)
+					}
 				}
 			}
 		}
 
 		// Delete pending registration
 		qtx.DeletePendingRegistration(ctx, pendingUUID)
+
+		// Delete OTP within transaction
+		qtx.DeleteOTPCodeByEntityID(ctx, pendingUUID)
 
 		if err := tx.Commit(ctx); err != nil {
 			log.Error().Msgf("Failed to commit transaction: %v", err)
@@ -2104,7 +2228,7 @@ func VerifyOTPHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
 	}
 
-	refreshToken, err := generateAndStoreRefreshToken(ctx, user.UserID, c.Request())
+	refreshToken, err := generateAndStoreRefreshToken(ctx, c, queries, user.UserID, c.Request())
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating refresh token"})
 	}
@@ -2138,8 +2262,7 @@ func VerifyOTPHandler(c echo.Context) error {
 	}
 
 	// Check if mobile request
-	isMobile := c.Request().Header.Get("X-Platform") == "mobile" ||
-		strings.HasPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
+	isMobile := c.Request().Header.Get("X-Platform") == "mobile"
 
 	if isMobile {
 		if isSignupFlow {
