@@ -77,11 +77,12 @@ var (
 			EnableSMTPCheck().
 			EnableAutoUpdateDisposable().
 			EnableDomainSuggest()
-	emailCache, _      = lru.New[string, emailVerificationResult](1000)
-	otpCleanupShutdown = make(chan struct{})
-	pendingRegShutdown = make(chan struct{})
-	metrics            AuthMetrics
-	sessionSecret      []byte
+	emailCache, _        = lru.New[string, emailVerificationResult](1000)
+	otpCleanupShutdown   = make(chan struct{})
+	pendingRegShutdown   = make(chan struct{})
+	metrics              AuthMetrics
+	sessionSecret        []byte
+	validGoogleAudiences []string
 )
 
 type JwtCustomClaims struct {
@@ -268,11 +269,19 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 	sessionSecret = []byte(sessionSecretStr)
 
 	googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
+	googleAndroidClientId := os.Getenv("GOOGLE_CLIENT_ID_ANDROID")
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	appUrl := os.Getenv("APP_URL")
 
-	if googleClientId == "" || googleClientSecret == "" || appUrl == "" {
-		return fmt.Errorf("GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and APP_URL must be set")
+	if googleClientId == "" || googleAndroidClientId == "" || googleClientSecret == "" || appUrl == "" {
+		return fmt.Errorf("GOOGLE_CLIENT_ID, GOOGLE_CLIENT_ID_ANDROID, GOOGLE_CLIENT_SECRET, and APP_URL must be set")
+	}
+
+	if googleClientId != "" {
+		validGoogleAudiences = append(validGoogleAudiences, googleClientId)
+	}
+	if googleAndroidClientId != "" {
+		validGoogleAudiences = append(validGoogleAudiences, googleAndroidClientId)
 	}
 
 	otpDummySecret := os.Getenv("OTPDummySecret")
@@ -513,9 +522,22 @@ func verifyGoogleIDToken(idToken string) (*GoogleUserInfo, error) {
 		return nil, fmt.Errorf("failed to decode user info: %w", err)
 	}
 
-	googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
-	if userInfo.Aud != googleClientId {
-		return nil, fmt.Errorf("token audience did not match app client ID")
+	// googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
+	// if userInfo.Aud != googleClientId {
+	// 	return nil, fmt.Errorf("token audience did not match app client ID")
+	// }
+
+	isAudienceValid := false
+	for _, aud := range validGoogleAudiences {
+		if userInfo.Aud == aud {
+			isAudienceValid = true
+			break
+		}
+	}
+
+	if !isAudienceValid {
+		// Return a clear error including the invalid audience
+		return nil, fmt.Errorf("token audience (%s) did not match any registered client ID", userInfo.Aud)
 	}
 
 	if userInfo.EmailVerified != "true" {
@@ -2061,18 +2083,18 @@ func VerifyOTPHandler(c echo.Context) error {
 
 		// Create user
 		user, err = qtx.CreateUser(ctx, database.CreateUserParams{
-			UserID:            userID,
-			UserUsername:      pending.Username,
-			UserPassword:      pgtype.Text{String: pending.HashedPassword, Valid: true},
-			UserFirstname:     pending.FirstName,
-			UserLastname:      pending.LastName,
-			UserEmail:         pgtype.Text{String: pending.Email, Valid: true},
-			UserDob:           dob,
-			UserGender:        gender,
-			UserAccounttype:   pgtype.Int2{Int16: 0, Valid: true},
-			IsEmailVerified:   pgtype.Bool{Bool: true, Valid: true},
-			EmailVerifiedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			UserCreatedAtAuth: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserID:          userID,
+			UserUsername:    pending.Username,
+			UserPassword:    pgtype.Text{String: pending.HashedPassword, Valid: true},
+			UserFirstname:   pending.FirstName,
+			UserLastname:    pending.LastName,
+			UserEmail:       pgtype.Text{String: pending.Email, Valid: true},
+			UserDob:         dob,
+			UserGender:      gender,
+			UserAccounttype: pgtype.Int2{Int16: 0, Valid: true},
+			IsEmailVerified: pgtype.Bool{Bool: true, Valid: true},
+			EmailVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			CreatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		})
 
 		if err != nil {
@@ -2089,6 +2111,25 @@ func VerifyOTPHandler(c echo.Context) error {
 				},
 			})
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create user account"})
+		}
+
+		if err := qtx.AssignUserRole(ctx, database.AssignUserRoleParams{
+			UserID:   user.UserID,
+			RoleName: "user",
+		}); err != nil {
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(entityID),
+				Category: LogCategoryError,
+				Action:   "user_role_assign_failed",
+				Message:  "Failed to assign user role after user creation",
+				Level:    LogLevelError,
+				Metadata: map[string]interface{}{
+					"username": pending.Username.String,
+					"email":    pending.Email,
+					"error":    err.Error(),
+				},
+			})
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to assign user role"})
 		}
 
 		// Create address if provided in raw_data

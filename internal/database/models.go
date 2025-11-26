@@ -322,6 +322,7 @@ const (
 	SellerSellerStatusActive    SellerSellerStatus = "active"
 	SellerSellerStatusInactive  SellerSellerStatus = "inactive"
 	SellerSellerStatusSuspended SellerSellerStatus = "suspended"
+	SellerSellerStatusPending   SellerSellerStatus = "pending"
 )
 
 func (e *SellerSellerStatus) Scan(src interface{}) error {
@@ -621,33 +622,21 @@ func (ns NullUsersUserGender) Value() (driver.Value, error) {
 }
 
 type Activity struct {
-	ActivityID                string                        `json:"activity_id"`
-	ActivityCategoryid        pgtype.Text                   `json:"activity_categoryid"`
-	ActivityName              string                        `json:"activity_name"`
-	ActivityDuration          pgtype.Int4                   `json:"activity_duration"`
-	ActivityCaloriesperminute pgtype.Float8                 `json:"activity_caloriesperminute"`
-	ActivityIntensity         NullActivityActivityIntensity `json:"activity_intensity"`
-	ActivityInformation       pgtype.Text                   `json:"activity_information"`
-	ActivityPicturepath       pgtype.Text                   `json:"activity_picturepath"`
+	ID                  int32          `json:"id"`
+	ActivityCode        pgtype.Text    `json:"activity_code"`
+	ActivityName        string         `json:"activity_name"`
+	Description         pgtype.Text    `json:"description"`
+	ImageUrl            pgtype.Text    `json:"image_url"`
+	MetValue            pgtype.Numeric `json:"met_value"`
+	MeasurementUnit     pgtype.Text    `json:"measurement_unit"`
+	RecommendedMinValue pgtype.Numeric `json:"recommended_min_value"`
 }
 
-type ActivityCategory struct {
-	ActivityCategoryid          string      `json:"activity_categoryid"`
-	ActivityCategory            pgtype.Text `json:"activity_category"`
-	ActivityCategorydescription pgtype.Text `json:"activity_categorydescription"`
-}
-
-type ActivityRecommendation struct {
-	RecommendationID string             `json:"recommendation_id"`
-	UserID           string             `json:"user_id"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-}
-
-type ActivityRecommendationItem struct {
-	ItemID           string             `json:"item_id"`
-	RecommendationID string             `json:"recommendation_id"`
-	ActivityID       pgtype.Text        `json:"activity_id"`
-	TimestampDate    pgtype.Timestamptz `json:"timestamp_date"`
+type ActivityType struct {
+	ActivityTypeID int32       `json:"activity_type_id"`
+	ActivityCode   string      `json:"activity_code"`
+	DisplayName    string      `json:"display_name"`
+	IntensityLevel pgtype.Text `json:"intensity_level"`
 }
 
 type ChatConversation struct {
@@ -784,8 +773,10 @@ type Food struct {
 }
 
 type FoodCategory struct {
-	FoodCategoryid string `json:"food_categoryid"`
-	FoodCategory   string `json:"food_category"`
+	CategoryID   int32       `json:"category_id"`
+	CategoryCode string      `json:"category_code"`
+	DisplayName  string      `json:"display_name"`
+	Description  pgtype.Text `json:"description"`
 }
 
 type FoodPicture struct {
@@ -803,6 +794,13 @@ type FoodRecommendation struct {
 	SourceAgent      pgtype.Text        `json:"source_agent"`
 }
 
+type HealthConditionType struct {
+	ConditionID   int32       `json:"condition_id"`
+	ConditionCode string      `json:"condition_code"`
+	DisplayName   string      `json:"display_name"`
+	Description   pgtype.Text `json:"description"`
+}
+
 type LogsAuth struct {
 	LogID       pgtype.UUID        `json:"log_id"`
 	UserID      pgtype.Text        `json:"user_id"`
@@ -814,6 +812,12 @@ type LogsAuth struct {
 	UserAgent   pgtype.Text        `json:"user_agent"`
 	Metadata    []byte             `json:"metadata"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type MealType struct {
+	MealTypeID  int32  `json:"meal_type_id"`
+	MealCode    string `json:"meal_code"`
+	DisplayName string `json:"display_name"`
 }
 
 type MessageAttachment struct {
@@ -851,25 +855,39 @@ type PendingRegistration struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type RecommendationType struct {
+	RecTypeID   int32  `json:"rec_type_id"`
+	RecCode     string `json:"rec_code"`
+	DisplayName string `json:"display_name"`
+}
+
+type Role struct {
+	RoleID   int32  `json:"role_id"`
+	RoleName string `json:"role_name"`
+}
+
 type SellerProfile struct {
-	SellerUsername     string                 `json:"seller_username"`
-	SellerPassword     string                 `json:"seller_password"`
-	SellerName         string                 `json:"seller_name"`
-	SellerBusinessname string                 `json:"seller_businessname"`
-	SellerEmail        string                 `json:"seller_email"`
-	SellerPhonenumber  int64                  `json:"seller_phonenumber"`
-	SellerProvince     pgtype.Text            `json:"seller_province"`
-	SellerCity         pgtype.Text            `json:"seller_city"`
-	SellerDistrict     pgtype.Text            `json:"seller_district"`
-	SellerGmapslink    pgtype.Text            `json:"seller_gmapslink"`
-	SellerLat          pgtype.Text            `json:"seller_lat"`
-	SellerLong         pgtype.Text            `json:"seller_long"`
-	SellerAddress      string                 `json:"seller_address"`
-	SellerLogopath     pgtype.Text            `json:"seller_logopath"`
-	SellerBannerpath   pgtype.Text            `json:"seller_bannerpath"`
-	SellerJoindate     pgtype.Date            `json:"seller_joindate"`
-	SellerStatus       NullSellerSellerStatus `json:"seller_status"`
-	SellerID           pgtype.UUID            `json:"seller_id"`
+	SellerID           pgtype.UUID        `json:"seller_id"`
+	UserID             string             `json:"user_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	StoreName          string             `json:"store_name"`
+	StoreDescription   pgtype.Text        `json:"store_description"`
+	StorePhoneNumber   pgtype.Text        `json:"store_phone_number"`
+	IsOpenManually     bool               `json:"is_open_manually"`
+	BusinessHours      []byte             `json:"business_hours"`
+	VerificationStatus string             `json:"verification_status"`
+	LogoUrl            pgtype.Text        `json:"logo_url"`
+	BannerUrl          pgtype.Text        `json:"banner_url"`
+	AddressLine1       pgtype.Text        `json:"address_line1"`
+	AddressLine2       pgtype.Text        `json:"address_line2"`
+	District           pgtype.Text        `json:"district"`
+	City               pgtype.Text        `json:"city"`
+	Province           pgtype.Text        `json:"province"`
+	PostalCode         pgtype.Text        `json:"postal_code"`
+	Latitude           pgtype.Numeric     `json:"latitude"`
+	Longitude          pgtype.Numeric     `json:"longitude"`
+	GmapsLink          pgtype.Text        `json:"gmaps_link"`
 }
 
 // Unified user table supporting both traditional username/password and OAuth authentication
@@ -893,14 +911,33 @@ type User struct {
 	// User ID from OAuth provider - NULL for traditional auth
 	UserProviderUserID pgtype.Text        `json:"user_provider_user_id"`
 	UserRawData        []byte             `json:"user_raw_data"`
-	UserCreatedAtAuth  pgtype.Timestamptz `json:"user_created_at_auth"`
-	UserUpdatedAtAuth  pgtype.Timestamptz `json:"user_updated_at_auth"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	UserLastLoginAt    pgtype.Timestamptz `json:"user_last_login_at"`
 	// Email from OAuth provider (may differ from primary email)
 	UserEmailAuth pgtype.Text `json:"user_email_auth"`
 	// Whether user has verified their email via OTP
 	IsEmailVerified pgtype.Bool        `json:"is_email_verified"`
 	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
+}
+
+type UserActivityLog struct {
+	ActivityID        pgtype.UUID        `json:"activity_id"`
+	UserID            string             `json:"user_id"`
+	ActivityTimestamp pgtype.Timestamptz `json:"activity_timestamp"`
+	ActivityCode      string             `json:"activity_code"`
+	Intensity         string             `json:"intensity"`
+	PerceivedExertion pgtype.Int4        `json:"perceived_exertion"`
+	DurationMinutes   int32              `json:"duration_minutes"`
+	StepsCount        pgtype.Int4        `json:"steps_count"`
+	PreActivityCarbs  pgtype.Int4        `json:"pre_activity_carbs"`
+	WaterIntakeMl     pgtype.Int4        `json:"water_intake_ml"`
+	IssueDescription  pgtype.Text        `json:"issue_description"`
+	Source            string             `json:"source"`
+	SyncID            pgtype.Text        `json:"sync_id"`
+	Notes             pgtype.Text        `json:"notes"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type UserAddress struct {
@@ -921,6 +958,7 @@ type UserAddress struct {
 	IsActive          bool               `json:"is_active"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	AddressDistrict   pgtype.Text        `json:"address_district"`
 }
 
 type UserCart struct {
@@ -947,6 +985,216 @@ type UserEmailChangeRequest struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
+type UserFoodInsight struct {
+	InsightID            pgtype.UUID        `json:"insight_id"`
+	UserID               string             `json:"user_id"`
+	FoodID               pgtype.UUID        `json:"food_id"`
+	FoodName             string             `json:"food_name"`
+	TimesConsumed        pgtype.Int4        `json:"times_consumed"`
+	LastEatenAt          pgtype.Timestamptz `json:"last_eaten_at"`
+	HealthScore          pgtype.Int4        `json:"health_score"`
+	AvgGlucoseSpike      pgtype.Int4        `json:"avg_glucose_spike"`
+	AvgTimeToPeakMinutes pgtype.Int4        `json:"avg_time_to_peak_minutes"`
+	AiTags               []byte             `json:"ai_tags"`
+	IsTriggerFood        pgtype.Bool        `json:"is_trigger_food"`
+	IsFavorite           pgtype.Bool        `json:"is_favorite"`
+	UserNotes            pgtype.Text        `json:"user_notes"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserGlucoseReading struct {
+	ReadingID        pgtype.UUID        `json:"reading_id"`
+	UserID           string             `json:"user_id"`
+	GlucoseValue     int32              `json:"glucose_value"`
+	ReadingTimestamp pgtype.Timestamptz `json:"reading_timestamp"`
+	ReadingType      string             `json:"reading_type"`
+	TrendArrow       pgtype.Text        `json:"trend_arrow"`
+	RateOfChange     pgtype.Int4        `json:"rate_of_change"`
+	Source           pgtype.Text        `json:"source"`
+	DeviceID         pgtype.Text        `json:"device_id"`
+	DeviceName       pgtype.Text        `json:"device_name"`
+	IsFlagged        pgtype.Bool        `json:"is_flagged"`
+	FlagReason       pgtype.Text        `json:"flag_reason"`
+	IsOutlier        pgtype.Bool        `json:"is_outlier"`
+	Notes            pgtype.Text        `json:"notes"`
+	Symptoms         []string           `json:"symptoms"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserHba1cRecord struct {
+	Hba1cID             pgtype.UUID        `json:"hba1c_id"`
+	UserID              string             `json:"user_id"`
+	TestDate            pgtype.Date        `json:"test_date"`
+	Hba1cPercentage     pgtype.Numeric     `json:"hba1c_percentage"`
+	Hba1cMmolMol        pgtype.Int4        `json:"hba1c_mmol_mol"`
+	EstimatedAvgGlucose pgtype.Int4        `json:"estimated_avg_glucose"`
+	TreatmentChanged    pgtype.Bool        `json:"treatment_changed"`
+	MedicationChanges   pgtype.Text        `json:"medication_changes"`
+	DietChanges         pgtype.Text        `json:"diet_changes"`
+	ActivityChanges     pgtype.Text        `json:"activity_changes"`
+	ChangeFromPrevious  pgtype.Numeric     `json:"change_from_previous"`
+	Trend               pgtype.Text        `json:"trend"`
+	Notes               pgtype.Text        `json:"notes"`
+	DocumentUrl         pgtype.Text        `json:"document_url"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserHealthEvent struct {
+	EventID                  pgtype.UUID        `json:"event_id"`
+	UserID                   string             `json:"user_id"`
+	EventDate                pgtype.Date        `json:"event_date"`
+	EventType                string             `json:"event_type"`
+	Severity                 pgtype.Text        `json:"severity"`
+	GlucoseValue             pgtype.Int4        `json:"glucose_value"`
+	KetoneValueMmol          pgtype.Numeric     `json:"ketone_value_mmol"`
+	Symptoms                 []string           `json:"symptoms"`
+	Treatments               []string           `json:"treatments"`
+	RequiredMedicalAttention pgtype.Bool        `json:"required_medical_attention"`
+	Notes                    pgtype.Text        `json:"notes"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Text        `json:"updated_at"`
+}
+
+type UserHealthProfile struct {
+	ProfileID                  pgtype.UUID        `json:"profile_id"`
+	UserID                     string             `json:"user_id"`
+	AppExperience              string             `json:"app_experience"`
+	ConditionID                int32              `json:"condition_id"`
+	DiagnosisDate              pgtype.Date        `json:"diagnosis_date"`
+	YearsWithCondition         pgtype.Numeric     `json:"years_with_condition"`
+	TreatmentTypes             []string           `json:"treatment_types"`
+	TargetGlucoseFasting       pgtype.Int4        `json:"target_glucose_fasting"`
+	TargetGlucosePostprandial  pgtype.Int4        `json:"target_glucose_postprandial"`
+	UsesCgm                    pgtype.Bool        `json:"uses_cgm"`
+	CgmDevice                  pgtype.Text        `json:"cgm_device"`
+	CgmApiConnected            pgtype.Bool        `json:"cgm_api_connected"`
+	HeightCm                   pgtype.Numeric     `json:"height_cm"`
+	CurrentWeightKg            pgtype.Numeric     `json:"current_weight_kg"`
+	TargetWeightKg             pgtype.Numeric     `json:"target_weight_kg"`
+	Bmi                        pgtype.Numeric     `json:"bmi"`
+	WaistCircumferenceCm       pgtype.Numeric     `json:"waist_circumference_cm"`
+	BodyFatPercentage          pgtype.Numeric     `json:"body_fat_percentage"`
+	Hba1cTarget                pgtype.Numeric     `json:"hba1c_target"`
+	LastHba1c                  pgtype.Numeric     `json:"last_hba1c"`
+	LastHba1cDate              pgtype.Date        `json:"last_hba1c_date"`
+	ActivityLevel              pgtype.Text        `json:"activity_level"`
+	DailyStepsGoal             pgtype.Int4        `json:"daily_steps_goal"`
+	WeeklyExerciseGoalMinutes  pgtype.Int4        `json:"weekly_exercise_goal_minutes"`
+	PreferredActivityTypeIds   []int32            `json:"preferred_activity_type_ids"`
+	DietaryPattern             pgtype.Text        `json:"dietary_pattern"`
+	DailyCarbTargetGrams       pgtype.Int4        `json:"daily_carb_target_grams"`
+	DailyCalorieTarget         pgtype.Int4        `json:"daily_calorie_target"`
+	DailyProteinTargetGrams    pgtype.Int4        `json:"daily_protein_target_grams"`
+	DailyFatTargetGrams        pgtype.Int4        `json:"daily_fat_target_grams"`
+	MealsPerDay                pgtype.Int4        `json:"meals_per_day"`
+	SnacksPerDay               pgtype.Int4        `json:"snacks_per_day"`
+	FoodAllergies              []string           `json:"food_allergies"`
+	FoodIntolerances           []string           `json:"food_intolerances"`
+	FoodsToAvoid               []string           `json:"foods_to_avoid"`
+	CulturalCuisines           []string           `json:"cultural_cuisines"`
+	DietaryRestrictions        []string           `json:"dietary_restrictions"`
+	HasHypertension            pgtype.Bool        `json:"has_hypertension"`
+	HypertensionMedication     pgtype.Text        `json:"hypertension_medication"`
+	HasKidneyDisease           pgtype.Bool        `json:"has_kidney_disease"`
+	KidneyDiseaseStage         pgtype.Int4        `json:"kidney_disease_stage"`
+	EgfrValue                  pgtype.Numeric     `json:"egfr_value"`
+	HasCardiovascularDisease   pgtype.Bool        `json:"has_cardiovascular_disease"`
+	HasNeuropathy              pgtype.Bool        `json:"has_neuropathy"`
+	HasRetinopathy             pgtype.Bool        `json:"has_retinopathy"`
+	HasGastroparesis           pgtype.Bool        `json:"has_gastroparesis"`
+	HasHypoglycemiaUnawareness pgtype.Bool        `json:"has_hypoglycemia_unawareness"`
+	OtherConditions            []string           `json:"other_conditions"`
+	SmokingStatus              pgtype.Text        `json:"smoking_status"`
+	SmokingYears               pgtype.Int4        `json:"smoking_years"`
+	AlcoholFrequency           pgtype.Text        `json:"alcohol_frequency"`
+	AlcoholDrinksPerWeek       pgtype.Int4        `json:"alcohol_drinks_per_week"`
+	StressLevel                pgtype.Text        `json:"stress_level"`
+	TypicalSleepHours          pgtype.Numeric     `json:"typical_sleep_hours"`
+	SleepQuality               pgtype.Text        `json:"sleep_quality"`
+	IsPregnant                 pgtype.Bool        `json:"is_pregnant"`
+	IsBreastfeeding            pgtype.Bool        `json:"is_breastfeeding"`
+	ExpectedDueDate            pgtype.Date        `json:"expected_due_date"`
+	PreferredUnits             pgtype.Text        `json:"preferred_units"`
+	GlucoseUnit                pgtype.Text        `json:"glucose_unit"`
+	Timezone                   pgtype.Text        `json:"timezone"`
+	LanguageCode               pgtype.Text        `json:"language_code"`
+	EnableGlucoseAlerts        pgtype.Bool        `json:"enable_glucose_alerts"`
+	EnableMealReminders        pgtype.Bool        `json:"enable_meal_reminders"`
+	EnableActivityReminders    pgtype.Bool        `json:"enable_activity_reminders"`
+	EnableMedicationReminders  pgtype.Bool        `json:"enable_medication_reminders"`
+	ShareDataForResearch       pgtype.Bool        `json:"share_data_for_research"`
+	ShareAnonymizedData        pgtype.Bool        `json:"share_anonymized_data"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserMealItem struct {
+	ItemID           pgtype.UUID        `json:"item_id"`
+	MealID           pgtype.UUID        `json:"meal_id"`
+	FoodName         string             `json:"food_name"`
+	FoodID           pgtype.UUID        `json:"food_id"`
+	Seller           pgtype.Text        `json:"seller"`
+	ServingSize      pgtype.Text        `json:"serving_size"`
+	ServingSizeGrams pgtype.Numeric     `json:"serving_size_grams"`
+	Quantity         pgtype.Numeric     `json:"quantity"`
+	Calories         pgtype.Int4        `json:"calories"`
+	CarbsGrams       pgtype.Numeric     `json:"carbs_grams"`
+	FiberGrams       pgtype.Numeric     `json:"fiber_grams"`
+	ProteinGrams     pgtype.Numeric     `json:"protein_grams"`
+	FatGrams         pgtype.Numeric     `json:"fat_grams"`
+	SugarGrams       pgtype.Numeric     `json:"sugar_grams"`
+	SodiumMg         pgtype.Int4        `json:"sodium_mg"`
+	GlycemicIndex    pgtype.Int4        `json:"glycemic_index"`
+	GlycemicLoad     pgtype.Numeric     `json:"glycemic_load"`
+	FoodCategory     pgtype.Text        `json:"food_category"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type UserMealLog struct {
+	MealID            pgtype.UUID        `json:"meal_id"`
+	UserID            string             `json:"user_id"`
+	MealTimestamp     pgtype.Timestamptz `json:"meal_timestamp"`
+	MealTypeID        int32              `json:"meal_type_id"`
+	Description       pgtype.Text        `json:"description"`
+	TotalCalories     pgtype.Int4        `json:"total_calories"`
+	TotalCarbsGrams   pgtype.Numeric     `json:"total_carbs_grams"`
+	TotalProteinGrams pgtype.Numeric     `json:"total_protein_grams"`
+	TotalFatGrams     pgtype.Numeric     `json:"total_fat_grams"`
+	TotalFiberGrams   pgtype.Numeric     `json:"total_fiber_grams"`
+	TotalSugarGrams   pgtype.Numeric     `json:"total_sugar_grams"`
+	Tags              []string           `json:"tags"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserMedication struct {
+	MedicationID    int32              `json:"medication_id"`
+	UserID          pgtype.Text        `json:"user_id"`
+	DisplayName     string             `json:"display_name"`
+	MedicationType  string             `json:"medication_type"`
+	DefaultDoseUnit pgtype.Text        `json:"default_dose_unit"`
+	IsActive        pgtype.Bool        `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserMedicationLog struct {
+	MedicationlogID         pgtype.UUID        `json:"medicationlog_id"`
+	UserID                  string             `json:"user_id"`
+	MedicationID            pgtype.Int4        `json:"medication_id"`
+	MedicationName          string             `json:"medication_name"`
+	Timestamp               pgtype.Timestamptz `json:"timestamp"`
+	DoseAmount              pgtype.Numeric     `json:"dose_amount"`
+	Reason                  pgtype.Text        `json:"reason"`
+	IsPumpDelivery          pgtype.Bool        `json:"is_pump_delivery"`
+	DeliveryDurationMinutes pgtype.Int4        `json:"delivery_duration_minutes"`
+	Notes                   pgtype.Text        `json:"notes"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
 type UserOrder struct {
 	OrderID             pgtype.UUID        `json:"order_id"`
 	UserID              string             `json:"user_id"`
@@ -966,6 +1214,32 @@ type UserOrderItem struct {
 	Quantity         int32          `json:"quantity"`
 	PriceAtPurchase  pgtype.Numeric `json:"price_at_purchase"`
 	FoodNameSnapshot string         `json:"food_name_snapshot"`
+}
+
+type UserRole struct {
+	UserID string `json:"user_id"`
+	RoleID int32  `json:"role_id"`
+}
+
+type UserSleepLog struct {
+	SleepID           pgtype.UUID        `json:"sleep_id"`
+	UserID            string             `json:"user_id"`
+	SleepDate         pgtype.Date        `json:"sleep_date"`
+	BedTime           pgtype.Timestamptz `json:"bed_time"`
+	WakeTime          pgtype.Timestamptz `json:"wake_time"`
+	QualityRating     pgtype.Int4        `json:"quality_rating"`
+	TrackerScore      pgtype.Int4        `json:"tracker_score"`
+	DeepSleepMinutes  pgtype.Int4        `json:"deep_sleep_minutes"`
+	RemSleepMinutes   pgtype.Int4        `json:"rem_sleep_minutes"`
+	LightSleepMinutes pgtype.Int4        `json:"light_sleep_minutes"`
+	AwakeMinutes      pgtype.Int4        `json:"awake_minutes"`
+	AverageHrv        pgtype.Int4        `json:"average_hrv"`
+	RestingHeartRate  pgtype.Int4        `json:"resting_heart_rate"`
+	Tags              []string           `json:"tags"`
+	Source            pgtype.Text        `json:"source"`
+	Notes             pgtype.Text        `json:"notes"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type UsersAuth struct {

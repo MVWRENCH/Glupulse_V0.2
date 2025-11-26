@@ -1,3 +1,6 @@
+/* ====================================================================
+                     Authentication Queries
+==================================================================== */
 -- Traditional Auth Users
 -- name: CreateUser :one
 INSERT INTO users (
@@ -10,7 +13,7 @@ INSERT INTO users (
     user_dob,
     user_gender,
     user_accounttype,
-    user_created_at_auth,
+    created_at,
     is_email_verified,
     email_verified_at
 ) VALUES (
@@ -79,8 +82,8 @@ DO UPDATE SET
     user_name_auth = EXCLUDED.user_name_auth,
     user_avatar_url = EXCLUDED.user_avatar_url,
     user_raw_data = EXCLUDED.user_raw_data,
-    user_last_login_at = EXCLUDED.user_last_login_at, -- Menggunakan nilai login time dari EXCLUDED ($8)
-    user_updated_at_auth = CURRENT_TIMESTAMP -- Menggunakan CURRENT_TIMESTAMP untuk mencatat pembaruan skema auth
+    user_last_login_at = EXCLUDED.user_last_login_at,
+    updated_at = CURRENT_TIMESTAMP
 RETURNING *;
 
 -- name: UpdateUserGoogleLink :exec
@@ -92,7 +95,7 @@ SET
   user_provider_user_id = $4,
   user_raw_data = $5,
   user_email_auth = $6,
-  user_updated_at_auth = NOW()
+  updated_at = NOW()
 WHERE 
   user_id = $7;
 
@@ -104,7 +107,7 @@ SET
   user_provider_user_id = NULL,
   user_avatar_url = NULL,   -- Clear the avatar linked to Google
   user_raw_data = NULL,     -- Clear the raw data from Google
-  user_updated_at_auth = NOW()
+  updated_at = NOW()
 WHERE 
   user_id = $1;
 
@@ -155,7 +158,7 @@ INSERT INTO logs_auth (
 -- name: UpdateUserPassword :exec
 UPDATE users
 SET user_password = $2,
-    user_updated_at_auth = NOW()
+    updated_at = NOW()
 WHERE user_id = $1;
 
 -- name: CreateEmailChangeRequest :one
@@ -183,13 +186,13 @@ WHERE
 -- name: UpdateUserEmail :exec
 UPDATE users
 SET user_email = $2,
-    user_updated_at_auth = NOW()
+    updated_at = NOW()
 WHERE user_id = $1;
 
 -- name: UpdateUserUsername :exec
 UPDATE users
 SET user_username = $2,
-    user_updated_at_auth = NOW()
+    updated_at = NOW()
 WHERE user_id = $1;
 
 -- name: DeleteUser :exec
@@ -285,11 +288,24 @@ AND created_at > NOW() - INTERVAL '1 minute'
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: CleanupExpiredRefreshTokens :exec
+DELETE FROM users_refresh_tokens
+WHERE expires_at < NOW() - INTERVAL '7 days';
+
+-- name: CleanupRevokedRefreshTokens :exec
+DELETE FROM users_refresh_tokens
+WHERE revoked_at < NOW() - INTERVAL '30 days';
+
+/* ====================================================================
+                   Addresses Management Queries
+==================================================================== */
+
 -- name: CreateUserAddress :one
 INSERT INTO user_addresses (
     user_id,
     address_line1,
     address_line2,
+    address_district,
     address_city,
     address_province,
     address_postalcode,
@@ -301,7 +317,7 @@ INSERT INTO user_addresses (
     delivery_notes,
     is_default
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 ) RETURNING *;
 
 -- name: GetUserAddresses :many
@@ -323,6 +339,7 @@ UPDATE user_addresses
 SET 
     address_line1 = COALESCE(sqlc.narg('address_line1'), address_line1),
     address_line2 = COALESCE(sqlc.narg('address_line2'), address_line2),
+    address_district = COALESCE(sqlc.narg('address_district'), address_district),
     address_city = COALESCE(sqlc.narg('address_city'), address_city),
     address_province = COALESCE(sqlc.narg('address_province'), address_province),
     address_postalcode = COALESCE(sqlc.narg('address_postalcode'), address_postalcode),
@@ -369,13 +386,9 @@ SELECT EXISTS(
 SELECT is_default FROM user_addresses
 WHERE address_id = $1;
 
--- name: CleanupExpiredRefreshTokens :exec
-DELETE FROM users_refresh_tokens
-WHERE expires_at < NOW() - INTERVAL '7 days';
-
--- name: CleanupRevokedRefreshTokens :exec
-DELETE FROM users_refresh_tokens
-WHERE revoked_at < NOW() - INTERVAL '30 days';
+/* ====================================================================
+                   Cart & Order Management Queries
+==================================================================== */
 
 -- name: GetCartByUserID :one
 SELECT * FROM user_carts
@@ -483,7 +496,660 @@ WHERE order_id = $1 AND user_id = $2;
 SELECT * FROM user_order_items
 WHERE order_id = $1;
 
--- Unused queries
+-- name: GetFood :one
+SELECT * FROM foods
+WHERE food_id = $1;
+
+-- name: AssignUserRole :exec
+INSERT INTO user_roles (user_id, role_id)
+SELECT $1, role_id FROM roles WHERE role_name = $2;
+
+-- name: GetSellerProfile :one
+SELECT * FROM seller_profiles
+WHERE seller_id = $1;
+
+-- name: ListAllAvailableFoods :many
+-- Retrieves a list of all food items currently marked as available
+SELECT *
+FROM foods
+WHERE is_available = true
+ORDER BY food_name;
+
+
+/* ====================================================================
+                   Health Profile Queries
+==================================================================== */
+
+-- name: GetUserHealthProfile :one
+SELECT * FROM user_health_profiles
+WHERE user_id = $1 LIMIT 1;
+
+-- name: UpsertUserHealthProfile :one
+INSERT INTO user_health_profiles (
+    user_id,
+    app_experience,
+    condition_id,
+    diagnosis_date,
+    years_with_condition,
+    treatment_types,
+    target_glucose_fasting,
+    target_glucose_postprandial,
+    uses_cgm,
+    cgm_device,
+    cgm_api_connected,
+    height_cm,
+    current_weight_kg,
+    target_weight_kg,
+    waist_circumference_cm,
+    body_fat_percentage,
+    hba1c_target,
+    last_hba1c,
+    last_hba1c_date,
+    activity_level,
+    daily_steps_goal,
+    weekly_exercise_goal_minutes,
+    preferred_activity_type_ids,
+    dietary_pattern,
+    daily_carb_target_grams,
+    daily_calorie_target,
+    daily_protein_target_grams,
+    daily_fat_target_grams,
+    meals_per_day,
+    snacks_per_day,
+    food_allergies,
+    food_intolerances,
+    foods_to_avoid,
+    cultural_cuisines,
+    dietary_restrictions,
+    has_hypertension,
+    hypertension_medication,
+    has_kidney_disease,
+    kidney_disease_stage,
+    egfr_value,
+    has_cardiovascular_disease,
+    has_neuropathy,
+    has_retinopathy,
+    has_gastroparesis,
+    has_hypoglycemia_unawareness,
+    other_conditions,
+    smoking_status,
+    smoking_years,
+    alcohol_frequency,
+    alcohol_drinks_per_week,
+    stress_level,
+    typical_sleep_hours,
+    sleep_quality,
+    is_pregnant,
+    is_breastfeeding,
+    expected_due_date,
+    preferred_units,
+    glucose_unit,
+    timezone,
+    language_code,
+    enable_glucose_alerts,
+    enable_meal_reminders,
+    enable_activity_reminders,
+    enable_medication_reminders,
+    share_data_for_research,
+    share_anonymized_data
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66
+)
+ON CONFLICT (user_id) DO UPDATE SET
+    app_experience = COALESCE($2, user_health_profiles.app_experience),
+    condition_id = COALESCE($3, user_health_profiles.condition_id),
+    diagnosis_date = COALESCE($4, user_health_profiles.diagnosis_date),
+    years_with_condition = COALESCE($5, user_health_profiles.years_with_condition),
+    treatment_types = COALESCE($6, user_health_profiles.treatment_types),
+    target_glucose_fasting = COALESCE($7, user_health_profiles.target_glucose_fasting),
+    target_glucose_postprandial = COALESCE($8, user_health_profiles.target_glucose_postprandial),
+    uses_cgm = COALESCE($9, user_health_profiles.uses_cgm),
+    cgm_device = COALESCE($10, user_health_profiles.cgm_device),
+    cgm_api_connected = COALESCE($11, user_health_profiles.cgm_api_connected),
+    height_cm = COALESCE($12, user_health_profiles.height_cm),
+    current_weight_kg = COALESCE($13, user_health_profiles.current_weight_kg),
+    target_weight_kg = COALESCE($14, user_health_profiles.target_weight_kg),
+    waist_circumference_cm = COALESCE($15, user_health_profiles.waist_circumference_cm),
+    body_fat_percentage = COALESCE($16, user_health_profiles.body_fat_percentage),
+    hba1c_target = COALESCE($17, user_health_profiles.hba1c_target),
+    last_hba1c = COALESCE($18, user_health_profiles.last_hba1c),
+    last_hba1c_date = COALESCE($19, user_health_profiles.last_hba1c_date),
+    activity_level = COALESCE($20, user_health_profiles.activity_level),
+    daily_steps_goal = COALESCE($21, user_health_profiles.daily_steps_goal),
+    weekly_exercise_goal_minutes = COALESCE($22, user_health_profiles.weekly_exercise_goal_minutes),
+    preferred_activity_type_ids = COALESCE($23, user_health_profiles.preferred_activity_type_ids),
+    dietary_pattern = COALESCE($24, user_health_profiles.dietary_pattern),
+    daily_carb_target_grams = COALESCE($25, user_health_profiles.daily_carb_target_grams),
+    daily_calorie_target = COALESCE($26, user_health_profiles.daily_calorie_target),
+    daily_protein_target_grams = COALESCE($27, user_health_profiles.daily_protein_target_grams),
+    daily_fat_target_grams = COALESCE($28, user_health_profiles.daily_fat_target_grams),
+    meals_per_day = COALESCE($29, user_health_profiles.meals_per_day),
+    snacks_per_day = COALESCE($30, user_health_profiles.snacks_per_day),
+    food_allergies = COALESCE($31, user_health_profiles.food_allergies),
+    food_intolerances = COALESCE($32, user_health_profiles.food_intolerances),
+    foods_to_avoid = COALESCE($33, user_health_profiles.foods_to_avoid),
+    cultural_cuisines = COALESCE($34, user_health_profiles.cultural_cuisines),
+    dietary_restrictions = COALESCE($35, user_health_profiles.dietary_restrictions),
+    has_hypertension = COALESCE($36, user_health_profiles.has_hypertension),
+    hypertension_medication = COALESCE($37, user_health_profiles.hypertension_medication),
+    has_kidney_disease = COALESCE($38, user_health_profiles.has_kidney_disease),
+    kidney_disease_stage = COALESCE($39, user_health_profiles.kidney_disease_stage),
+    egfr_value = COALESCE($40, user_health_profiles.egfr_value),
+    has_cardiovascular_disease = COALESCE($41, user_health_profiles.has_cardiovascular_disease),
+    has_neuropathy = COALESCE($42, user_health_profiles.has_neuropathy),
+    has_retinopathy = COALESCE($43, user_health_profiles.has_retinopathy),
+    has_gastroparesis = COALESCE($44, user_health_profiles.has_gastroparesis),
+    has_hypoglycemia_unawareness = COALESCE($45, user_health_profiles.has_hypoglycemia_unawareness),
+    other_conditions = COALESCE($46, user_health_profiles.other_conditions),
+    smoking_status = COALESCE($47, user_health_profiles.smoking_status),
+    smoking_years = COALESCE($48, user_health_profiles.smoking_years),
+    alcohol_frequency = COALESCE($49, user_health_profiles.alcohol_frequency),
+    alcohol_drinks_per_week = COALESCE($50, user_health_profiles.alcohol_drinks_per_week),
+    stress_level = COALESCE($51, user_health_profiles.stress_level),
+    typical_sleep_hours = COALESCE($52, user_health_profiles.typical_sleep_hours),
+    sleep_quality = COALESCE($53, user_health_profiles.sleep_quality),
+    is_pregnant = COALESCE($54, user_health_profiles.is_pregnant),
+    is_breastfeeding = COALESCE($55, user_health_profiles.is_breastfeeding),
+    expected_due_date = COALESCE($56, user_health_profiles.expected_due_date),
+    preferred_units = COALESCE($57, user_health_profiles.preferred_units),
+    glucose_unit = COALESCE($58, user_health_profiles.glucose_unit),
+    timezone = COALESCE($59, user_health_profiles.timezone),
+    language_code = COALESCE($60, user_health_profiles.language_code),
+    enable_glucose_alerts = COALESCE($61, user_health_profiles.enable_glucose_alerts),
+    enable_meal_reminders = COALESCE($62, user_health_profiles.enable_meal_reminders),
+    enable_activity_reminders = COALESCE($63, user_health_profiles.enable_activity_reminders),
+    enable_medication_reminders = COALESCE($64, user_health_profiles.enable_medication_reminders),
+    share_data_for_research = COALESCE($65, user_health_profiles.share_data_for_research),
+    share_anonymized_data = COALESCE($66, user_health_profiles.share_anonymized_data)
+RETURNING *;
+
+-- name: DeleteUserHealthProfile :exec
+DELETE FROM user_health_profiles
+WHERE user_id = $1;
+
+-- name: CreateHBA1CRecord :one
+INSERT INTO user_hba1c_records (
+    user_id,
+    test_date,
+    hba1c_percentage,
+    hba1c_mmol_mol,
+    estimated_avg_glucose,
+    treatment_changed,
+    medication_changes,
+    diet_changes,
+    activity_changes,
+    change_from_previous,
+    trend,
+    notes,
+    document_url
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+)
+RETURNING *;
+
+-- name: GetHBA1CRecords :many
+-- Retrieves all records for the user, ordered newest first
+SELECT * FROM user_hba1c_records
+WHERE user_id = $1
+ORDER BY test_date DESC, created_at DESC;
+
+-- name: GetHBA1CRecordByID :one
+-- Retrieves a single record, checking for user ownership
+SELECT * FROM user_hba1c_records
+WHERE hba1c_id = $1 AND user_id = $2;
+
+-- name: UpdateHBA1CRecord :one
+-- Updates an existing record, checking for user ownership
+UPDATE user_hba1c_records
+SET
+    test_date = COALESCE($3, test_date),
+    hba1c_percentage = COALESCE($4, hba1c_percentage),
+    hba1c_mmol_mol = COALESCE($5, hba1c_mmol_mol),
+    estimated_avg_glucose = COALESCE($6, estimated_avg_glucose),
+    treatment_changed = COALESCE($7, treatment_changed),
+    medication_changes = COALESCE($8, medication_changes),
+    diet_changes = COALESCE($9, diet_changes),
+    activity_changes = COALESCE($10, activity_changes),
+    notes = COALESCE($11, notes),
+    document_url = COALESCE($12, document_url),
+    trend = COALESCE($13, trend), -- Trend will be calculated on the client/server
+    updated_at = NOW()
+WHERE 
+    hba1c_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteHBA1CRecord :exec
+-- Deletes a record, checking for user ownership
+DELETE FROM user_hba1c_records
+WHERE hba1c_id = $1 AND user_id = $2;
+
+-- name: GetLastHBA1CRecord :one
+-- Retrieves the most recent record to compare against for trend analysis
+SELECT hba1c_percentage FROM user_hba1c_records
+WHERE user_id = $1 
+  AND test_date < $2 -- CRITICAL: Only look at records older than the current one
+ORDER BY test_date DESC, created_at DESC
+LIMIT 1;
+
+-- name: CreateHealthEvent :one
+INSERT INTO user_health_events (
+    user_id,
+    event_date,
+    event_type,
+    severity,
+    glucose_value,
+    ketone_value_mmol,
+    symptoms,
+    treatments,
+    required_medical_attention,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING *;
+
+-- name: GetHealthEvents :many
+-- Retrieves all health events for the user, ordered newest first
+SELECT * FROM user_health_events
+WHERE user_id = $1
+ORDER BY event_date DESC, created_at DESC;
+
+-- name: GetHealthEventByID :one
+-- Retrieves a single event, checking for user ownership
+SELECT * FROM user_health_events
+WHERE event_id = $1 AND user_id = $2;
+
+-- name: UpdateHealthEvent :one
+-- Updates an existing record, checking for user ownership
+UPDATE user_health_events
+SET
+    event_date = COALESCE($3, event_date),
+    event_type = COALESCE($4, event_type),
+    severity = COALESCE($5, severity),
+    glucose_value = COALESCE($6, glucose_value),
+    ketone_value_mmol = COALESCE($7, ketone_value_mmol),
+    symptoms = COALESCE($8, symptoms),
+    treatments = COALESCE($9, treatments),
+    required_medical_attention = COALESCE($10, required_medical_attention),
+    notes = COALESCE($11, notes),
+    updated_at = NOW()
+WHERE 
+    event_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteHealthEvent :exec
+-- Deletes a record, checking for user ownership
+DELETE FROM user_health_events
+WHERE event_id = $1 AND user_id = $2;
+
+-- name: CreateGlucoseReading :one
+INSERT INTO user_glucose_readings (
+    user_id,
+    glucose_value,
+    reading_timestamp,
+    reading_type,
+    source,
+    device_id,
+    device_name,
+    is_flagged,
+    flag_reason,
+    is_outlier,
+    notes,
+    symptoms
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+)
+RETURNING *;
+
+-- name: GetGlucoseReadings :many
+-- Retrieves all readings for the user, ordered newest first, with optional date range
+SELECT * FROM user_glucose_readings
+WHERE user_id = $1 
+  AND reading_timestamp >= COALESCE(sqlc.narg('start_date'), '1900-01-01'::timestamptz)
+  AND reading_timestamp <= COALESCE(sqlc.narg('end_date'), NOW() + INTERVAL '1 day')
+ORDER BY reading_timestamp DESC;
+
+-- name: GetGlucoseReadingByID :one
+-- Retrieves a single reading, checking for user ownership
+SELECT * FROM user_glucose_readings
+WHERE reading_id = $1 AND user_id = $2;
+
+-- name: UpdateGlucoseReading :one
+-- Updates an existing reading, checking for user ownership
+UPDATE user_glucose_readings
+SET
+    glucose_value = COALESCE($3, glucose_value),
+    reading_timestamp = COALESCE($4, reading_timestamp),
+    reading_type = COALESCE($5, reading_type),
+    source = COALESCE($6, source),
+    device_id = COALESCE($7, device_id),
+    device_name = COALESCE($8, device_name),
+    is_flagged = COALESCE($9, is_flagged),
+    flag_reason = COALESCE($10, flag_reason),
+    is_outlier = COALESCE($11, is_outlier),
+    notes = COALESCE($12, notes),
+    symptoms = COALESCE($13, symptoms),
+    updated_at = NOW()
+WHERE 
+    reading_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteGlucoseReading :exec
+-- Deletes a reading, checking for user ownership
+DELETE FROM user_glucose_readings
+WHERE reading_id = $1 AND user_id = $2;
+
+-- name: GetGlucoseStats :one
+-- Retrieves the mean and standard deviation of glucose readings 
+-- over the last 7 days for outlier analysis.
+SELECT 
+    AVG(glucose_value) AS mean_glucose,
+    STDDEV(glucose_value) AS stddev_glucose
+FROM user_glucose_readings
+WHERE user_id = $1 
+  AND reading_timestamp >= NOW() - INTERVAL '7 days';
+
+-- name: CreateActivityLog :one
+-- Creates a new activity log entry
+INSERT INTO user_activity_logs (
+    user_id,
+    activity_timestamp,
+    activity_code,
+    intensity,
+    perceived_exertion,
+    duration_minutes,
+    steps_count,
+    pre_activity_carbs,
+    water_intake_ml,
+    issue_description,
+    source,
+    sync_id,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+)
+RETURNING *;
+
+-- name: GetActivityLogs :many
+-- Retrieves all activity logs for the user, ordered newest first, with optional date range
+SELECT * FROM user_activity_logs
+WHERE user_id = $1
+  AND activity_timestamp >= COALESCE(sqlc.narg('start_date'), '1900-01-01'::timestamptz)
+  AND activity_timestamp <= COALESCE(sqlc.narg('end_date'), NOW() + INTERVAL '1 day')
+ORDER BY activity_timestamp DESC;
+
+-- name: GetActivityLogByID :one
+-- Retrieves a single activity log, checking for user ownership
+SELECT * FROM user_activity_logs
+WHERE activity_id = $1 AND user_id = $2;
+
+-- name: UpdateActivityLog :one
+-- Updates an existing activity log, checking for user ownership
+UPDATE user_activity_logs
+SET
+    activity_timestamp = COALESCE(sqlc.narg('activity_timestamp'), activity_timestamp),
+    activity_code = COALESCE(sqlc.narg('activity_code'), activity_code),
+    intensity = COALESCE(sqlc.narg('intensity'), intensity),
+    perceived_exertion = COALESCE(sqlc.narg('perceived_exertion'), perceived_exertion),
+    duration_minutes = COALESCE(sqlc.narg('duration_minutes'), duration_minutes),
+    steps_count = COALESCE(sqlc.narg('steps_count'), steps_count),
+    pre_activity_carbs = COALESCE(sqlc.narg('pre_activity_carbs'), pre_activity_carbs),
+    water_intake_ml = COALESCE(sqlc.narg('water_intake_ml'), water_intake_ml),
+    issue_description = COALESCE(sqlc.narg('issue_description'), issue_description),
+    source = COALESCE(sqlc.narg('source'), source),
+    sync_id = COALESCE(sqlc.narg('sync_id'), sync_id),
+    notes = COALESCE(sqlc.narg('notes'), notes),
+    updated_at = NOW()
+WHERE 
+    activity_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteActivityLog :exec
+-- Deletes an activity log, checking for user ownership
+DELETE FROM user_activity_logs
+WHERE activity_id = $1 AND user_id = $2;
+
+-- name: CreateSleepLog :one
+-- Creates a new sleep log entry
+INSERT INTO user_sleep_logs (
+    user_id,
+    sleep_date,
+    bed_time,
+    wake_time,
+    quality_rating,
+    tracker_score,
+    deep_sleep_minutes,
+    rem_sleep_minutes,
+    light_sleep_minutes,
+    awake_minutes,
+    average_hrv,
+    resting_heart_rate,
+    tags,
+    source,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+)
+RETURNING *;
+
+-- name: GetSleepLogs :many
+-- Retrieves all sleep logs for the user, with date filtering
+SELECT * FROM user_sleep_logs
+WHERE user_id = $1
+  AND bed_time >= COALESCE(sqlc.narg('start_date'), '1900-01-01'::timestamptz)
+  AND bed_time <= COALESCE(sqlc.narg('end_date'), NOW() + INTERVAL '1 day')
+ORDER BY sleep_date DESC;
+
+-- name: GetSleepLogByID :one
+-- Retrieves a single sleep log, checking for user ownership
+SELECT * FROM user_sleep_logs
+WHERE sleep_id = $1 AND user_id = $2;
+
+-- name: UpdateSleepLog :one
+-- Updates an existing sleep log, checking for user ownership
+UPDATE user_sleep_logs
+SET
+    sleep_date = COALESCE(sqlc.narg('sleep_date'), sleep_date),
+    bed_time = COALESCE(sqlc.narg('bed_time'), bed_time),
+    wake_time = COALESCE(sqlc.narg('wake_time'), wake_time),
+    quality_rating = COALESCE(sqlc.narg('quality_rating'), quality_rating),
+    tracker_score = COALESCE(sqlc.narg('tracker_score'), tracker_score),
+    deep_sleep_minutes = COALESCE(sqlc.narg('deep_sleep_minutes'), deep_sleep_minutes),
+    rem_sleep_minutes = COALESCE(sqlc.narg('rem_sleep_minutes'), rem_sleep_minutes),
+    light_sleep_minutes = COALESCE(sqlc.narg('light_sleep_minutes'), light_sleep_minutes),
+    awake_minutes = COALESCE(sqlc.narg('awake_minutes'), awake_minutes),
+    average_hrv = COALESCE(sqlc.narg('average_hrv'), average_hrv),
+    resting_heart_rate = COALESCE(sqlc.narg('resting_heart_rate'), resting_heart_rate),
+    tags = COALESCE(sqlc.narg('tags'), tags),
+    source = COALESCE(sqlc.narg('source'), source),
+    notes = COALESCE(sqlc.narg('notes'), notes),
+    updated_at = NOW()
+WHERE 
+    sleep_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteSleepLog :exec
+-- Deletes a sleep log, checking for user ownership
+DELETE FROM user_sleep_logs
+WHERE sleep_id = $1 AND user_id = $2;
+
+-- name: CreateUserMedication :one
+-- Registers a new medication configuration for the user.
+INSERT INTO user_medications (
+    user_id,
+    display_name,
+    medication_type,
+    default_dose_unit
+) VALUES (
+    $1, $2, $3, $4
+)
+RETURNING *;
+
+-- name: GetUserMedications :many
+-- Retrieves all active medications configured by the user.
+SELECT * FROM user_medications
+WHERE user_id = $1 AND is_active = true
+ORDER BY display_name;
+
+-- name: GetUserMedicationByID :one
+-- Retrieves a single medication configuration, checking for user ownership.
+SELECT * FROM user_medications
+WHERE medication_id = $1 AND user_id = $2;
+
+-- name: UpdateUserMedication :one
+-- Updates the configuration of an existing medication.
+UPDATE user_medications
+SET
+    display_name = COALESCE(sqlc.narg('display_name'), display_name),
+    medication_type = COALESCE(sqlc.narg('medication_type'), medication_type),
+    default_dose_unit = COALESCE(sqlc.narg('default_dose_unit'), default_dose_unit),
+    is_active = COALESCE(sqlc.narg('is_active'), is_active)
+WHERE
+    medication_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteUserMedication :exec
+-- Soft deletes the medication configuration (sets is_active = false).
+UPDATE user_medications
+SET is_active = false, updated_at = NOW()
+WHERE medication_id = $1 AND user_id = $2;
+
+-- name: CreateMedicationLog :one
+-- Logs a dose taken by the user.
+INSERT INTO user_medication_logs (
+    user_id,
+    medication_id,
+    medication_name,
+    "timestamp",
+    dose_amount,
+    reason,
+    is_pump_delivery,
+    delivery_duration_minutes,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+RETURNING *;
+
+-- name: GetMedicationLogs :many
+-- Retrieves logs for the user, with date filtering.
+SELECT * FROM user_medication_logs
+WHERE user_id = $1
+  AND "timestamp" >= COALESCE(sqlc.narg('start_date'), '1900-01-01'::timestamptz)
+  AND "timestamp" <= COALESCE(sqlc.narg('end_date'), NOW() + INTERVAL '1 day')
+ORDER BY "timestamp" DESC;
+
+-- name: UpdateMedicationLog :one
+-- Updates a single logged dose.
+UPDATE user_medication_logs
+SET
+    medication_id = COALESCE(sqlc.narg('medication_id'), medication_id),
+    medication_name = COALESCE(sqlc.narg('medication_name'), medication_name),
+    "timestamp" = COALESCE(sqlc.narg('timestamp'), "timestamp"),
+    dose_amount = COALESCE(sqlc.narg('dose_amount'), dose_amount),
+    reason = COALESCE(sqlc.narg('reason'), reason),
+    is_pump_delivery = COALESCE(sqlc.narg('is_pump_delivery'), is_pump_delivery),
+    delivery_duration_minutes = COALESCE(sqlc.narg('delivery_duration_minutes'), delivery_duration_minutes),
+    notes = COALESCE(sqlc.narg('notes'), notes)
+WHERE
+    medicationlog_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteMedicationLog :exec
+-- Deletes a single dose log.
+DELETE FROM user_medication_logs
+WHERE medicationlog_id = $1 AND user_id = $2;
+
+-- name: GetActivityTypes :many
+-- Retrieves all activity types, ordered by display name
+SELECT * FROM activity_types
+ORDER BY display_name;
+
+-- name: CreateMealLog :one
+INSERT INTO user_meal_logs (
+    user_id,
+    meal_timestamp,
+    meal_type_id,
+    description,
+    total_calories,
+    total_carbs_grams,
+    total_protein_grams,
+    total_fat_grams,
+    total_fiber_grams,
+    total_sugar_grams,
+    tags
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+)
+RETURNING *;
+
+-- name: UpdateMealLog :one
+UPDATE user_meal_logs
+SET
+    meal_timestamp = COALESCE(sqlc.narg('meal_timestamp'), meal_timestamp),
+    meal_type_id = COALESCE(sqlc.narg('meal_type_id'), meal_type_id),
+    description = COALESCE(sqlc.narg('description'), description),
+    total_calories = COALESCE(sqlc.narg('total_calories'), total_calories),
+    total_carbs_grams = COALESCE(sqlc.narg('total_carbs_grams'), total_carbs_grams),
+    total_protein_grams = COALESCE(sqlc.narg('total_protein_grams'), total_protein_grams),
+    total_fat_grams = COALESCE(sqlc.narg('total_fat_grams'), total_fat_grams),
+    total_fiber_grams = COALESCE(sqlc.narg('total_fiber_grams'), total_fiber_grams),
+    total_sugar_grams = COALESCE(sqlc.narg('total_sugar_grams'), total_sugar_grams),
+    tags = COALESCE(sqlc.narg('tags'), tags),
+    updated_at = NOW()
+WHERE 
+    meal_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: GetMealLogByID :one
+SELECT * FROM user_meal_logs WHERE meal_id = $1 AND user_id = $2;
+
+-- name: GetMealLogs :many
+-- Retrieves all meal logs for the user, ordered newest first, with optional date range
+SELECT * FROM user_meal_logs
+WHERE user_id = $1
+  AND meal_timestamp >= COALESCE(sqlc.narg('start_date'), '1900-01-01'::timestamptz)
+  AND meal_timestamp <= COALESCE(sqlc.narg('end_date'), NOW() + INTERVAL '1 day')
+ORDER BY meal_timestamp DESC;
+
+-- name: DeleteMealLog :exec
+DELETE FROM user_meal_logs
+WHERE meal_id = $1 AND user_id = $2;
+
+-- name: CreateMealItem :exec
+INSERT INTO user_meal_items (
+    meal_id,
+    food_name,
+    food_id,
+    seller,
+    serving_size,
+    serving_size_grams,
+    quantity,
+    calories,
+    carbs_grams,
+    fiber_grams,
+    protein_grams,
+    fat_grams,
+    sugar_grams,
+    sodium_mg,
+    glycemic_index,
+    glycemic_load,
+    food_category
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+);
+
+-- name: DeleteMealItemsByMealID :exec
+DELETE FROM user_meal_items WHERE meal_id = $1;
+
+-- name: GetMealItemsByMealID :many
+SELECT * FROM user_meal_items
+WHERE meal_id = $1
+ORDER BY created_at ASC;
+
+/* ====================================================================
+                           Unused Queries
+==================================================================== */
 -- name: GetUserActiveRefreshTokens :many
 SELECT * FROM users_refresh_tokens
 WHERE user_id = $1 

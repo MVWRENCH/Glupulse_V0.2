@@ -1,7 +1,6 @@
 package user
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,7 +10,6 @@ import (
 
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
-	"Glupulse_V0.2/internal/geminiservice"
 	"Glupulse_V0.2/internal/utility"
 	"github.com/go-gomail/gomail"
 	"github.com/google/uuid"
@@ -19,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -82,47 +79,32 @@ type UserProfileResponse struct {
 	Provider        string  `json:"provider,omitempty"`
 	IsEmailVerified bool    `json:"is_email_verified"`
 	AvatarURL       string  `json:"avatar_url,omitempty"`
+	IsGoogleLinked  bool    `json:"is_google_linked"`
 }
 
-type HealthProfile struct {
-	Goal          string   `json:"goal"`
-	Condition     string   `json:"condition"`
-	Age           int      `json:"age"`
-	AvgGlucose    float64  `json:"avgGlucose"` // in mg/dL
-	WeightKg      float64  `json:"weightKg"`
-	HeightCm      float64  `json:"heightCm"`
-	ActivityLevel string   `json:"activityLevel"`
-	DietaryPrefs  []string `json:"dietaryPrefs"`
-}
+// UserDataAllResponse bundles ALL user data into one massive response.
+type UserDataAllResponse struct {
+	UserID string `json:"user_id"`
 
-type AddToCartRequest struct {
-	FoodID   uuid.UUID `json:"food_id" validate:"required"`
-	Quantity int32     `json:"quantity" validate:"required"`
-}
+	// --- Identity & Profile ---
+	AccountProfile    *UserResponse               `json:"account_profile"`
+	HealthProfile     *database.UserHealthProfile `json:"health_profile"`
+	Addresses         []database.UserAddress      `json:"addresses"`
+	MedicationsConfig []database.UserMedication   `json:"medications_config"`
 
-type UpdateCartRequest struct {
-	FoodID   uuid.UUID `json:"food_id" validate:"required"`
-	Quantity int32     `json:"quantity" validate:"required"` // Set to 0 to remove
-}
+	// --- E-Commerce State ---
+	Cart         *FullCartResponse    `json:"cart,omitempty"` // Re-use your cart response struct
+	RecentOrders []database.UserOrder `json:"recent_orders"`
 
-type RemoveFromCartRequest struct {
-	FoodID uuid.UUID `json:"food_id" validate:"required"`
-}
-
-// FullCartResponse defines the structure for getting the user's cart
-type FullCartResponse struct {
-	Cart     database.UserCart          `json:"cart"`
-	Items    []database.GetCartItemsRow `json:"items"`
-	Subtotal float64                    `json:"subtotal"`
-	SellerID *uuid.UUID                 `json:"seller_id"`
-	Seller   *database.SellerProfile    `json:"seller_profile,omitempty"`
-}
-
-// --- Structs for Checkout ---
-
-type CheckoutRequest struct {
-	AddressID     uuid.UUID `json:"address_id" validate:"required"`
-	PaymentMethod string    `json:"payment_method" validate:"required"`
+	// --- Health Logs (Recent History) ---
+	// We limit these to a reasonable window (e.g., last 7-30 days) to keep payload size manageable.
+	GlucoseReadings []database.UserGlucoseReading `json:"glucose_readings"`
+	MealLogs        []MealLogWithItemsResponse    `json:"meal_logs"` // Custom struct with items embedded
+	ActivityLogs    []database.UserActivityLog    `json:"activity_logs"`
+	SleepLogs       []database.UserSleepLog       `json:"sleep_logs"`
+	MedicationLogs  []database.UserMedicationLog  `json:"medication_logs"`
+	HealthEvents    []database.UserHealthEvent    `json:"health_events"`
+	HBA1CRecords    []database.UserHba1cRecord    `json:"hba1c_records"`
 }
 
 // InitUserPackage is called by the server package to initialize the database connection
@@ -181,6 +163,7 @@ func GetUserProfileHandler(c echo.Context) error {
 		Provider:        user.UserProvider.String,
 		IsEmailVerified: user.IsEmailVerified.Bool,
 		AvatarURL:       user.UserAvatarUrl.String,
+		IsGoogleLinked:  user.UserProvider.Valid && user.UserProvider.String == "google",
 	}
 
 	if user.UserDob.Valid {
@@ -319,7 +302,7 @@ func UpdatePasswordHandler(c echo.Context) error {
 	}
 
 	// OAuth users don't have passwords
-	if user.UserProvider.Valid && user.UserProvider.String != "" {
+	if user.UserProvider.Valid && user.UserProvider.String != "" && user.UserUsername.Valid {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "OAuth users cannot change password. Manage your password through your OAuth provider.",
 		})
@@ -747,7 +730,7 @@ func DeleteAccountHandler(c echo.Context) error {
 
 	// For traditional users, require password confirmation
 	var password string
-	if !user.UserProvider.Valid || user.UserProvider.String == "" {
+	if user.UserUsername.Valid || user.UserProvider.String == "" {
 		var req struct {
 			Password string `json:"password" form:"password"`
 		}
@@ -819,85 +802,227 @@ func getUpdatedFields(req UpdateProfileRequest) []string {
 	return fields
 }
 
-// calculateBMI calculates Body Mass Index: weight (kg) / height (m)^2
-func calculateBMI(weightKg, heightCm float64) float64 {
-	if heightCm <= 0 {
-		return 0.0
-	}
-	// Convert cm to meters
-	heightM := heightCm / 100.0
-	return weightKg / (heightM * heightM)
-}
+// GetUserDataAllHandler retrieves ALL user data in a single call.
+// It is optimized for the mobile app's initial dashboard load.
+func GetUserDataAllHandler(c echo.Context) error {
+	ctx := c.Request().Context()
 
-// GetRecommendationHandler generates food and activity recommendations
-func GetRecommendationHandler(c echo.Context) error {
-	//ctx := c.Request().Context()
-	logger := c.Get("logger").(*zerolog.Logger)
-
-	// Get user claims from JWT
-	claims, ok := c.Get("user_claims").(*auth.JwtCustomClaims)
-	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-
-	logger.Info().Str("user_id", claims.UserID).Msg("Generating recommendations...")
-
-	// --- STEP 1: Get User Health Data ---
-	// TODO: Replace this hardcoded profile with a real database call
-	// using claims.UserID, e.g., profile, err := queries.GetUserHealthProfile(ctx, claims.UserID)
-	profile := HealthProfile{
-		Goal:          "Lower A1c and lose 10kg",
-		Condition:     "Type 2 Diabetes",
-		Age:           45,
-		AvgGlucose:    160.5,
-		WeightKg:      95.0,
-		HeightCm:      170.0,
-		ActivityLevel: "Sedentary (office job)",
-		DietaryPrefs:  []string{"Loves chicken", "Dislikes fish"},
-	}
-	profileJSON, _ := json.MarshalIndent(profile, "", "  ")
-
-	// --- STEP 2: Get Dummy Data ---
-	// TODO: Replace this with data from your database (e.g., from 'sellers')
-	dummyData := `
-	Available Foods:
-	- Grilled Chicken Breast
-	- Brown Rice
-	- Steamed Broccoli
-	- Quinoa Salad
-	- Lentil Soup
-	- Apple Slices
-	- Greek Yogurt
-	- White Bread
-	- Soda
-	- Fried Chicken
-	
-	Available Activities:
-	- Walking
-	- Office Desk Stretches
-	- Swimming
-	- Weightlifting (light)
-	- Watching TV
-	`
-
-	// --- STEP 3: Build the Prompt ---
-	// Get the template from the 'ai' package and fill it in
-	finalUserPrompt := fmt.Sprintf(
-		geminiservice.UserPromptTemplate,
-		string(profileJSON),
-		dummyData,
-	)
-
-	// --- STEP 4: Call AI Service ---
-	// Call the simple function from the 'ai' package
-	jsonString, err := geminiservice.GenerateRecommendation(logger, finalUserPrompt)
+	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get recommendations from Gemini API")
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get recommendations"})
+		return err
 	}
 
-	// --- STEP 5: Return the JSON response ---
-	// The response from Gemini is *already* a JSON string.
-	// We return it directly.
-	return c.Blob(http.StatusOK, "application/json", []byte(jsonString))
+	// Initialize response with non-nil slices to ensure JSON [] instead of null
+	response := UserDataAllResponse{
+		UserID:            userID,
+		Addresses:         []database.UserAddress{},
+		MedicationsConfig: []database.UserMedication{},
+		RecentOrders:      []database.UserOrder{},
+		GlucoseReadings:   []database.UserGlucoseReading{},
+		MealLogs:          []MealLogWithItemsResponse{},
+		ActivityLogs:      []database.UserActivityLog{},
+		SleepLogs:         []database.UserSleepLog{},
+		MedicationLogs:    []database.UserMedicationLog{},
+		HealthEvents:      []database.UserHealthEvent{},
+		HBA1CRecords:      []database.UserHba1cRecord{},
+	}
+
+	// --- 1. Identity & Configuration (Critical) ---
+
+	// A. User Account
+	userAccount, err := queries.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to fetch user account for Super Get")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load account data"})
+	}
+	response.AccountProfile = &UserResponse{
+		UserID:      userAccount.UserID,
+		Username:    userAccount.UserUsername.String,
+		Email:       userAccount.UserEmail.String,
+		FirstName:   userAccount.UserFirstname.String,
+		LastName:    userAccount.UserLastname.String,
+		AccountType: userAccount.UserAccounttype.Int16,
+		// ... map other fields
+	}
+
+	// B. Health Profile
+	healthProfile, err := queries.GetUserHealthProfile(ctx, userID)
+	if err == nil {
+		response.HealthProfile = &healthProfile
+	} else {
+		log.Warn().Msg("User has no health profile yet")
+	}
+
+	// C. Addresses
+	addresses, err := queries.GetUserAddresses(ctx, userID)
+	if err == nil {
+		response.Addresses = addresses
+	}
+
+	// D. Medications Config (Active only)
+	// You might need a wrapper here if your query requires pgtype.Text
+	meds, err := queries.GetUserMedications(ctx, pgtype.Text{String: userID, Valid: true})
+	if err == nil {
+		response.MedicationsConfig = meds
+	}
+
+	// --- 2. E-Commerce State ---
+
+	// E. Cart (Re-using logic from cart_handler.go)
+	// We manually call the logic here to construct the FullCartResponse
+	// NOTE: This assumes getOrCreateCart and the loop logic are accessible or copied here.
+	// For simplicity, we'll just fetch the basic cart info if it exists.
+	cart, err := queries.GetCartByUserID(ctx, userID)
+	if err == nil && cart.SellerID.Valid {
+		// If a cart exists and has a seller, fetch items
+		items, _ := queries.GetCartItems(ctx, cart.CartID)
+
+		var subtotal float64
+		var cleanItems []CleanCartItemResponse
+		for _, item := range items {
+			var price float64
+			item.Price.Scan(&price)
+			subtotal += price * float64(item.Quantity)
+
+			cleanItems = append(cleanItems, CleanCartItemResponse{
+				CartItemID: item.CartItemID.Bytes,
+				FoodID:     item.FoodID.Bytes,
+				Quantity:   item.Quantity,
+				FoodName:   item.FoodName,
+				Price:      price,
+				PhotoURL:   item.PhotoUrl.String,
+			})
+		}
+
+		// Fetch Seller
+		var cleanSeller *CleanSellerProfileResponse // Changed type
+
+		s, err := queries.GetSellerProfile(ctx, cart.SellerID)
+		if err == nil {
+			// 3. Map database struct to clean response struct
+			cleanSeller = &CleanSellerProfileResponse{
+				SellerID:           uuid.UUID(s.SellerID.Bytes),
+				UserID:             s.UserID,
+				StoreName:          s.StoreName,
+				StoreDescription:   s.StoreDescription,
+				StorePhoneNumber:   s.StorePhoneNumber.String,
+				IsOpenManually:     s.IsOpenManually,
+				BusinessHours:      s.BusinessHours,
+				VerificationStatus: s.VerificationStatus,
+				LogoURL:            s.LogoUrl,
+				BannerURL:          s.BannerUrl,
+				AddressLine1:       s.AddressLine1,
+				District:           s.District,
+				City:               s.City,
+				Province:           s.Province,
+				PostalCode:         s.PostalCode,
+				Latitude:           s.Latitude,
+				Longitude:          s.Longitude,
+				GmapsLink:          s.GmapsLink,
+			}
+		}
+
+		response.Cart = &FullCartResponse{
+			CartID:        cart.CartID.Bytes,
+			UserID:        cart.UserID,
+			Subtotal:      subtotal,
+			SellerProfile: cleanSeller, // You'd map 'seller' to 'CleanSellerProfileResponse' here
+			Items:         cleanItems,
+		}
+	}
+
+	// F. Recent Orders (Limit 5)
+	// You might need to add a LIMIT to your GetUserOrders query or slice it here
+	orders, err := queries.GetUserOrders(ctx, userID)
+	if err == nil {
+		if len(orders) > 5 {
+			response.RecentOrders = orders[:5]
+		} else {
+			response.RecentOrders = orders
+		}
+	}
+
+	// --- 3. Health Logs (Recent History) ---
+	// We default to the last 7 days for high-frequency logs
+
+	startTime := time.Now().AddDate(0, 0, -7)
+	pgStart := pgtype.Timestamptz{Time: startTime, Valid: true}
+	pgEnd := pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true}
+
+	// G. Glucose Readings
+	glucose, err := queries.GetGlucoseReadings(ctx, database.GetGlucoseReadingsParams{
+		UserID:    userID,
+		StartDate: pgStart,
+		EndDate:   pgEnd,
+	})
+	if err == nil {
+		response.GlucoseReadings = glucose
+	}
+
+	// H. Activity Logs
+	activity, err := queries.GetActivityLogs(ctx, database.GetActivityLogsParams{
+		UserID:    userID,
+		StartDate: pgStart,
+		EndDate:   pgEnd,
+	})
+	if err == nil {
+		response.ActivityLogs = activity
+	}
+
+	// I. Sleep Logs
+	sleep, err := queries.GetSleepLogs(ctx, database.GetSleepLogsParams{
+		UserID:    userID,
+		StartDate: pgStart,
+		EndDate:   pgEnd,
+	})
+	if err == nil {
+		response.SleepLogs = sleep
+	}
+
+	// J. Medication Logs
+	medLogs, err := queries.GetMedicationLogs(ctx, database.GetMedicationLogsParams{
+		UserID:    userID,
+		StartDate: pgStart,
+		EndDate:   pgEnd,
+	})
+	if err == nil {
+		response.MedicationLogs = medLogs
+	}
+
+	// K. Meal Logs (Complex: Need Headers + Items)
+	mealHeaders, err := queries.GetMealLogs(ctx, database.GetMealLogsParams{
+		UserID:    userID,
+		StartDate: pgStart,
+		EndDate:   pgEnd,
+	})
+	if err == nil {
+		// We must loop through headers and fetch items for each
+		// This N+1 query pattern is acceptable here because 'N' (meals in 7 days) is small (~20)
+		for _, header := range mealHeaders {
+			items, _ := queries.GetMealItemsByMealID(ctx, header.MealID)
+
+			// Combine into response struct
+			fullMeal := MealLogWithItemsResponse{
+				UserMealLog: header,
+				Items:       items, // Will be [] if error or empty
+			}
+			response.MealLogs = append(response.MealLogs, fullMeal)
+		}
+	}
+
+	// L. Health Events (Last 30 days)
+	healthEvents, err := queries.GetHealthEvents(ctx, userID)
+	if err == nil {
+		response.HealthEvents = healthEvents
+	}
+
+	// M. HBA1C Records (All history, usually small)
+	hba1c, err := queries.GetHBA1CRecords(ctx, userID)
+	if err == nil {
+		response.HBA1CRecords = hba1c
+	}
+
+	// --- FINAL RETURN ---
+	log.Info().Str("user_id", userID).Msg("Successfully aggregated all user data")
+	return c.JSON(http.StatusOK, response)
 }

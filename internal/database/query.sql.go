@@ -12,6 +12,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const assignUserRole = `-- name: AssignUserRole :exec
+INSERT INTO user_roles (user_id, role_id)
+SELECT $1, role_id FROM roles WHERE role_name = $2
+`
+
+type AssignUserRoleParams struct {
+	UserID   string `json:"user_id"`
+	RoleName string `json:"role_name"`
+}
+
+func (q *Queries) AssignUserRole(ctx context.Context, arg AssignUserRoleParams) error {
+	_, err := q.db.Exec(ctx, assignUserRole, arg.UserID, arg.RoleName)
+	return err
+}
+
 const checkAddressOwnership = `-- name: CheckAddressOwnership :one
 SELECT EXISTS(
     SELECT 1 FROM user_addresses
@@ -125,6 +140,82 @@ func (q *Queries) CountUserAddresses(ctx context.Context, userID string) (int64,
 	return count, err
 }
 
+const createActivityLog = `-- name: CreateActivityLog :one
+INSERT INTO user_activity_logs (
+    user_id,
+    activity_timestamp,
+    activity_code,
+    intensity,
+    perceived_exertion,
+    duration_minutes,
+    steps_count,
+    pre_activity_carbs,
+    water_intake_ml,
+    issue_description,
+    source,
+    sync_id,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+)
+RETURNING activity_id, user_id, activity_timestamp, activity_code, intensity, perceived_exertion, duration_minutes, steps_count, pre_activity_carbs, water_intake_ml, issue_description, source, sync_id, notes, created_at, updated_at
+`
+
+type CreateActivityLogParams struct {
+	UserID            string             `json:"user_id"`
+	ActivityTimestamp pgtype.Timestamptz `json:"activity_timestamp"`
+	ActivityCode      string             `json:"activity_code"`
+	Intensity         string             `json:"intensity"`
+	PerceivedExertion pgtype.Int4        `json:"perceived_exertion"`
+	DurationMinutes   int32              `json:"duration_minutes"`
+	StepsCount        pgtype.Int4        `json:"steps_count"`
+	PreActivityCarbs  pgtype.Int4        `json:"pre_activity_carbs"`
+	WaterIntakeMl     pgtype.Int4        `json:"water_intake_ml"`
+	IssueDescription  pgtype.Text        `json:"issue_description"`
+	Source            string             `json:"source"`
+	SyncID            pgtype.Text        `json:"sync_id"`
+	Notes             pgtype.Text        `json:"notes"`
+}
+
+// Creates a new activity log entry
+func (q *Queries) CreateActivityLog(ctx context.Context, arg CreateActivityLogParams) (UserActivityLog, error) {
+	row := q.db.QueryRow(ctx, createActivityLog,
+		arg.UserID,
+		arg.ActivityTimestamp,
+		arg.ActivityCode,
+		arg.Intensity,
+		arg.PerceivedExertion,
+		arg.DurationMinutes,
+		arg.StepsCount,
+		arg.PreActivityCarbs,
+		arg.WaterIntakeMl,
+		arg.IssueDescription,
+		arg.Source,
+		arg.SyncID,
+		arg.Notes,
+	)
+	var i UserActivityLog
+	err := row.Scan(
+		&i.ActivityID,
+		&i.UserID,
+		&i.ActivityTimestamp,
+		&i.ActivityCode,
+		&i.Intensity,
+		&i.PerceivedExertion,
+		&i.DurationMinutes,
+		&i.StepsCount,
+		&i.PreActivityCarbs,
+		&i.WaterIntakeMl,
+		&i.IssueDescription,
+		&i.Source,
+		&i.SyncID,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createAuthLog = `-- name: CreateAuthLog :one
 INSERT INTO logs_auth (
     user_id,
@@ -231,6 +322,411 @@ func (q *Queries) CreateEmailChangeRequest(ctx context.Context, arg CreateEmailC
 		&i.VerificationToken,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createGlucoseReading = `-- name: CreateGlucoseReading :one
+INSERT INTO user_glucose_readings (
+    user_id,
+    glucose_value,
+    reading_timestamp,
+    reading_type,
+    source,
+    device_id,
+    device_name,
+    is_flagged,
+    flag_reason,
+    is_outlier,
+    notes,
+    symptoms
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+)
+RETURNING reading_id, user_id, glucose_value, reading_timestamp, reading_type, trend_arrow, rate_of_change, source, device_id, device_name, is_flagged, flag_reason, is_outlier, notes, symptoms, created_at, updated_at
+`
+
+type CreateGlucoseReadingParams struct {
+	UserID           string             `json:"user_id"`
+	GlucoseValue     int32              `json:"glucose_value"`
+	ReadingTimestamp pgtype.Timestamptz `json:"reading_timestamp"`
+	ReadingType      string             `json:"reading_type"`
+	Source           pgtype.Text        `json:"source"`
+	DeviceID         pgtype.Text        `json:"device_id"`
+	DeviceName       pgtype.Text        `json:"device_name"`
+	IsFlagged        pgtype.Bool        `json:"is_flagged"`
+	FlagReason       pgtype.Text        `json:"flag_reason"`
+	IsOutlier        pgtype.Bool        `json:"is_outlier"`
+	Notes            pgtype.Text        `json:"notes"`
+	Symptoms         []string           `json:"symptoms"`
+}
+
+func (q *Queries) CreateGlucoseReading(ctx context.Context, arg CreateGlucoseReadingParams) (UserGlucoseReading, error) {
+	row := q.db.QueryRow(ctx, createGlucoseReading,
+		arg.UserID,
+		arg.GlucoseValue,
+		arg.ReadingTimestamp,
+		arg.ReadingType,
+		arg.Source,
+		arg.DeviceID,
+		arg.DeviceName,
+		arg.IsFlagged,
+		arg.FlagReason,
+		arg.IsOutlier,
+		arg.Notes,
+		arg.Symptoms,
+	)
+	var i UserGlucoseReading
+	err := row.Scan(
+		&i.ReadingID,
+		&i.UserID,
+		&i.GlucoseValue,
+		&i.ReadingTimestamp,
+		&i.ReadingType,
+		&i.TrendArrow,
+		&i.RateOfChange,
+		&i.Source,
+		&i.DeviceID,
+		&i.DeviceName,
+		&i.IsFlagged,
+		&i.FlagReason,
+		&i.IsOutlier,
+		&i.Notes,
+		&i.Symptoms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createHBA1CRecord = `-- name: CreateHBA1CRecord :one
+INSERT INTO user_hba1c_records (
+    user_id,
+    test_date,
+    hba1c_percentage,
+    hba1c_mmol_mol,
+    estimated_avg_glucose,
+    treatment_changed,
+    medication_changes,
+    diet_changes,
+    activity_changes,
+    change_from_previous,
+    trend,
+    notes,
+    document_url
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+)
+RETURNING hba1c_id, user_id, test_date, hba1c_percentage, hba1c_mmol_mol, estimated_avg_glucose, treatment_changed, medication_changes, diet_changes, activity_changes, change_from_previous, trend, notes, document_url, created_at, updated_at
+`
+
+type CreateHBA1CRecordParams struct {
+	UserID              string         `json:"user_id"`
+	TestDate            pgtype.Date    `json:"test_date"`
+	Hba1cPercentage     pgtype.Numeric `json:"hba1c_percentage"`
+	Hba1cMmolMol        pgtype.Int4    `json:"hba1c_mmol_mol"`
+	EstimatedAvgGlucose pgtype.Int4    `json:"estimated_avg_glucose"`
+	TreatmentChanged    pgtype.Bool    `json:"treatment_changed"`
+	MedicationChanges   pgtype.Text    `json:"medication_changes"`
+	DietChanges         pgtype.Text    `json:"diet_changes"`
+	ActivityChanges     pgtype.Text    `json:"activity_changes"`
+	ChangeFromPrevious  pgtype.Numeric `json:"change_from_previous"`
+	Trend               pgtype.Text    `json:"trend"`
+	Notes               pgtype.Text    `json:"notes"`
+	DocumentUrl         pgtype.Text    `json:"document_url"`
+}
+
+func (q *Queries) CreateHBA1CRecord(ctx context.Context, arg CreateHBA1CRecordParams) (UserHba1cRecord, error) {
+	row := q.db.QueryRow(ctx, createHBA1CRecord,
+		arg.UserID,
+		arg.TestDate,
+		arg.Hba1cPercentage,
+		arg.Hba1cMmolMol,
+		arg.EstimatedAvgGlucose,
+		arg.TreatmentChanged,
+		arg.MedicationChanges,
+		arg.DietChanges,
+		arg.ActivityChanges,
+		arg.ChangeFromPrevious,
+		arg.Trend,
+		arg.Notes,
+		arg.DocumentUrl,
+	)
+	var i UserHba1cRecord
+	err := row.Scan(
+		&i.Hba1cID,
+		&i.UserID,
+		&i.TestDate,
+		&i.Hba1cPercentage,
+		&i.Hba1cMmolMol,
+		&i.EstimatedAvgGlucose,
+		&i.TreatmentChanged,
+		&i.MedicationChanges,
+		&i.DietChanges,
+		&i.ActivityChanges,
+		&i.ChangeFromPrevious,
+		&i.Trend,
+		&i.Notes,
+		&i.DocumentUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createHealthEvent = `-- name: CreateHealthEvent :one
+INSERT INTO user_health_events (
+    user_id,
+    event_date,
+    event_type,
+    severity,
+    glucose_value,
+    ketone_value_mmol,
+    symptoms,
+    treatments,
+    required_medical_attention,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING event_id, user_id, event_date, event_type, severity, glucose_value, ketone_value_mmol, symptoms, treatments, required_medical_attention, notes, created_at, updated_at
+`
+
+type CreateHealthEventParams struct {
+	UserID                   string         `json:"user_id"`
+	EventDate                pgtype.Date    `json:"event_date"`
+	EventType                string         `json:"event_type"`
+	Severity                 pgtype.Text    `json:"severity"`
+	GlucoseValue             pgtype.Int4    `json:"glucose_value"`
+	KetoneValueMmol          pgtype.Numeric `json:"ketone_value_mmol"`
+	Symptoms                 []string       `json:"symptoms"`
+	Treatments               []string       `json:"treatments"`
+	RequiredMedicalAttention pgtype.Bool    `json:"required_medical_attention"`
+	Notes                    pgtype.Text    `json:"notes"`
+}
+
+func (q *Queries) CreateHealthEvent(ctx context.Context, arg CreateHealthEventParams) (UserHealthEvent, error) {
+	row := q.db.QueryRow(ctx, createHealthEvent,
+		arg.UserID,
+		arg.EventDate,
+		arg.EventType,
+		arg.Severity,
+		arg.GlucoseValue,
+		arg.KetoneValueMmol,
+		arg.Symptoms,
+		arg.Treatments,
+		arg.RequiredMedicalAttention,
+		arg.Notes,
+	)
+	var i UserHealthEvent
+	err := row.Scan(
+		&i.EventID,
+		&i.UserID,
+		&i.EventDate,
+		&i.EventType,
+		&i.Severity,
+		&i.GlucoseValue,
+		&i.KetoneValueMmol,
+		&i.Symptoms,
+		&i.Treatments,
+		&i.RequiredMedicalAttention,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createMealItem = `-- name: CreateMealItem :exec
+INSERT INTO user_meal_items (
+    meal_id,
+    food_name,
+    food_id,
+    seller,
+    serving_size,
+    serving_size_grams,
+    quantity,
+    calories,
+    carbs_grams,
+    fiber_grams,
+    protein_grams,
+    fat_grams,
+    sugar_grams,
+    sodium_mg,
+    glycemic_index,
+    glycemic_load,
+    food_category
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+)
+`
+
+type CreateMealItemParams struct {
+	MealID           pgtype.UUID    `json:"meal_id"`
+	FoodName         string         `json:"food_name"`
+	FoodID           pgtype.UUID    `json:"food_id"`
+	Seller           pgtype.Text    `json:"seller"`
+	ServingSize      pgtype.Text    `json:"serving_size"`
+	ServingSizeGrams pgtype.Numeric `json:"serving_size_grams"`
+	Quantity         pgtype.Numeric `json:"quantity"`
+	Calories         pgtype.Int4    `json:"calories"`
+	CarbsGrams       pgtype.Numeric `json:"carbs_grams"`
+	FiberGrams       pgtype.Numeric `json:"fiber_grams"`
+	ProteinGrams     pgtype.Numeric `json:"protein_grams"`
+	FatGrams         pgtype.Numeric `json:"fat_grams"`
+	SugarGrams       pgtype.Numeric `json:"sugar_grams"`
+	SodiumMg         pgtype.Int4    `json:"sodium_mg"`
+	GlycemicIndex    pgtype.Int4    `json:"glycemic_index"`
+	GlycemicLoad     pgtype.Numeric `json:"glycemic_load"`
+	FoodCategory     pgtype.Text    `json:"food_category"`
+}
+
+func (q *Queries) CreateMealItem(ctx context.Context, arg CreateMealItemParams) error {
+	_, err := q.db.Exec(ctx, createMealItem,
+		arg.MealID,
+		arg.FoodName,
+		arg.FoodID,
+		arg.Seller,
+		arg.ServingSize,
+		arg.ServingSizeGrams,
+		arg.Quantity,
+		arg.Calories,
+		arg.CarbsGrams,
+		arg.FiberGrams,
+		arg.ProteinGrams,
+		arg.FatGrams,
+		arg.SugarGrams,
+		arg.SodiumMg,
+		arg.GlycemicIndex,
+		arg.GlycemicLoad,
+		arg.FoodCategory,
+	)
+	return err
+}
+
+const createMealLog = `-- name: CreateMealLog :one
+INSERT INTO user_meal_logs (
+    user_id,
+    meal_timestamp,
+    meal_type_id,
+    description,
+    total_calories,
+    total_carbs_grams,
+    total_protein_grams,
+    total_fat_grams,
+    total_fiber_grams,
+    total_sugar_grams,
+    tags
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+)
+RETURNING meal_id, user_id, meal_timestamp, meal_type_id, description, total_calories, total_carbs_grams, total_protein_grams, total_fat_grams, total_fiber_grams, total_sugar_grams, tags, created_at, updated_at
+`
+
+type CreateMealLogParams struct {
+	UserID            string             `json:"user_id"`
+	MealTimestamp     pgtype.Timestamptz `json:"meal_timestamp"`
+	MealTypeID        int32              `json:"meal_type_id"`
+	Description       pgtype.Text        `json:"description"`
+	TotalCalories     pgtype.Int4        `json:"total_calories"`
+	TotalCarbsGrams   pgtype.Numeric     `json:"total_carbs_grams"`
+	TotalProteinGrams pgtype.Numeric     `json:"total_protein_grams"`
+	TotalFatGrams     pgtype.Numeric     `json:"total_fat_grams"`
+	TotalFiberGrams   pgtype.Numeric     `json:"total_fiber_grams"`
+	TotalSugarGrams   pgtype.Numeric     `json:"total_sugar_grams"`
+	Tags              []string           `json:"tags"`
+}
+
+func (q *Queries) CreateMealLog(ctx context.Context, arg CreateMealLogParams) (UserMealLog, error) {
+	row := q.db.QueryRow(ctx, createMealLog,
+		arg.UserID,
+		arg.MealTimestamp,
+		arg.MealTypeID,
+		arg.Description,
+		arg.TotalCalories,
+		arg.TotalCarbsGrams,
+		arg.TotalProteinGrams,
+		arg.TotalFatGrams,
+		arg.TotalFiberGrams,
+		arg.TotalSugarGrams,
+		arg.Tags,
+	)
+	var i UserMealLog
+	err := row.Scan(
+		&i.MealID,
+		&i.UserID,
+		&i.MealTimestamp,
+		&i.MealTypeID,
+		&i.Description,
+		&i.TotalCalories,
+		&i.TotalCarbsGrams,
+		&i.TotalProteinGrams,
+		&i.TotalFatGrams,
+		&i.TotalFiberGrams,
+		&i.TotalSugarGrams,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createMedicationLog = `-- name: CreateMedicationLog :one
+INSERT INTO user_medication_logs (
+    user_id,
+    medication_id,
+    medication_name,
+    "timestamp",
+    dose_amount,
+    reason,
+    is_pump_delivery,
+    delivery_duration_minutes,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+RETURNING medicationlog_id, user_id, medication_id, medication_name, timestamp, dose_amount, reason, is_pump_delivery, delivery_duration_minutes, notes, created_at, updated_at
+`
+
+type CreateMedicationLogParams struct {
+	UserID                  string             `json:"user_id"`
+	MedicationID            pgtype.Int4        `json:"medication_id"`
+	MedicationName          string             `json:"medication_name"`
+	Timestamp               pgtype.Timestamptz `json:"timestamp"`
+	DoseAmount              pgtype.Numeric     `json:"dose_amount"`
+	Reason                  pgtype.Text        `json:"reason"`
+	IsPumpDelivery          pgtype.Bool        `json:"is_pump_delivery"`
+	DeliveryDurationMinutes pgtype.Int4        `json:"delivery_duration_minutes"`
+	Notes                   pgtype.Text        `json:"notes"`
+}
+
+// Logs a dose taken by the user.
+func (q *Queries) CreateMedicationLog(ctx context.Context, arg CreateMedicationLogParams) (UserMedicationLog, error) {
+	row := q.db.QueryRow(ctx, createMedicationLog,
+		arg.UserID,
+		arg.MedicationID,
+		arg.MedicationName,
+		arg.Timestamp,
+		arg.DoseAmount,
+		arg.Reason,
+		arg.IsPumpDelivery,
+		arg.DeliveryDurationMinutes,
+		arg.Notes,
+	)
+	var i UserMedicationLog
+	err := row.Scan(
+		&i.MedicationlogID,
+		&i.UserID,
+		&i.MedicationID,
+		&i.MedicationName,
+		&i.Timestamp,
+		&i.DoseAmount,
+		&i.Reason,
+		&i.IsPumpDelivery,
+		&i.DeliveryDurationMinutes,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -453,7 +949,94 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 	return i, err
 }
 
+const createSleepLog = `-- name: CreateSleepLog :one
+INSERT INTO user_sleep_logs (
+    user_id,
+    sleep_date,
+    bed_time,
+    wake_time,
+    quality_rating,
+    tracker_score,
+    deep_sleep_minutes,
+    rem_sleep_minutes,
+    light_sleep_minutes,
+    awake_minutes,
+    average_hrv,
+    resting_heart_rate,
+    tags,
+    source,
+    notes
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+)
+RETURNING sleep_id, user_id, sleep_date, bed_time, wake_time, quality_rating, tracker_score, deep_sleep_minutes, rem_sleep_minutes, light_sleep_minutes, awake_minutes, average_hrv, resting_heart_rate, tags, source, notes, created_at, updated_at
+`
+
+type CreateSleepLogParams struct {
+	UserID            string             `json:"user_id"`
+	SleepDate         pgtype.Date        `json:"sleep_date"`
+	BedTime           pgtype.Timestamptz `json:"bed_time"`
+	WakeTime          pgtype.Timestamptz `json:"wake_time"`
+	QualityRating     pgtype.Int4        `json:"quality_rating"`
+	TrackerScore      pgtype.Int4        `json:"tracker_score"`
+	DeepSleepMinutes  pgtype.Int4        `json:"deep_sleep_minutes"`
+	RemSleepMinutes   pgtype.Int4        `json:"rem_sleep_minutes"`
+	LightSleepMinutes pgtype.Int4        `json:"light_sleep_minutes"`
+	AwakeMinutes      pgtype.Int4        `json:"awake_minutes"`
+	AverageHrv        pgtype.Int4        `json:"average_hrv"`
+	RestingHeartRate  pgtype.Int4        `json:"resting_heart_rate"`
+	Tags              []string           `json:"tags"`
+	Source            pgtype.Text        `json:"source"`
+	Notes             pgtype.Text        `json:"notes"`
+}
+
+// Creates a new sleep log entry
+func (q *Queries) CreateSleepLog(ctx context.Context, arg CreateSleepLogParams) (UserSleepLog, error) {
+	row := q.db.QueryRow(ctx, createSleepLog,
+		arg.UserID,
+		arg.SleepDate,
+		arg.BedTime,
+		arg.WakeTime,
+		arg.QualityRating,
+		arg.TrackerScore,
+		arg.DeepSleepMinutes,
+		arg.RemSleepMinutes,
+		arg.LightSleepMinutes,
+		arg.AwakeMinutes,
+		arg.AverageHrv,
+		arg.RestingHeartRate,
+		arg.Tags,
+		arg.Source,
+		arg.Notes,
+	)
+	var i UserSleepLog
+	err := row.Scan(
+		&i.SleepID,
+		&i.UserID,
+		&i.SleepDate,
+		&i.BedTime,
+		&i.WakeTime,
+		&i.QualityRating,
+		&i.TrackerScore,
+		&i.DeepSleepMinutes,
+		&i.RemSleepMinutes,
+		&i.LightSleepMinutes,
+		&i.AwakeMinutes,
+		&i.AverageHrv,
+		&i.RestingHeartRate,
+		&i.Tags,
+		&i.Source,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
+/* ====================================================================
+                     Authentication Queries
+==================================================================== */
 INSERT INTO users (
     user_id,
     user_username,
@@ -464,27 +1047,27 @@ INSERT INTO users (
     user_dob,
     user_gender,
     user_accounttype,
-    user_created_at_auth,
+    created_at,
     is_email_verified,
     email_verified_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
-) RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
+) RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
 type CreateUserParams struct {
-	UserID            string              `json:"user_id"`
-	UserUsername      pgtype.Text         `json:"user_username"`
-	UserPassword      pgtype.Text         `json:"user_password"`
-	UserFirstname     pgtype.Text         `json:"user_firstname"`
-	UserLastname      pgtype.Text         `json:"user_lastname"`
-	UserEmail         pgtype.Text         `json:"user_email"`
-	UserDob           pgtype.Date         `json:"user_dob"`
-	UserGender        NullUsersUserGender `json:"user_gender"`
-	UserAccounttype   pgtype.Int2         `json:"user_accounttype"`
-	UserCreatedAtAuth pgtype.Timestamptz  `json:"user_created_at_auth"`
-	IsEmailVerified   pgtype.Bool         `json:"is_email_verified"`
-	EmailVerifiedAt   pgtype.Timestamptz  `json:"email_verified_at"`
+	UserID          string              `json:"user_id"`
+	UserUsername    pgtype.Text         `json:"user_username"`
+	UserPassword    pgtype.Text         `json:"user_password"`
+	UserFirstname   pgtype.Text         `json:"user_firstname"`
+	UserLastname    pgtype.Text         `json:"user_lastname"`
+	UserEmail       pgtype.Text         `json:"user_email"`
+	UserDob         pgtype.Date         `json:"user_dob"`
+	UserGender      NullUsersUserGender `json:"user_gender"`
+	UserAccounttype pgtype.Int2         `json:"user_accounttype"`
+	CreatedAt       pgtype.Timestamptz  `json:"created_at"`
+	IsEmailVerified pgtype.Bool         `json:"is_email_verified"`
+	EmailVerifiedAt pgtype.Timestamptz  `json:"email_verified_at"`
 }
 
 // Traditional Auth Users
@@ -499,7 +1082,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.UserDob,
 		arg.UserGender,
 		arg.UserAccounttype,
-		arg.UserCreatedAtAuth,
+		arg.CreatedAt,
 		arg.IsEmailVerified,
 		arg.EmailVerifiedAt,
 	)
@@ -519,8 +1102,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
@@ -530,10 +1113,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const createUserAddress = `-- name: CreateUserAddress :one
+/* ====================================================================
+                   Addresses Management Queries
+==================================================================== */
+
 INSERT INTO user_addresses (
     user_id,
     address_line1,
     address_line2,
+    address_district,
     address_city,
     address_province,
     address_postalcode,
@@ -545,14 +1133,15 @@ INSERT INTO user_addresses (
     delivery_notes,
     is_default
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-) RETURNING address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+) RETURNING address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at, address_district
 `
 
 type CreateUserAddressParams struct {
 	UserID            string        `json:"user_id"`
 	AddressLine1      string        `json:"address_line1"`
 	AddressLine2      pgtype.Text   `json:"address_line2"`
+	AddressDistrict   pgtype.Text   `json:"address_district"`
 	AddressCity       string        `json:"address_city"`
 	AddressProvince   pgtype.Text   `json:"address_province"`
 	AddressPostalcode pgtype.Text   `json:"address_postalcode"`
@@ -570,6 +1159,7 @@ func (q *Queries) CreateUserAddress(ctx context.Context, arg CreateUserAddressPa
 		arg.UserID,
 		arg.AddressLine1,
 		arg.AddressLine2,
+		arg.AddressDistrict,
 		arg.AddressCity,
 		arg.AddressProvince,
 		arg.AddressPostalcode,
@@ -600,8 +1190,66 @@ func (q *Queries) CreateUserAddress(ctx context.Context, arg CreateUserAddressPa
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AddressDistrict,
 	)
 	return i, err
+}
+
+const createUserMedication = `-- name: CreateUserMedication :one
+INSERT INTO user_medications (
+    user_id,
+    display_name,
+    medication_type,
+    default_dose_unit
+) VALUES (
+    $1, $2, $3, $4
+)
+RETURNING medication_id, user_id, display_name, medication_type, default_dose_unit, is_active, created_at, updated_at
+`
+
+type CreateUserMedicationParams struct {
+	UserID          pgtype.Text `json:"user_id"`
+	DisplayName     string      `json:"display_name"`
+	MedicationType  string      `json:"medication_type"`
+	DefaultDoseUnit pgtype.Text `json:"default_dose_unit"`
+}
+
+// Registers a new medication configuration for the user.
+func (q *Queries) CreateUserMedication(ctx context.Context, arg CreateUserMedicationParams) (UserMedication, error) {
+	row := q.db.QueryRow(ctx, createUserMedication,
+		arg.UserID,
+		arg.DisplayName,
+		arg.MedicationType,
+		arg.DefaultDoseUnit,
+	)
+	var i UserMedication
+	err := row.Scan(
+		&i.MedicationID,
+		&i.UserID,
+		&i.DisplayName,
+		&i.MedicationType,
+		&i.DefaultDoseUnit,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deleteActivityLog = `-- name: DeleteActivityLog :exec
+DELETE FROM user_activity_logs
+WHERE activity_id = $1 AND user_id = $2
+`
+
+type DeleteActivityLogParams struct {
+	ActivityID pgtype.UUID `json:"activity_id"`
+	UserID     string      `json:"user_id"`
+}
+
+// Deletes an activity log, checking for user ownership
+func (q *Queries) DeleteActivityLog(ctx context.Context, arg DeleteActivityLogParams) error {
+	_, err := q.db.Exec(ctx, deleteActivityLog, arg.ActivityID, arg.UserID)
+	return err
 }
 
 const deleteCartItem = `-- name: DeleteCartItem :exec
@@ -637,6 +1285,94 @@ WHERE expires_at < NOW()
 
 func (q *Queries) DeleteExpiredPendingRegistrations(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredPendingRegistrations)
+	return err
+}
+
+const deleteGlucoseReading = `-- name: DeleteGlucoseReading :exec
+DELETE FROM user_glucose_readings
+WHERE reading_id = $1 AND user_id = $2
+`
+
+type DeleteGlucoseReadingParams struct {
+	ReadingID pgtype.UUID `json:"reading_id"`
+	UserID    string      `json:"user_id"`
+}
+
+// Deletes a reading, checking for user ownership
+func (q *Queries) DeleteGlucoseReading(ctx context.Context, arg DeleteGlucoseReadingParams) error {
+	_, err := q.db.Exec(ctx, deleteGlucoseReading, arg.ReadingID, arg.UserID)
+	return err
+}
+
+const deleteHBA1CRecord = `-- name: DeleteHBA1CRecord :exec
+DELETE FROM user_hba1c_records
+WHERE hba1c_id = $1 AND user_id = $2
+`
+
+type DeleteHBA1CRecordParams struct {
+	Hba1cID pgtype.UUID `json:"hba1c_id"`
+	UserID  string      `json:"user_id"`
+}
+
+// Deletes a record, checking for user ownership
+func (q *Queries) DeleteHBA1CRecord(ctx context.Context, arg DeleteHBA1CRecordParams) error {
+	_, err := q.db.Exec(ctx, deleteHBA1CRecord, arg.Hba1cID, arg.UserID)
+	return err
+}
+
+const deleteHealthEvent = `-- name: DeleteHealthEvent :exec
+DELETE FROM user_health_events
+WHERE event_id = $1 AND user_id = $2
+`
+
+type DeleteHealthEventParams struct {
+	EventID pgtype.UUID `json:"event_id"`
+	UserID  string      `json:"user_id"`
+}
+
+// Deletes a record, checking for user ownership
+func (q *Queries) DeleteHealthEvent(ctx context.Context, arg DeleteHealthEventParams) error {
+	_, err := q.db.Exec(ctx, deleteHealthEvent, arg.EventID, arg.UserID)
+	return err
+}
+
+const deleteMealItemsByMealID = `-- name: DeleteMealItemsByMealID :exec
+DELETE FROM user_meal_items WHERE meal_id = $1
+`
+
+func (q *Queries) DeleteMealItemsByMealID(ctx context.Context, mealID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteMealItemsByMealID, mealID)
+	return err
+}
+
+const deleteMealLog = `-- name: DeleteMealLog :exec
+DELETE FROM user_meal_logs
+WHERE meal_id = $1 AND user_id = $2
+`
+
+type DeleteMealLogParams struct {
+	MealID pgtype.UUID `json:"meal_id"`
+	UserID string      `json:"user_id"`
+}
+
+func (q *Queries) DeleteMealLog(ctx context.Context, arg DeleteMealLogParams) error {
+	_, err := q.db.Exec(ctx, deleteMealLog, arg.MealID, arg.UserID)
+	return err
+}
+
+const deleteMedicationLog = `-- name: DeleteMedicationLog :exec
+DELETE FROM user_medication_logs
+WHERE medicationlog_id = $1 AND user_id = $2
+`
+
+type DeleteMedicationLogParams struct {
+	MedicationlogID pgtype.UUID `json:"medicationlog_id"`
+	UserID          string      `json:"user_id"`
+}
+
+// Deletes a single dose log.
+func (q *Queries) DeleteMedicationLog(ctx context.Context, arg DeleteMedicationLogParams) error {
+	_, err := q.db.Exec(ctx, deleteMedicationLog, arg.MedicationlogID, arg.UserID)
 	return err
 }
 
@@ -692,6 +1428,22 @@ func (q *Queries) DeleteScheduledOTPCodes(ctx context.Context) error {
 	return err
 }
 
+const deleteSleepLog = `-- name: DeleteSleepLog :exec
+DELETE FROM user_sleep_logs
+WHERE sleep_id = $1 AND user_id = $2
+`
+
+type DeleteSleepLogParams struct {
+	SleepID pgtype.UUID `json:"sleep_id"`
+	UserID  string      `json:"user_id"`
+}
+
+// Deletes a sleep log, checking for user ownership
+func (q *Queries) DeleteSleepLog(ctx context.Context, arg DeleteSleepLogParams) error {
+	_, err := q.db.Exec(ctx, deleteSleepLog, arg.SleepID, arg.UserID)
+	return err
+}
+
 const deleteUser = `-- name: DeleteUser :exec
 DELETE FROM users
 WHERE user_id = $1
@@ -716,6 +1468,151 @@ type DeleteUserAddressParams struct {
 func (q *Queries) DeleteUserAddress(ctx context.Context, arg DeleteUserAddressParams) error {
 	_, err := q.db.Exec(ctx, deleteUserAddress, arg.AddressID, arg.UserID)
 	return err
+}
+
+const deleteUserHealthProfile = `-- name: DeleteUserHealthProfile :exec
+DELETE FROM user_health_profiles
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserHealthProfile(ctx context.Context, userID string) error {
+	_, err := q.db.Exec(ctx, deleteUserHealthProfile, userID)
+	return err
+}
+
+const deleteUserMedication = `-- name: DeleteUserMedication :exec
+UPDATE user_medications
+SET is_active = false, updated_at = NOW()
+WHERE medication_id = $1 AND user_id = $2
+`
+
+type DeleteUserMedicationParams struct {
+	MedicationID int32       `json:"medication_id"`
+	UserID       pgtype.Text `json:"user_id"`
+}
+
+// Soft deletes the medication configuration (sets is_active = false).
+func (q *Queries) DeleteUserMedication(ctx context.Context, arg DeleteUserMedicationParams) error {
+	_, err := q.db.Exec(ctx, deleteUserMedication, arg.MedicationID, arg.UserID)
+	return err
+}
+
+const getActivityLogByID = `-- name: GetActivityLogByID :one
+SELECT activity_id, user_id, activity_timestamp, activity_code, intensity, perceived_exertion, duration_minutes, steps_count, pre_activity_carbs, water_intake_ml, issue_description, source, sync_id, notes, created_at, updated_at FROM user_activity_logs
+WHERE activity_id = $1 AND user_id = $2
+`
+
+type GetActivityLogByIDParams struct {
+	ActivityID pgtype.UUID `json:"activity_id"`
+	UserID     string      `json:"user_id"`
+}
+
+// Retrieves a single activity log, checking for user ownership
+func (q *Queries) GetActivityLogByID(ctx context.Context, arg GetActivityLogByIDParams) (UserActivityLog, error) {
+	row := q.db.QueryRow(ctx, getActivityLogByID, arg.ActivityID, arg.UserID)
+	var i UserActivityLog
+	err := row.Scan(
+		&i.ActivityID,
+		&i.UserID,
+		&i.ActivityTimestamp,
+		&i.ActivityCode,
+		&i.Intensity,
+		&i.PerceivedExertion,
+		&i.DurationMinutes,
+		&i.StepsCount,
+		&i.PreActivityCarbs,
+		&i.WaterIntakeMl,
+		&i.IssueDescription,
+		&i.Source,
+		&i.SyncID,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActivityLogs = `-- name: GetActivityLogs :many
+SELECT activity_id, user_id, activity_timestamp, activity_code, intensity, perceived_exertion, duration_minutes, steps_count, pre_activity_carbs, water_intake_ml, issue_description, source, sync_id, notes, created_at, updated_at FROM user_activity_logs
+WHERE user_id = $1
+  AND activity_timestamp >= COALESCE($2, '1900-01-01'::timestamptz)
+  AND activity_timestamp <= COALESCE($3, NOW() + INTERVAL '1 day')
+ORDER BY activity_timestamp DESC
+`
+
+type GetActivityLogsParams struct {
+	UserID    string             `json:"user_id"`
+	StartDate pgtype.Timestamptz `json:"start_date"`
+	EndDate   pgtype.Timestamptz `json:"end_date"`
+}
+
+// Retrieves all activity logs for the user, ordered newest first, with optional date range
+func (q *Queries) GetActivityLogs(ctx context.Context, arg GetActivityLogsParams) ([]UserActivityLog, error) {
+	rows, err := q.db.Query(ctx, getActivityLogs, arg.UserID, arg.StartDate, arg.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserActivityLog
+	for rows.Next() {
+		var i UserActivityLog
+		if err := rows.Scan(
+			&i.ActivityID,
+			&i.UserID,
+			&i.ActivityTimestamp,
+			&i.ActivityCode,
+			&i.Intensity,
+			&i.PerceivedExertion,
+			&i.DurationMinutes,
+			&i.StepsCount,
+			&i.PreActivityCarbs,
+			&i.WaterIntakeMl,
+			&i.IssueDescription,
+			&i.Source,
+			&i.SyncID,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getActivityTypes = `-- name: GetActivityTypes :many
+SELECT activity_type_id, activity_code, display_name, intensity_level FROM activity_types
+ORDER BY display_name
+`
+
+// Retrieves all activity types, ordered by display name
+func (q *Queries) GetActivityTypes(ctx context.Context) ([]ActivityType, error) {
+	rows, err := q.db.Query(ctx, getActivityTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActivityType
+	for rows.Next() {
+		var i ActivityType
+		if err := rows.Scan(
+			&i.ActivityTypeID,
+			&i.ActivityCode,
+			&i.DisplayName,
+			&i.IntensityLevel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAuthLogsByCategory = `-- name: GetAuthLogsByCategory :many
@@ -857,6 +1754,10 @@ func (q *Queries) GetAuthLogsByUserID(ctx context.Context, arg GetAuthLogsByUser
 }
 
 const getCartByUserID = `-- name: GetCartByUserID :one
+/* ====================================================================
+                   Cart & Order Management Queries
+==================================================================== */
+
 SELECT cart_id, user_id, seller_id, created_at, updated_at FROM user_carts
 WHERE user_id = $1
 `
@@ -927,7 +1828,7 @@ func (q *Queries) GetCartItems(ctx context.Context, cartID pgtype.UUID) ([]GetCa
 }
 
 const getDefaultAddress = `-- name: GetDefaultAddress :one
-SELECT address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at FROM user_addresses
+SELECT address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at, address_district FROM user_addresses
 WHERE user_id = $1 AND is_default = true AND is_active = true
 LIMIT 1
 `
@@ -953,6 +1854,7 @@ func (q *Queries) GetDefaultAddress(ctx context.Context, userID string) (UserAdd
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AddressDistrict,
 	)
 	return i, err
 }
@@ -1017,6 +1919,69 @@ func (q *Queries) GetFailedLoginAttempts(ctx context.Context, createdAt pgtype.T
 	return items, nil
 }
 
+const getFood = `-- name: GetFood :one
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size_g, calories, protein_g, fat_g, carbohydrate_g, dietary_fiber_g, sugars_g, saturated_fat_g, polyunsaturated_fat_g, monounsaturated_fat_g, trans_fat_g, cholesterol_mg, sodium_mg, potassium_mg, water_g, vitamin_a_mcg, vitamin_c_mg, vitamin_d_mcg, vitamin_e_mg, vitamin_k_mcg, thiamin_mg, riboflavin_mg, niacin_mg, vitamin_b5_mg, vitamin_b6_mg, folate_mcg, vitamin_b12_mcg, calcium_mg, copper_mg, iron_mg, magnesium_mg, manganese_mg, phosphorus_mg, selenium_mcg, zinc_mg, caffeine_mg, nutrition_density FROM foods
+WHERE food_id = $1
+`
+
+func (q *Queries) GetFood(ctx context.Context, foodID pgtype.UUID) (Food, error) {
+	row := q.db.QueryRow(ctx, getFood, foodID)
+	var i Food
+	err := row.Scan(
+		&i.FoodID,
+		&i.SellerID,
+		&i.FoodName,
+		&i.Description,
+		&i.Price,
+		&i.Currency,
+		&i.PhotoUrl,
+		&i.ThumbnailUrl,
+		&i.IsAvailable,
+		&i.StockCount,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ServingSizeG,
+		&i.Calories,
+		&i.ProteinG,
+		&i.FatG,
+		&i.CarbohydrateG,
+		&i.DietaryFiberG,
+		&i.SugarsG,
+		&i.SaturatedFatG,
+		&i.PolyunsaturatedFatG,
+		&i.MonounsaturatedFatG,
+		&i.TransFatG,
+		&i.CholesterolMg,
+		&i.SodiumMg,
+		&i.PotassiumMg,
+		&i.WaterG,
+		&i.VitaminAMcg,
+		&i.VitaminCMg,
+		&i.VitaminDMcg,
+		&i.VitaminEMg,
+		&i.VitaminKMcg,
+		&i.ThiaminMg,
+		&i.RiboflavinMg,
+		&i.NiacinMg,
+		&i.VitaminB5Mg,
+		&i.VitaminB6Mg,
+		&i.FolateMcg,
+		&i.VitaminB12Mcg,
+		&i.CalciumMg,
+		&i.CopperMg,
+		&i.IronMg,
+		&i.MagnesiumMg,
+		&i.ManganeseMg,
+		&i.PhosphorusMg,
+		&i.SeleniumMcg,
+		&i.ZincMg,
+		&i.CaffeineMg,
+		&i.NutritionDensity,
+	)
+	return i, err
+}
+
 const getFoodForUpdate = `-- name: GetFoodForUpdate :one
 SELECT food_id, food_name, price, stock_count, is_available FROM foods
 WHERE food_id = $1
@@ -1043,6 +2008,466 @@ func (q *Queries) GetFoodForUpdate(ctx context.Context, foodID pgtype.UUID) (Get
 		&i.IsAvailable,
 	)
 	return i, err
+}
+
+const getGlucoseReadingByID = `-- name: GetGlucoseReadingByID :one
+SELECT reading_id, user_id, glucose_value, reading_timestamp, reading_type, trend_arrow, rate_of_change, source, device_id, device_name, is_flagged, flag_reason, is_outlier, notes, symptoms, created_at, updated_at FROM user_glucose_readings
+WHERE reading_id = $1 AND user_id = $2
+`
+
+type GetGlucoseReadingByIDParams struct {
+	ReadingID pgtype.UUID `json:"reading_id"`
+	UserID    string      `json:"user_id"`
+}
+
+// Retrieves a single reading, checking for user ownership
+func (q *Queries) GetGlucoseReadingByID(ctx context.Context, arg GetGlucoseReadingByIDParams) (UserGlucoseReading, error) {
+	row := q.db.QueryRow(ctx, getGlucoseReadingByID, arg.ReadingID, arg.UserID)
+	var i UserGlucoseReading
+	err := row.Scan(
+		&i.ReadingID,
+		&i.UserID,
+		&i.GlucoseValue,
+		&i.ReadingTimestamp,
+		&i.ReadingType,
+		&i.TrendArrow,
+		&i.RateOfChange,
+		&i.Source,
+		&i.DeviceID,
+		&i.DeviceName,
+		&i.IsFlagged,
+		&i.FlagReason,
+		&i.IsOutlier,
+		&i.Notes,
+		&i.Symptoms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGlucoseReadings = `-- name: GetGlucoseReadings :many
+SELECT reading_id, user_id, glucose_value, reading_timestamp, reading_type, trend_arrow, rate_of_change, source, device_id, device_name, is_flagged, flag_reason, is_outlier, notes, symptoms, created_at, updated_at FROM user_glucose_readings
+WHERE user_id = $1 
+  AND reading_timestamp >= COALESCE($2, '1900-01-01'::timestamptz)
+  AND reading_timestamp <= COALESCE($3, NOW() + INTERVAL '1 day')
+ORDER BY reading_timestamp DESC
+`
+
+type GetGlucoseReadingsParams struct {
+	UserID    string             `json:"user_id"`
+	StartDate pgtype.Timestamptz `json:"start_date"`
+	EndDate   pgtype.Timestamptz `json:"end_date"`
+}
+
+// Retrieves all readings for the user, ordered newest first, with optional date range
+func (q *Queries) GetGlucoseReadings(ctx context.Context, arg GetGlucoseReadingsParams) ([]UserGlucoseReading, error) {
+	rows, err := q.db.Query(ctx, getGlucoseReadings, arg.UserID, arg.StartDate, arg.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserGlucoseReading
+	for rows.Next() {
+		var i UserGlucoseReading
+		if err := rows.Scan(
+			&i.ReadingID,
+			&i.UserID,
+			&i.GlucoseValue,
+			&i.ReadingTimestamp,
+			&i.ReadingType,
+			&i.TrendArrow,
+			&i.RateOfChange,
+			&i.Source,
+			&i.DeviceID,
+			&i.DeviceName,
+			&i.IsFlagged,
+			&i.FlagReason,
+			&i.IsOutlier,
+			&i.Notes,
+			&i.Symptoms,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getGlucoseStats = `-- name: GetGlucoseStats :one
+SELECT 
+    AVG(glucose_value) AS mean_glucose,
+    STDDEV(glucose_value) AS stddev_glucose
+FROM user_glucose_readings
+WHERE user_id = $1 
+  AND reading_timestamp >= NOW() - INTERVAL '7 days'
+`
+
+type GetGlucoseStatsRow struct {
+	MeanGlucose   float64 `json:"mean_glucose"`
+	StddevGlucose float64 `json:"stddev_glucose"`
+}
+
+// Retrieves the mean and standard deviation of glucose readings
+// over the last 7 days for outlier analysis.
+func (q *Queries) GetGlucoseStats(ctx context.Context, userID string) (GetGlucoseStatsRow, error) {
+	row := q.db.QueryRow(ctx, getGlucoseStats, userID)
+	var i GetGlucoseStatsRow
+	err := row.Scan(&i.MeanGlucose, &i.StddevGlucose)
+	return i, err
+}
+
+const getHBA1CRecordByID = `-- name: GetHBA1CRecordByID :one
+SELECT hba1c_id, user_id, test_date, hba1c_percentage, hba1c_mmol_mol, estimated_avg_glucose, treatment_changed, medication_changes, diet_changes, activity_changes, change_from_previous, trend, notes, document_url, created_at, updated_at FROM user_hba1c_records
+WHERE hba1c_id = $1 AND user_id = $2
+`
+
+type GetHBA1CRecordByIDParams struct {
+	Hba1cID pgtype.UUID `json:"hba1c_id"`
+	UserID  string      `json:"user_id"`
+}
+
+// Retrieves a single record, checking for user ownership
+func (q *Queries) GetHBA1CRecordByID(ctx context.Context, arg GetHBA1CRecordByIDParams) (UserHba1cRecord, error) {
+	row := q.db.QueryRow(ctx, getHBA1CRecordByID, arg.Hba1cID, arg.UserID)
+	var i UserHba1cRecord
+	err := row.Scan(
+		&i.Hba1cID,
+		&i.UserID,
+		&i.TestDate,
+		&i.Hba1cPercentage,
+		&i.Hba1cMmolMol,
+		&i.EstimatedAvgGlucose,
+		&i.TreatmentChanged,
+		&i.MedicationChanges,
+		&i.DietChanges,
+		&i.ActivityChanges,
+		&i.ChangeFromPrevious,
+		&i.Trend,
+		&i.Notes,
+		&i.DocumentUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getHBA1CRecords = `-- name: GetHBA1CRecords :many
+SELECT hba1c_id, user_id, test_date, hba1c_percentage, hba1c_mmol_mol, estimated_avg_glucose, treatment_changed, medication_changes, diet_changes, activity_changes, change_from_previous, trend, notes, document_url, created_at, updated_at FROM user_hba1c_records
+WHERE user_id = $1
+ORDER BY test_date DESC, created_at DESC
+`
+
+// Retrieves all records for the user, ordered newest first
+func (q *Queries) GetHBA1CRecords(ctx context.Context, userID string) ([]UserHba1cRecord, error) {
+	rows, err := q.db.Query(ctx, getHBA1CRecords, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserHba1cRecord
+	for rows.Next() {
+		var i UserHba1cRecord
+		if err := rows.Scan(
+			&i.Hba1cID,
+			&i.UserID,
+			&i.TestDate,
+			&i.Hba1cPercentage,
+			&i.Hba1cMmolMol,
+			&i.EstimatedAvgGlucose,
+			&i.TreatmentChanged,
+			&i.MedicationChanges,
+			&i.DietChanges,
+			&i.ActivityChanges,
+			&i.ChangeFromPrevious,
+			&i.Trend,
+			&i.Notes,
+			&i.DocumentUrl,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getHealthEventByID = `-- name: GetHealthEventByID :one
+SELECT event_id, user_id, event_date, event_type, severity, glucose_value, ketone_value_mmol, symptoms, treatments, required_medical_attention, notes, created_at, updated_at FROM user_health_events
+WHERE event_id = $1 AND user_id = $2
+`
+
+type GetHealthEventByIDParams struct {
+	EventID pgtype.UUID `json:"event_id"`
+	UserID  string      `json:"user_id"`
+}
+
+// Retrieves a single event, checking for user ownership
+func (q *Queries) GetHealthEventByID(ctx context.Context, arg GetHealthEventByIDParams) (UserHealthEvent, error) {
+	row := q.db.QueryRow(ctx, getHealthEventByID, arg.EventID, arg.UserID)
+	var i UserHealthEvent
+	err := row.Scan(
+		&i.EventID,
+		&i.UserID,
+		&i.EventDate,
+		&i.EventType,
+		&i.Severity,
+		&i.GlucoseValue,
+		&i.KetoneValueMmol,
+		&i.Symptoms,
+		&i.Treatments,
+		&i.RequiredMedicalAttention,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getHealthEvents = `-- name: GetHealthEvents :many
+SELECT event_id, user_id, event_date, event_type, severity, glucose_value, ketone_value_mmol, symptoms, treatments, required_medical_attention, notes, created_at, updated_at FROM user_health_events
+WHERE user_id = $1
+ORDER BY event_date DESC, created_at DESC
+`
+
+// Retrieves all health events for the user, ordered newest first
+func (q *Queries) GetHealthEvents(ctx context.Context, userID string) ([]UserHealthEvent, error) {
+	rows, err := q.db.Query(ctx, getHealthEvents, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserHealthEvent
+	for rows.Next() {
+		var i UserHealthEvent
+		if err := rows.Scan(
+			&i.EventID,
+			&i.UserID,
+			&i.EventDate,
+			&i.EventType,
+			&i.Severity,
+			&i.GlucoseValue,
+			&i.KetoneValueMmol,
+			&i.Symptoms,
+			&i.Treatments,
+			&i.RequiredMedicalAttention,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getLastHBA1CRecord = `-- name: GetLastHBA1CRecord :one
+SELECT hba1c_percentage FROM user_hba1c_records
+WHERE user_id = $1 
+  AND test_date < $2 -- CRITICAL: Only look at records older than the current one
+ORDER BY test_date DESC, created_at DESC
+LIMIT 1
+`
+
+type GetLastHBA1CRecordParams struct {
+	UserID   string      `json:"user_id"`
+	TestDate pgtype.Date `json:"test_date"`
+}
+
+// Retrieves the most recent record to compare against for trend analysis
+func (q *Queries) GetLastHBA1CRecord(ctx context.Context, arg GetLastHBA1CRecordParams) (pgtype.Numeric, error) {
+	row := q.db.QueryRow(ctx, getLastHBA1CRecord, arg.UserID, arg.TestDate)
+	var hba1c_percentage pgtype.Numeric
+	err := row.Scan(&hba1c_percentage)
+	return hba1c_percentage, err
+}
+
+const getMealItemsByMealID = `-- name: GetMealItemsByMealID :many
+SELECT item_id, meal_id, food_name, food_id, seller, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, created_at FROM user_meal_items
+WHERE meal_id = $1
+ORDER BY created_at ASC
+`
+
+func (q *Queries) GetMealItemsByMealID(ctx context.Context, mealID pgtype.UUID) ([]UserMealItem, error) {
+	rows, err := q.db.Query(ctx, getMealItemsByMealID, mealID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserMealItem
+	for rows.Next() {
+		var i UserMealItem
+		if err := rows.Scan(
+			&i.ItemID,
+			&i.MealID,
+			&i.FoodName,
+			&i.FoodID,
+			&i.Seller,
+			&i.ServingSize,
+			&i.ServingSizeGrams,
+			&i.Quantity,
+			&i.Calories,
+			&i.CarbsGrams,
+			&i.FiberGrams,
+			&i.ProteinGrams,
+			&i.FatGrams,
+			&i.SugarGrams,
+			&i.SodiumMg,
+			&i.GlycemicIndex,
+			&i.GlycemicLoad,
+			&i.FoodCategory,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMealLogByID = `-- name: GetMealLogByID :one
+SELECT meal_id, user_id, meal_timestamp, meal_type_id, description, total_calories, total_carbs_grams, total_protein_grams, total_fat_grams, total_fiber_grams, total_sugar_grams, tags, created_at, updated_at FROM user_meal_logs WHERE meal_id = $1 AND user_id = $2
+`
+
+type GetMealLogByIDParams struct {
+	MealID pgtype.UUID `json:"meal_id"`
+	UserID string      `json:"user_id"`
+}
+
+func (q *Queries) GetMealLogByID(ctx context.Context, arg GetMealLogByIDParams) (UserMealLog, error) {
+	row := q.db.QueryRow(ctx, getMealLogByID, arg.MealID, arg.UserID)
+	var i UserMealLog
+	err := row.Scan(
+		&i.MealID,
+		&i.UserID,
+		&i.MealTimestamp,
+		&i.MealTypeID,
+		&i.Description,
+		&i.TotalCalories,
+		&i.TotalCarbsGrams,
+		&i.TotalProteinGrams,
+		&i.TotalFatGrams,
+		&i.TotalFiberGrams,
+		&i.TotalSugarGrams,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getMealLogs = `-- name: GetMealLogs :many
+SELECT meal_id, user_id, meal_timestamp, meal_type_id, description, total_calories, total_carbs_grams, total_protein_grams, total_fat_grams, total_fiber_grams, total_sugar_grams, tags, created_at, updated_at FROM user_meal_logs
+WHERE user_id = $1
+  AND meal_timestamp >= COALESCE($2, '1900-01-01'::timestamptz)
+  AND meal_timestamp <= COALESCE($3, NOW() + INTERVAL '1 day')
+ORDER BY meal_timestamp DESC
+`
+
+type GetMealLogsParams struct {
+	UserID    string             `json:"user_id"`
+	StartDate pgtype.Timestamptz `json:"start_date"`
+	EndDate   pgtype.Timestamptz `json:"end_date"`
+}
+
+// Retrieves all meal logs for the user, ordered newest first, with optional date range
+func (q *Queries) GetMealLogs(ctx context.Context, arg GetMealLogsParams) ([]UserMealLog, error) {
+	rows, err := q.db.Query(ctx, getMealLogs, arg.UserID, arg.StartDate, arg.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserMealLog
+	for rows.Next() {
+		var i UserMealLog
+		if err := rows.Scan(
+			&i.MealID,
+			&i.UserID,
+			&i.MealTimestamp,
+			&i.MealTypeID,
+			&i.Description,
+			&i.TotalCalories,
+			&i.TotalCarbsGrams,
+			&i.TotalProteinGrams,
+			&i.TotalFatGrams,
+			&i.TotalFiberGrams,
+			&i.TotalSugarGrams,
+			&i.Tags,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMedicationLogs = `-- name: GetMedicationLogs :many
+SELECT medicationlog_id, user_id, medication_id, medication_name, timestamp, dose_amount, reason, is_pump_delivery, delivery_duration_minutes, notes, created_at, updated_at FROM user_medication_logs
+WHERE user_id = $1
+  AND "timestamp" >= COALESCE($2, '1900-01-01'::timestamptz)
+  AND "timestamp" <= COALESCE($3, NOW() + INTERVAL '1 day')
+ORDER BY "timestamp" DESC
+`
+
+type GetMedicationLogsParams struct {
+	UserID    string             `json:"user_id"`
+	StartDate pgtype.Timestamptz `json:"start_date"`
+	EndDate   pgtype.Timestamptz `json:"end_date"`
+}
+
+// Retrieves logs for the user, with date filtering.
+func (q *Queries) GetMedicationLogs(ctx context.Context, arg GetMedicationLogsParams) ([]UserMedicationLog, error) {
+	rows, err := q.db.Query(ctx, getMedicationLogs, arg.UserID, arg.StartDate, arg.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserMedicationLog
+	for rows.Next() {
+		var i UserMedicationLog
+		if err := rows.Scan(
+			&i.MedicationlogID,
+			&i.UserID,
+			&i.MedicationID,
+			&i.MedicationName,
+			&i.Timestamp,
+			&i.DoseAmount,
+			&i.Reason,
+			&i.IsPumpDelivery,
+			&i.DeliveryDurationMinutes,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getOTPCodeByEntityID = `-- name: GetOTPCodeByEntityID :one
@@ -1293,7 +2718,135 @@ func (q *Queries) GetRefreshTokenByHash(ctx context.Context, tokenHash string) (
 	return i, err
 }
 
+const getSellerProfile = `-- name: GetSellerProfile :one
+SELECT seller_id, user_id, created_at, updated_at, store_name, store_description, store_phone_number, is_open_manually, business_hours, verification_status, logo_url, banner_url, address_line1, address_line2, district, city, province, postal_code, latitude, longitude, gmaps_link FROM seller_profiles
+WHERE seller_id = $1
+`
+
+func (q *Queries) GetSellerProfile(ctx context.Context, sellerID pgtype.UUID) (SellerProfile, error) {
+	row := q.db.QueryRow(ctx, getSellerProfile, sellerID)
+	var i SellerProfile
+	err := row.Scan(
+		&i.SellerID,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StoreName,
+		&i.StoreDescription,
+		&i.StorePhoneNumber,
+		&i.IsOpenManually,
+		&i.BusinessHours,
+		&i.VerificationStatus,
+		&i.LogoUrl,
+		&i.BannerUrl,
+		&i.AddressLine1,
+		&i.AddressLine2,
+		&i.District,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.Latitude,
+		&i.Longitude,
+		&i.GmapsLink,
+	)
+	return i, err
+}
+
+const getSleepLogByID = `-- name: GetSleepLogByID :one
+SELECT sleep_id, user_id, sleep_date, bed_time, wake_time, quality_rating, tracker_score, deep_sleep_minutes, rem_sleep_minutes, light_sleep_minutes, awake_minutes, average_hrv, resting_heart_rate, tags, source, notes, created_at, updated_at FROM user_sleep_logs
+WHERE sleep_id = $1 AND user_id = $2
+`
+
+type GetSleepLogByIDParams struct {
+	SleepID pgtype.UUID `json:"sleep_id"`
+	UserID  string      `json:"user_id"`
+}
+
+// Retrieves a single sleep log, checking for user ownership
+func (q *Queries) GetSleepLogByID(ctx context.Context, arg GetSleepLogByIDParams) (UserSleepLog, error) {
+	row := q.db.QueryRow(ctx, getSleepLogByID, arg.SleepID, arg.UserID)
+	var i UserSleepLog
+	err := row.Scan(
+		&i.SleepID,
+		&i.UserID,
+		&i.SleepDate,
+		&i.BedTime,
+		&i.WakeTime,
+		&i.QualityRating,
+		&i.TrackerScore,
+		&i.DeepSleepMinutes,
+		&i.RemSleepMinutes,
+		&i.LightSleepMinutes,
+		&i.AwakeMinutes,
+		&i.AverageHrv,
+		&i.RestingHeartRate,
+		&i.Tags,
+		&i.Source,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSleepLogs = `-- name: GetSleepLogs :many
+SELECT sleep_id, user_id, sleep_date, bed_time, wake_time, quality_rating, tracker_score, deep_sleep_minutes, rem_sleep_minutes, light_sleep_minutes, awake_minutes, average_hrv, resting_heart_rate, tags, source, notes, created_at, updated_at FROM user_sleep_logs
+WHERE user_id = $1
+  AND bed_time >= COALESCE($2, '1900-01-01'::timestamptz)
+  AND bed_time <= COALESCE($3, NOW() + INTERVAL '1 day')
+ORDER BY sleep_date DESC
+`
+
+type GetSleepLogsParams struct {
+	UserID    string             `json:"user_id"`
+	StartDate pgtype.Timestamptz `json:"start_date"`
+	EndDate   pgtype.Timestamptz `json:"end_date"`
+}
+
+// Retrieves all sleep logs for the user, with date filtering
+func (q *Queries) GetSleepLogs(ctx context.Context, arg GetSleepLogsParams) ([]UserSleepLog, error) {
+	rows, err := q.db.Query(ctx, getSleepLogs, arg.UserID, arg.StartDate, arg.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserSleepLog
+	for rows.Next() {
+		var i UserSleepLog
+		if err := rows.Scan(
+			&i.SleepID,
+			&i.UserID,
+			&i.SleepDate,
+			&i.BedTime,
+			&i.WakeTime,
+			&i.QualityRating,
+			&i.TrackerScore,
+			&i.DeepSleepMinutes,
+			&i.RemSleepMinutes,
+			&i.LightSleepMinutes,
+			&i.AwakeMinutes,
+			&i.AverageHrv,
+			&i.RestingHeartRate,
+			&i.Tags,
+			&i.Source,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserActiveRefreshTokens = `-- name: GetUserActiveRefreshTokens :many
+/* ====================================================================
+                           Unused Queries
+==================================================================== */
 SELECT id, user_id, token_hash, device_info, ip_address, expires_at, created_at, revoked_at, replaced_by_token_id FROM users_refresh_tokens
 WHERE user_id = $1 
   AND revoked_at IS NULL 
@@ -1301,7 +2854,6 @@ WHERE user_id = $1
 ORDER BY created_at DESC
 `
 
-// Unused queries
 func (q *Queries) GetUserActiveRefreshTokens(ctx context.Context, userID string) ([]UsersRefreshToken, error) {
 	rows, err := q.db.Query(ctx, getUserActiveRefreshTokens, userID)
 	if err != nil {
@@ -1333,7 +2885,7 @@ func (q *Queries) GetUserActiveRefreshTokens(ctx context.Context, userID string)
 }
 
 const getUserAddressByID = `-- name: GetUserAddressByID :one
-SELECT address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at FROM user_addresses
+SELECT address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at, address_district FROM user_addresses
 WHERE address_id = $1 AND user_id = $2 AND is_active = true
 `
 
@@ -1363,12 +2915,13 @@ func (q *Queries) GetUserAddressByID(ctx context.Context, arg GetUserAddressByID
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AddressDistrict,
 	)
 	return i, err
 }
 
 const getUserAddresses = `-- name: GetUserAddresses :many
-SELECT address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at FROM user_addresses
+SELECT address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at, address_district FROM user_addresses
 WHERE user_id = $1 AND is_active = true
 ORDER BY is_default DESC, created_at DESC
 `
@@ -1400,6 +2953,7 @@ func (q *Queries) GetUserAddresses(ctx context.Context, userID string) ([]UserAd
 			&i.IsActive,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AddressDistrict,
 		); err != nil {
 			return nil, err
 		}
@@ -1412,7 +2966,7 @@ func (q *Queries) GetUserAddresses(ctx context.Context, userID string) ([]UserAd
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_email = $1
 `
 
@@ -1434,8 +2988,8 @@ func (q *Queries) GetUserByEmail(ctx context.Context, userEmail pgtype.Text) (Us
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
@@ -1445,7 +2999,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, userEmail pgtype.Text) (Us
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_id = $1
 `
 
@@ -1467,8 +3021,8 @@ func (q *Queries) GetUserByID(ctx context.Context, userID string) (User, error) 
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
@@ -1478,7 +3032,7 @@ func (q *Queries) GetUserByID(ctx context.Context, userID string) (User, error) 
 }
 
 const getUserByOAuthEmail = `-- name: GetUserByOAuthEmail :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_email_auth = $1 AND user_provider IS NOT NULL
 `
 
@@ -1500,8 +3054,8 @@ func (q *Queries) GetUserByOAuthEmail(ctx context.Context, userEmailAuth pgtype.
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
@@ -1511,7 +3065,7 @@ func (q *Queries) GetUserByOAuthEmail(ctx context.Context, userEmailAuth pgtype.
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_username = $1
 `
 
@@ -1533,14 +3087,164 @@ func (q *Queries) GetUserByUsername(ctx context.Context, userUsername pgtype.Tex
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
 		&i.EmailVerifiedAt,
 	)
 	return i, err
+}
+
+const getUserHealthProfile = `-- name: GetUserHealthProfile :one
+/* ====================================================================
+                   Health Profile Queries
+==================================================================== */
+
+SELECT profile_id, user_id, app_experience, condition_id, diagnosis_date, years_with_condition, treatment_types, target_glucose_fasting, target_glucose_postprandial, uses_cgm, cgm_device, cgm_api_connected, height_cm, current_weight_kg, target_weight_kg, bmi, waist_circumference_cm, body_fat_percentage, hba1c_target, last_hba1c, last_hba1c_date, activity_level, daily_steps_goal, weekly_exercise_goal_minutes, preferred_activity_type_ids, dietary_pattern, daily_carb_target_grams, daily_calorie_target, daily_protein_target_grams, daily_fat_target_grams, meals_per_day, snacks_per_day, food_allergies, food_intolerances, foods_to_avoid, cultural_cuisines, dietary_restrictions, has_hypertension, hypertension_medication, has_kidney_disease, kidney_disease_stage, egfr_value, has_cardiovascular_disease, has_neuropathy, has_retinopathy, has_gastroparesis, has_hypoglycemia_unawareness, other_conditions, smoking_status, smoking_years, alcohol_frequency, alcohol_drinks_per_week, stress_level, typical_sleep_hours, sleep_quality, is_pregnant, is_breastfeeding, expected_due_date, preferred_units, glucose_unit, timezone, language_code, enable_glucose_alerts, enable_meal_reminders, enable_activity_reminders, enable_medication_reminders, share_data_for_research, share_anonymized_data, created_at, updated_at FROM user_health_profiles
+WHERE user_id = $1 LIMIT 1
+`
+
+func (q *Queries) GetUserHealthProfile(ctx context.Context, userID string) (UserHealthProfile, error) {
+	row := q.db.QueryRow(ctx, getUserHealthProfile, userID)
+	var i UserHealthProfile
+	err := row.Scan(
+		&i.ProfileID,
+		&i.UserID,
+		&i.AppExperience,
+		&i.ConditionID,
+		&i.DiagnosisDate,
+		&i.YearsWithCondition,
+		&i.TreatmentTypes,
+		&i.TargetGlucoseFasting,
+		&i.TargetGlucosePostprandial,
+		&i.UsesCgm,
+		&i.CgmDevice,
+		&i.CgmApiConnected,
+		&i.HeightCm,
+		&i.CurrentWeightKg,
+		&i.TargetWeightKg,
+		&i.Bmi,
+		&i.WaistCircumferenceCm,
+		&i.BodyFatPercentage,
+		&i.Hba1cTarget,
+		&i.LastHba1c,
+		&i.LastHba1cDate,
+		&i.ActivityLevel,
+		&i.DailyStepsGoal,
+		&i.WeeklyExerciseGoalMinutes,
+		&i.PreferredActivityTypeIds,
+		&i.DietaryPattern,
+		&i.DailyCarbTargetGrams,
+		&i.DailyCalorieTarget,
+		&i.DailyProteinTargetGrams,
+		&i.DailyFatTargetGrams,
+		&i.MealsPerDay,
+		&i.SnacksPerDay,
+		&i.FoodAllergies,
+		&i.FoodIntolerances,
+		&i.FoodsToAvoid,
+		&i.CulturalCuisines,
+		&i.DietaryRestrictions,
+		&i.HasHypertension,
+		&i.HypertensionMedication,
+		&i.HasKidneyDisease,
+		&i.KidneyDiseaseStage,
+		&i.EgfrValue,
+		&i.HasCardiovascularDisease,
+		&i.HasNeuropathy,
+		&i.HasRetinopathy,
+		&i.HasGastroparesis,
+		&i.HasHypoglycemiaUnawareness,
+		&i.OtherConditions,
+		&i.SmokingStatus,
+		&i.SmokingYears,
+		&i.AlcoholFrequency,
+		&i.AlcoholDrinksPerWeek,
+		&i.StressLevel,
+		&i.TypicalSleepHours,
+		&i.SleepQuality,
+		&i.IsPregnant,
+		&i.IsBreastfeeding,
+		&i.ExpectedDueDate,
+		&i.PreferredUnits,
+		&i.GlucoseUnit,
+		&i.Timezone,
+		&i.LanguageCode,
+		&i.EnableGlucoseAlerts,
+		&i.EnableMealReminders,
+		&i.EnableActivityReminders,
+		&i.EnableMedicationReminders,
+		&i.ShareDataForResearch,
+		&i.ShareAnonymizedData,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserMedicationByID = `-- name: GetUserMedicationByID :one
+SELECT medication_id, user_id, display_name, medication_type, default_dose_unit, is_active, created_at, updated_at FROM user_medications
+WHERE medication_id = $1 AND user_id = $2
+`
+
+type GetUserMedicationByIDParams struct {
+	MedicationID int32       `json:"medication_id"`
+	UserID       pgtype.Text `json:"user_id"`
+}
+
+// Retrieves a single medication configuration, checking for user ownership.
+func (q *Queries) GetUserMedicationByID(ctx context.Context, arg GetUserMedicationByIDParams) (UserMedication, error) {
+	row := q.db.QueryRow(ctx, getUserMedicationByID, arg.MedicationID, arg.UserID)
+	var i UserMedication
+	err := row.Scan(
+		&i.MedicationID,
+		&i.UserID,
+		&i.DisplayName,
+		&i.MedicationType,
+		&i.DefaultDoseUnit,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserMedications = `-- name: GetUserMedications :many
+SELECT medication_id, user_id, display_name, medication_type, default_dose_unit, is_active, created_at, updated_at FROM user_medications
+WHERE user_id = $1 AND is_active = true
+ORDER BY display_name
+`
+
+// Retrieves all active medications configured by the user.
+func (q *Queries) GetUserMedications(ctx context.Context, userID pgtype.Text) ([]UserMedication, error) {
+	rows, err := q.db.Query(ctx, getUserMedications, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserMedication
+	for rows.Next() {
+		var i UserMedication
+		if err := rows.Scan(
+			&i.MedicationID,
+			&i.UserID,
+			&i.DisplayName,
+			&i.MedicationType,
+			&i.DefaultDoseUnit,
+			&i.IsActive,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getUserOrders = `-- name: GetUserOrders :many
@@ -1580,7 +3284,7 @@ func (q *Queries) GetUserOrders(ctx context.Context, userID string) ([]UserOrder
 }
 
 const getUserProviderID = `-- name: GetUserProviderID :one
-SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
+SELECT user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at FROM users
 WHERE user_provider_user_id = $1 LIMIT 1
 `
 
@@ -1602,8 +3306,8 @@ func (q *Queries) GetUserProviderID(ctx context.Context, userProviderUserID pgty
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
@@ -1637,6 +3341,85 @@ func (q *Queries) IfAddressIsDefault(ctx context.Context, addressID pgtype.UUID)
 	var is_default bool
 	err := row.Scan(&is_default)
 	return is_default, err
+}
+
+const listAllAvailableFoods = `-- name: ListAllAvailableFoods :many
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size_g, calories, protein_g, fat_g, carbohydrate_g, dietary_fiber_g, sugars_g, saturated_fat_g, polyunsaturated_fat_g, monounsaturated_fat_g, trans_fat_g, cholesterol_mg, sodium_mg, potassium_mg, water_g, vitamin_a_mcg, vitamin_c_mg, vitamin_d_mcg, vitamin_e_mg, vitamin_k_mcg, thiamin_mg, riboflavin_mg, niacin_mg, vitamin_b5_mg, vitamin_b6_mg, folate_mcg, vitamin_b12_mcg, calcium_mg, copper_mg, iron_mg, magnesium_mg, manganese_mg, phosphorus_mg, selenium_mcg, zinc_mg, caffeine_mg, nutrition_density
+FROM foods
+WHERE is_available = true
+ORDER BY food_name
+`
+
+// Retrieves a list of all food items currently marked as available
+func (q *Queries) ListAllAvailableFoods(ctx context.Context) ([]Food, error) {
+	rows, err := q.db.Query(ctx, listAllAvailableFoods)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Food
+	for rows.Next() {
+		var i Food
+		if err := rows.Scan(
+			&i.FoodID,
+			&i.SellerID,
+			&i.FoodName,
+			&i.Description,
+			&i.Price,
+			&i.Currency,
+			&i.PhotoUrl,
+			&i.ThumbnailUrl,
+			&i.IsAvailable,
+			&i.StockCount,
+			&i.Tags,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ServingSizeG,
+			&i.Calories,
+			&i.ProteinG,
+			&i.FatG,
+			&i.CarbohydrateG,
+			&i.DietaryFiberG,
+			&i.SugarsG,
+			&i.SaturatedFatG,
+			&i.PolyunsaturatedFatG,
+			&i.MonounsaturatedFatG,
+			&i.TransFatG,
+			&i.CholesterolMg,
+			&i.SodiumMg,
+			&i.PotassiumMg,
+			&i.WaterG,
+			&i.VitaminAMcg,
+			&i.VitaminCMg,
+			&i.VitaminDMcg,
+			&i.VitaminEMg,
+			&i.VitaminKMcg,
+			&i.ThiaminMg,
+			&i.RiboflavinMg,
+			&i.NiacinMg,
+			&i.VitaminB5Mg,
+			&i.VitaminB6Mg,
+			&i.FolateMcg,
+			&i.VitaminB12Mcg,
+			&i.CalciumMg,
+			&i.CopperMg,
+			&i.IronMg,
+			&i.MagnesiumMg,
+			&i.ManganeseMg,
+			&i.PhosphorusMg,
+			&i.SeleniumMcg,
+			&i.ZincMg,
+			&i.CaffeineMg,
+			&i.NutritionDensity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeAllUserRefreshTokens = `-- name: RevokeAllUserRefreshTokens :exec
@@ -1681,7 +3464,7 @@ const setDefaultAddress = `-- name: SetDefaultAddress :one
 UPDATE user_addresses
 SET is_default = true
 WHERE address_id = $1 AND user_id = $2 AND is_active = true
-RETURNING address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at
+RETURNING address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at, address_district
 `
 
 type SetDefaultAddressParams struct {
@@ -1710,6 +3493,7 @@ func (q *Queries) SetDefaultAddress(ctx context.Context, arg SetDefaultAddressPa
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AddressDistrict,
 	)
 	return i, err
 }
@@ -1722,7 +3506,7 @@ SET
   user_provider_user_id = NULL,
   user_avatar_url = NULL,   -- Clear the avatar linked to Google
   user_raw_data = NULL,     -- Clear the raw data from Google
-  user_updated_at_auth = NOW()
+  updated_at = NOW()
 WHERE 
   user_id = $1
 `
@@ -1748,6 +3532,84 @@ func (q *Queries) UnsetDefaultAddress(ctx context.Context, arg UnsetDefaultAddre
 	return err
 }
 
+const updateActivityLog = `-- name: UpdateActivityLog :one
+UPDATE user_activity_logs
+SET
+    activity_timestamp = COALESCE($3, activity_timestamp),
+    activity_code = COALESCE($4, activity_code),
+    intensity = COALESCE($5, intensity),
+    perceived_exertion = COALESCE($6, perceived_exertion),
+    duration_minutes = COALESCE($7, duration_minutes),
+    steps_count = COALESCE($8, steps_count),
+    pre_activity_carbs = COALESCE($9, pre_activity_carbs),
+    water_intake_ml = COALESCE($10, water_intake_ml),
+    issue_description = COALESCE($11, issue_description),
+    source = COALESCE($12, source),
+    sync_id = COALESCE($13, sync_id),
+    notes = COALESCE($14, notes),
+    updated_at = NOW()
+WHERE 
+    activity_id = $1 AND user_id = $2
+RETURNING activity_id, user_id, activity_timestamp, activity_code, intensity, perceived_exertion, duration_minutes, steps_count, pre_activity_carbs, water_intake_ml, issue_description, source, sync_id, notes, created_at, updated_at
+`
+
+type UpdateActivityLogParams struct {
+	ActivityID        pgtype.UUID        `json:"activity_id"`
+	UserID            string             `json:"user_id"`
+	ActivityTimestamp pgtype.Timestamptz `json:"activity_timestamp"`
+	ActivityCode      pgtype.Text        `json:"activity_code"`
+	Intensity         pgtype.Text        `json:"intensity"`
+	PerceivedExertion pgtype.Int4        `json:"perceived_exertion"`
+	DurationMinutes   pgtype.Int4        `json:"duration_minutes"`
+	StepsCount        pgtype.Int4        `json:"steps_count"`
+	PreActivityCarbs  pgtype.Int4        `json:"pre_activity_carbs"`
+	WaterIntakeMl     pgtype.Int4        `json:"water_intake_ml"`
+	IssueDescription  pgtype.Text        `json:"issue_description"`
+	Source            pgtype.Text        `json:"source"`
+	SyncID            pgtype.Text        `json:"sync_id"`
+	Notes             pgtype.Text        `json:"notes"`
+}
+
+// Updates an existing activity log, checking for user ownership
+func (q *Queries) UpdateActivityLog(ctx context.Context, arg UpdateActivityLogParams) (UserActivityLog, error) {
+	row := q.db.QueryRow(ctx, updateActivityLog,
+		arg.ActivityID,
+		arg.UserID,
+		arg.ActivityTimestamp,
+		arg.ActivityCode,
+		arg.Intensity,
+		arg.PerceivedExertion,
+		arg.DurationMinutes,
+		arg.StepsCount,
+		arg.PreActivityCarbs,
+		arg.WaterIntakeMl,
+		arg.IssueDescription,
+		arg.Source,
+		arg.SyncID,
+		arg.Notes,
+	)
+	var i UserActivityLog
+	err := row.Scan(
+		&i.ActivityID,
+		&i.UserID,
+		&i.ActivityTimestamp,
+		&i.ActivityCode,
+		&i.Intensity,
+		&i.PerceivedExertion,
+		&i.DurationMinutes,
+		&i.StepsCount,
+		&i.PreActivityCarbs,
+		&i.WaterIntakeMl,
+		&i.IssueDescription,
+		&i.Source,
+		&i.SyncID,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateCartItemQuantity = `-- name: UpdateCartItemQuantity :one
 UPDATE user_cart_items
 SET quantity = $3
@@ -1769,6 +3631,353 @@ func (q *Queries) UpdateCartItemQuantity(ctx context.Context, arg UpdateCartItem
 		&i.CartID,
 		&i.FoodID,
 		&i.Quantity,
+	)
+	return i, err
+}
+
+const updateGlucoseReading = `-- name: UpdateGlucoseReading :one
+UPDATE user_glucose_readings
+SET
+    glucose_value = COALESCE($3, glucose_value),
+    reading_timestamp = COALESCE($4, reading_timestamp),
+    reading_type = COALESCE($5, reading_type),
+    source = COALESCE($6, source),
+    device_id = COALESCE($7, device_id),
+    device_name = COALESCE($8, device_name),
+    is_flagged = COALESCE($9, is_flagged),
+    flag_reason = COALESCE($10, flag_reason),
+    is_outlier = COALESCE($11, is_outlier),
+    notes = COALESCE($12, notes),
+    symptoms = COALESCE($13, symptoms),
+    updated_at = NOW()
+WHERE 
+    reading_id = $1 AND user_id = $2
+RETURNING reading_id, user_id, glucose_value, reading_timestamp, reading_type, trend_arrow, rate_of_change, source, device_id, device_name, is_flagged, flag_reason, is_outlier, notes, symptoms, created_at, updated_at
+`
+
+type UpdateGlucoseReadingParams struct {
+	ReadingID        pgtype.UUID        `json:"reading_id"`
+	UserID           string             `json:"user_id"`
+	GlucoseValue     int32              `json:"glucose_value"`
+	ReadingTimestamp pgtype.Timestamptz `json:"reading_timestamp"`
+	ReadingType      string             `json:"reading_type"`
+	Source           pgtype.Text        `json:"source"`
+	DeviceID         pgtype.Text        `json:"device_id"`
+	DeviceName       pgtype.Text        `json:"device_name"`
+	IsFlagged        pgtype.Bool        `json:"is_flagged"`
+	FlagReason       pgtype.Text        `json:"flag_reason"`
+	IsOutlier        pgtype.Bool        `json:"is_outlier"`
+	Notes            pgtype.Text        `json:"notes"`
+	Symptoms         []string           `json:"symptoms"`
+}
+
+// Updates an existing reading, checking for user ownership
+func (q *Queries) UpdateGlucoseReading(ctx context.Context, arg UpdateGlucoseReadingParams) (UserGlucoseReading, error) {
+	row := q.db.QueryRow(ctx, updateGlucoseReading,
+		arg.ReadingID,
+		arg.UserID,
+		arg.GlucoseValue,
+		arg.ReadingTimestamp,
+		arg.ReadingType,
+		arg.Source,
+		arg.DeviceID,
+		arg.DeviceName,
+		arg.IsFlagged,
+		arg.FlagReason,
+		arg.IsOutlier,
+		arg.Notes,
+		arg.Symptoms,
+	)
+	var i UserGlucoseReading
+	err := row.Scan(
+		&i.ReadingID,
+		&i.UserID,
+		&i.GlucoseValue,
+		&i.ReadingTimestamp,
+		&i.ReadingType,
+		&i.TrendArrow,
+		&i.RateOfChange,
+		&i.Source,
+		&i.DeviceID,
+		&i.DeviceName,
+		&i.IsFlagged,
+		&i.FlagReason,
+		&i.IsOutlier,
+		&i.Notes,
+		&i.Symptoms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateHBA1CRecord = `-- name: UpdateHBA1CRecord :one
+UPDATE user_hba1c_records
+SET
+    test_date = COALESCE($3, test_date),
+    hba1c_percentage = COALESCE($4, hba1c_percentage),
+    hba1c_mmol_mol = COALESCE($5, hba1c_mmol_mol),
+    estimated_avg_glucose = COALESCE($6, estimated_avg_glucose),
+    treatment_changed = COALESCE($7, treatment_changed),
+    medication_changes = COALESCE($8, medication_changes),
+    diet_changes = COALESCE($9, diet_changes),
+    activity_changes = COALESCE($10, activity_changes),
+    notes = COALESCE($11, notes),
+    document_url = COALESCE($12, document_url),
+    trend = COALESCE($13, trend), -- Trend will be calculated on the client/server
+    updated_at = NOW()
+WHERE 
+    hba1c_id = $1 AND user_id = $2
+RETURNING hba1c_id, user_id, test_date, hba1c_percentage, hba1c_mmol_mol, estimated_avg_glucose, treatment_changed, medication_changes, diet_changes, activity_changes, change_from_previous, trend, notes, document_url, created_at, updated_at
+`
+
+type UpdateHBA1CRecordParams struct {
+	Hba1cID             pgtype.UUID    `json:"hba1c_id"`
+	UserID              string         `json:"user_id"`
+	TestDate            pgtype.Date    `json:"test_date"`
+	Hba1cPercentage     pgtype.Numeric `json:"hba1c_percentage"`
+	Hba1cMmolMol        pgtype.Int4    `json:"hba1c_mmol_mol"`
+	EstimatedAvgGlucose pgtype.Int4    `json:"estimated_avg_glucose"`
+	TreatmentChanged    pgtype.Bool    `json:"treatment_changed"`
+	MedicationChanges   pgtype.Text    `json:"medication_changes"`
+	DietChanges         pgtype.Text    `json:"diet_changes"`
+	ActivityChanges     pgtype.Text    `json:"activity_changes"`
+	Notes               pgtype.Text    `json:"notes"`
+	DocumentUrl         pgtype.Text    `json:"document_url"`
+	Trend               pgtype.Text    `json:"trend"`
+}
+
+// Updates an existing record, checking for user ownership
+func (q *Queries) UpdateHBA1CRecord(ctx context.Context, arg UpdateHBA1CRecordParams) (UserHba1cRecord, error) {
+	row := q.db.QueryRow(ctx, updateHBA1CRecord,
+		arg.Hba1cID,
+		arg.UserID,
+		arg.TestDate,
+		arg.Hba1cPercentage,
+		arg.Hba1cMmolMol,
+		arg.EstimatedAvgGlucose,
+		arg.TreatmentChanged,
+		arg.MedicationChanges,
+		arg.DietChanges,
+		arg.ActivityChanges,
+		arg.Notes,
+		arg.DocumentUrl,
+		arg.Trend,
+	)
+	var i UserHba1cRecord
+	err := row.Scan(
+		&i.Hba1cID,
+		&i.UserID,
+		&i.TestDate,
+		&i.Hba1cPercentage,
+		&i.Hba1cMmolMol,
+		&i.EstimatedAvgGlucose,
+		&i.TreatmentChanged,
+		&i.MedicationChanges,
+		&i.DietChanges,
+		&i.ActivityChanges,
+		&i.ChangeFromPrevious,
+		&i.Trend,
+		&i.Notes,
+		&i.DocumentUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateHealthEvent = `-- name: UpdateHealthEvent :one
+UPDATE user_health_events
+SET
+    event_date = COALESCE($3, event_date),
+    event_type = COALESCE($4, event_type),
+    severity = COALESCE($5, severity),
+    glucose_value = COALESCE($6, glucose_value),
+    ketone_value_mmol = COALESCE($7, ketone_value_mmol),
+    symptoms = COALESCE($8, symptoms),
+    treatments = COALESCE($9, treatments),
+    required_medical_attention = COALESCE($10, required_medical_attention),
+    notes = COALESCE($11, notes),
+    updated_at = NOW()
+WHERE 
+    event_id = $1 AND user_id = $2
+RETURNING event_id, user_id, event_date, event_type, severity, glucose_value, ketone_value_mmol, symptoms, treatments, required_medical_attention, notes, created_at, updated_at
+`
+
+type UpdateHealthEventParams struct {
+	EventID                  pgtype.UUID    `json:"event_id"`
+	UserID                   string         `json:"user_id"`
+	EventDate                pgtype.Date    `json:"event_date"`
+	EventType                string         `json:"event_type"`
+	Severity                 pgtype.Text    `json:"severity"`
+	GlucoseValue             pgtype.Int4    `json:"glucose_value"`
+	KetoneValueMmol          pgtype.Numeric `json:"ketone_value_mmol"`
+	Symptoms                 []string       `json:"symptoms"`
+	Treatments               []string       `json:"treatments"`
+	RequiredMedicalAttention pgtype.Bool    `json:"required_medical_attention"`
+	Notes                    pgtype.Text    `json:"notes"`
+}
+
+// Updates an existing record, checking for user ownership
+func (q *Queries) UpdateHealthEvent(ctx context.Context, arg UpdateHealthEventParams) (UserHealthEvent, error) {
+	row := q.db.QueryRow(ctx, updateHealthEvent,
+		arg.EventID,
+		arg.UserID,
+		arg.EventDate,
+		arg.EventType,
+		arg.Severity,
+		arg.GlucoseValue,
+		arg.KetoneValueMmol,
+		arg.Symptoms,
+		arg.Treatments,
+		arg.RequiredMedicalAttention,
+		arg.Notes,
+	)
+	var i UserHealthEvent
+	err := row.Scan(
+		&i.EventID,
+		&i.UserID,
+		&i.EventDate,
+		&i.EventType,
+		&i.Severity,
+		&i.GlucoseValue,
+		&i.KetoneValueMmol,
+		&i.Symptoms,
+		&i.Treatments,
+		&i.RequiredMedicalAttention,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateMealLog = `-- name: UpdateMealLog :one
+UPDATE user_meal_logs
+SET
+    meal_timestamp = COALESCE($3, meal_timestamp),
+    meal_type_id = COALESCE($4, meal_type_id),
+    description = COALESCE($5, description),
+    total_calories = COALESCE($6, total_calories),
+    total_carbs_grams = COALESCE($7, total_carbs_grams),
+    total_protein_grams = COALESCE($8, total_protein_grams),
+    total_fat_grams = COALESCE($9, total_fat_grams),
+    total_fiber_grams = COALESCE($10, total_fiber_grams),
+    total_sugar_grams = COALESCE($11, total_sugar_grams),
+    tags = COALESCE($12, tags),
+    updated_at = NOW()
+WHERE 
+    meal_id = $1 AND user_id = $2
+RETURNING meal_id, user_id, meal_timestamp, meal_type_id, description, total_calories, total_carbs_grams, total_protein_grams, total_fat_grams, total_fiber_grams, total_sugar_grams, tags, created_at, updated_at
+`
+
+type UpdateMealLogParams struct {
+	MealID            pgtype.UUID        `json:"meal_id"`
+	UserID            string             `json:"user_id"`
+	MealTimestamp     pgtype.Timestamptz `json:"meal_timestamp"`
+	MealTypeID        pgtype.Int4        `json:"meal_type_id"`
+	Description       pgtype.Text        `json:"description"`
+	TotalCalories     pgtype.Int4        `json:"total_calories"`
+	TotalCarbsGrams   pgtype.Numeric     `json:"total_carbs_grams"`
+	TotalProteinGrams pgtype.Numeric     `json:"total_protein_grams"`
+	TotalFatGrams     pgtype.Numeric     `json:"total_fat_grams"`
+	TotalFiberGrams   pgtype.Numeric     `json:"total_fiber_grams"`
+	TotalSugarGrams   pgtype.Numeric     `json:"total_sugar_grams"`
+	Tags              []string           `json:"tags"`
+}
+
+func (q *Queries) UpdateMealLog(ctx context.Context, arg UpdateMealLogParams) (UserMealLog, error) {
+	row := q.db.QueryRow(ctx, updateMealLog,
+		arg.MealID,
+		arg.UserID,
+		arg.MealTimestamp,
+		arg.MealTypeID,
+		arg.Description,
+		arg.TotalCalories,
+		arg.TotalCarbsGrams,
+		arg.TotalProteinGrams,
+		arg.TotalFatGrams,
+		arg.TotalFiberGrams,
+		arg.TotalSugarGrams,
+		arg.Tags,
+	)
+	var i UserMealLog
+	err := row.Scan(
+		&i.MealID,
+		&i.UserID,
+		&i.MealTimestamp,
+		&i.MealTypeID,
+		&i.Description,
+		&i.TotalCalories,
+		&i.TotalCarbsGrams,
+		&i.TotalProteinGrams,
+		&i.TotalFatGrams,
+		&i.TotalFiberGrams,
+		&i.TotalSugarGrams,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateMedicationLog = `-- name: UpdateMedicationLog :one
+UPDATE user_medication_logs
+SET
+    medication_id = COALESCE($3, medication_id),
+    medication_name = COALESCE($4, medication_name),
+    "timestamp" = COALESCE($5, "timestamp"),
+    dose_amount = COALESCE($6, dose_amount),
+    reason = COALESCE($7, reason),
+    is_pump_delivery = COALESCE($8, is_pump_delivery),
+    delivery_duration_minutes = COALESCE($9, delivery_duration_minutes),
+    notes = COALESCE($10, notes)
+WHERE
+    medicationlog_id = $1 AND user_id = $2
+RETURNING medicationlog_id, user_id, medication_id, medication_name, timestamp, dose_amount, reason, is_pump_delivery, delivery_duration_minutes, notes, created_at, updated_at
+`
+
+type UpdateMedicationLogParams struct {
+	MedicationlogID         pgtype.UUID        `json:"medicationlog_id"`
+	UserID                  string             `json:"user_id"`
+	MedicationID            pgtype.Int4        `json:"medication_id"`
+	MedicationName          pgtype.Text        `json:"medication_name"`
+	Timestamp               pgtype.Timestamptz `json:"timestamp"`
+	DoseAmount              pgtype.Numeric     `json:"dose_amount"`
+	Reason                  pgtype.Text        `json:"reason"`
+	IsPumpDelivery          pgtype.Bool        `json:"is_pump_delivery"`
+	DeliveryDurationMinutes pgtype.Int4        `json:"delivery_duration_minutes"`
+	Notes                   pgtype.Text        `json:"notes"`
+}
+
+// Updates a single logged dose.
+func (q *Queries) UpdateMedicationLog(ctx context.Context, arg UpdateMedicationLogParams) (UserMedicationLog, error) {
+	row := q.db.QueryRow(ctx, updateMedicationLog,
+		arg.MedicationlogID,
+		arg.UserID,
+		arg.MedicationID,
+		arg.MedicationName,
+		arg.Timestamp,
+		arg.DoseAmount,
+		arg.Reason,
+		arg.IsPumpDelivery,
+		arg.DeliveryDurationMinutes,
+		arg.Notes,
+	)
+	var i UserMedicationLog
+	err := row.Scan(
+		&i.MedicationlogID,
+		&i.UserID,
+		&i.MedicationID,
+		&i.MedicationName,
+		&i.Timestamp,
+		&i.DoseAmount,
+		&i.Reason,
+		&i.IsPumpDelivery,
+		&i.DeliveryDurationMinutes,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1800,22 +4009,109 @@ func (q *Queries) UpdateRefreshTokenReplacement(ctx context.Context, arg UpdateR
 	return err
 }
 
+const updateSleepLog = `-- name: UpdateSleepLog :one
+UPDATE user_sleep_logs
+SET
+    sleep_date = COALESCE($3, sleep_date),
+    bed_time = COALESCE($4, bed_time),
+    wake_time = COALESCE($5, wake_time),
+    quality_rating = COALESCE($6, quality_rating),
+    tracker_score = COALESCE($7, tracker_score),
+    deep_sleep_minutes = COALESCE($8, deep_sleep_minutes),
+    rem_sleep_minutes = COALESCE($9, rem_sleep_minutes),
+    light_sleep_minutes = COALESCE($10, light_sleep_minutes),
+    awake_minutes = COALESCE($11, awake_minutes),
+    average_hrv = COALESCE($12, average_hrv),
+    resting_heart_rate = COALESCE($13, resting_heart_rate),
+    tags = COALESCE($14, tags),
+    source = COALESCE($15, source),
+    notes = COALESCE($16, notes),
+    updated_at = NOW()
+WHERE 
+    sleep_id = $1 AND user_id = $2
+RETURNING sleep_id, user_id, sleep_date, bed_time, wake_time, quality_rating, tracker_score, deep_sleep_minutes, rem_sleep_minutes, light_sleep_minutes, awake_minutes, average_hrv, resting_heart_rate, tags, source, notes, created_at, updated_at
+`
+
+type UpdateSleepLogParams struct {
+	SleepID           pgtype.UUID        `json:"sleep_id"`
+	UserID            string             `json:"user_id"`
+	SleepDate         pgtype.Date        `json:"sleep_date"`
+	BedTime           pgtype.Timestamptz `json:"bed_time"`
+	WakeTime          pgtype.Timestamptz `json:"wake_time"`
+	QualityRating     pgtype.Int4        `json:"quality_rating"`
+	TrackerScore      pgtype.Int4        `json:"tracker_score"`
+	DeepSleepMinutes  pgtype.Int4        `json:"deep_sleep_minutes"`
+	RemSleepMinutes   pgtype.Int4        `json:"rem_sleep_minutes"`
+	LightSleepMinutes pgtype.Int4        `json:"light_sleep_minutes"`
+	AwakeMinutes      pgtype.Int4        `json:"awake_minutes"`
+	AverageHrv        pgtype.Int4        `json:"average_hrv"`
+	RestingHeartRate  pgtype.Int4        `json:"resting_heart_rate"`
+	Tags              []string           `json:"tags"`
+	Source            pgtype.Text        `json:"source"`
+	Notes             pgtype.Text        `json:"notes"`
+}
+
+// Updates an existing sleep log, checking for user ownership
+func (q *Queries) UpdateSleepLog(ctx context.Context, arg UpdateSleepLogParams) (UserSleepLog, error) {
+	row := q.db.QueryRow(ctx, updateSleepLog,
+		arg.SleepID,
+		arg.UserID,
+		arg.SleepDate,
+		arg.BedTime,
+		arg.WakeTime,
+		arg.QualityRating,
+		arg.TrackerScore,
+		arg.DeepSleepMinutes,
+		arg.RemSleepMinutes,
+		arg.LightSleepMinutes,
+		arg.AwakeMinutes,
+		arg.AverageHrv,
+		arg.RestingHeartRate,
+		arg.Tags,
+		arg.Source,
+		arg.Notes,
+	)
+	var i UserSleepLog
+	err := row.Scan(
+		&i.SleepID,
+		&i.UserID,
+		&i.SleepDate,
+		&i.BedTime,
+		&i.WakeTime,
+		&i.QualityRating,
+		&i.TrackerScore,
+		&i.DeepSleepMinutes,
+		&i.RemSleepMinutes,
+		&i.LightSleepMinutes,
+		&i.AwakeMinutes,
+		&i.AverageHrv,
+		&i.RestingHeartRate,
+		&i.Tags,
+		&i.Source,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateUserAddress = `-- name: UpdateUserAddress :one
 UPDATE user_addresses
 SET 
     address_line1 = COALESCE($3, address_line1),
     address_line2 = COALESCE($4, address_line2),
-    address_city = COALESCE($5, address_city),
-    address_province = COALESCE($6, address_province),
-    address_postalcode = COALESCE($7, address_postalcode),
-    address_latitude = COALESCE($8, address_latitude),
-    address_longitude = COALESCE($9, address_longitude),
-    address_label = COALESCE($10, address_label),
-    recipient_name = COALESCE($11, recipient_name),
-    recipient_phone = COALESCE($12, recipient_phone),
-    delivery_notes = COALESCE($13, delivery_notes)
+    address_district = COALESCE($5, address_district),
+    address_city = COALESCE($6, address_city),
+    address_province = COALESCE($7, address_province),
+    address_postalcode = COALESCE($8, address_postalcode),
+    address_latitude = COALESCE($9, address_latitude),
+    address_longitude = COALESCE($10, address_longitude),
+    address_label = COALESCE($11, address_label),
+    recipient_name = COALESCE($12, recipient_name),
+    recipient_phone = COALESCE($13, recipient_phone),
+    delivery_notes = COALESCE($14, delivery_notes)
 WHERE address_id = $1 AND user_id = $2 AND is_active = true
-RETURNING address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at
+RETURNING address_id, user_id, address_line1, address_line2, address_city, address_province, address_postalcode, address_latitude, address_longitude, address_label, recipient_name, recipient_phone, delivery_notes, is_default, is_active, created_at, updated_at, address_district
 `
 
 type UpdateUserAddressParams struct {
@@ -1823,6 +4119,7 @@ type UpdateUserAddressParams struct {
 	UserID            string        `json:"user_id"`
 	AddressLine1      pgtype.Text   `json:"address_line1"`
 	AddressLine2      pgtype.Text   `json:"address_line2"`
+	AddressDistrict   pgtype.Text   `json:"address_district"`
 	AddressCity       pgtype.Text   `json:"address_city"`
 	AddressProvince   pgtype.Text   `json:"address_province"`
 	AddressPostalcode pgtype.Text   `json:"address_postalcode"`
@@ -1840,6 +4137,7 @@ func (q *Queries) UpdateUserAddress(ctx context.Context, arg UpdateUserAddressPa
 		arg.UserID,
 		arg.AddressLine1,
 		arg.AddressLine2,
+		arg.AddressDistrict,
 		arg.AddressCity,
 		arg.AddressProvince,
 		arg.AddressPostalcode,
@@ -1869,6 +4167,7 @@ func (q *Queries) UpdateUserAddress(ctx context.Context, arg UpdateUserAddressPa
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AddressDistrict,
 	)
 	return i, err
 }
@@ -1876,7 +4175,7 @@ func (q *Queries) UpdateUserAddress(ctx context.Context, arg UpdateUserAddressPa
 const updateUserEmail = `-- name: UpdateUserEmail :exec
 UPDATE users
 SET user_email = $2,
-    user_updated_at_auth = NOW()
+    updated_at = NOW()
 WHERE user_id = $1
 `
 
@@ -1899,7 +4198,7 @@ SET
   user_provider_user_id = $4,
   user_raw_data = $5,
   user_email_auth = $6,
-  user_updated_at_auth = NOW()
+  updated_at = NOW()
 WHERE 
   user_id = $7
 `
@@ -1938,10 +4237,55 @@ func (q *Queries) UpdateUserLastLogin(ctx context.Context, userID string) error 
 	return err
 }
 
+const updateUserMedication = `-- name: UpdateUserMedication :one
+UPDATE user_medications
+SET
+    display_name = COALESCE($3, display_name),
+    medication_type = COALESCE($4, medication_type),
+    default_dose_unit = COALESCE($5, default_dose_unit),
+    is_active = COALESCE($6, is_active)
+WHERE
+    medication_id = $1 AND user_id = $2
+RETURNING medication_id, user_id, display_name, medication_type, default_dose_unit, is_active, created_at, updated_at
+`
+
+type UpdateUserMedicationParams struct {
+	MedicationID    int32       `json:"medication_id"`
+	UserID          pgtype.Text `json:"user_id"`
+	DisplayName     pgtype.Text `json:"display_name"`
+	MedicationType  pgtype.Text `json:"medication_type"`
+	DefaultDoseUnit pgtype.Text `json:"default_dose_unit"`
+	IsActive        pgtype.Bool `json:"is_active"`
+}
+
+// Updates the configuration of an existing medication.
+func (q *Queries) UpdateUserMedication(ctx context.Context, arg UpdateUserMedicationParams) (UserMedication, error) {
+	row := q.db.QueryRow(ctx, updateUserMedication,
+		arg.MedicationID,
+		arg.UserID,
+		arg.DisplayName,
+		arg.MedicationType,
+		arg.DefaultDoseUnit,
+		arg.IsActive,
+	)
+	var i UserMedication
+	err := row.Scan(
+		&i.MedicationID,
+		&i.UserID,
+		&i.DisplayName,
+		&i.MedicationType,
+		&i.DefaultDoseUnit,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 UPDATE users
 SET user_password = $2,
-    user_updated_at_auth = NOW()
+    updated_at = NOW()
 WHERE user_id = $1
 `
 
@@ -1964,7 +4308,7 @@ SET
     user_dob = COALESCE($5, user_dob),
     user_gender = COALESCE($6, user_gender)
 WHERE user_id = $1
-RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
+RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
 type UpdateUserProfileParams struct {
@@ -2001,8 +4345,8 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
@@ -2014,7 +4358,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 const updateUserUsername = `-- name: UpdateUserUsername :exec
 UPDATE users
 SET user_username = $2,
-    user_updated_at_auth = NOW()
+    updated_at = NOW()
 WHERE user_id = $1
 `
 
@@ -2084,9 +4428,9 @@ DO UPDATE SET
     user_name_auth = EXCLUDED.user_name_auth,
     user_avatar_url = EXCLUDED.user_avatar_url,
     user_raw_data = EXCLUDED.user_raw_data,
-    user_last_login_at = EXCLUDED.user_last_login_at, -- Menggunakan nilai login time dari EXCLUDED ($8)
-    user_updated_at_auth = CURRENT_TIMESTAMP -- Menggunakan CURRENT_TIMESTAMP untuk mencatat pembaruan skema auth
-RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, user_created_at_auth, user_updated_at_auth, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
+    user_last_login_at = EXCLUDED.user_last_login_at,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
 type UpsertOAuthUserParams struct {
@@ -2134,12 +4478,366 @@ func (q *Queries) UpsertOAuthUser(ctx context.Context, arg UpsertOAuthUserParams
 		&i.UserProvider,
 		&i.UserProviderUserID,
 		&i.UserRawData,
-		&i.UserCreatedAtAuth,
-		&i.UserUpdatedAtAuth,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserLastLoginAt,
 		&i.UserEmailAuth,
 		&i.IsEmailVerified,
 		&i.EmailVerifiedAt,
+	)
+	return i, err
+}
+
+const upsertUserHealthProfile = `-- name: UpsertUserHealthProfile :one
+INSERT INTO user_health_profiles (
+    user_id,
+    app_experience,
+    condition_id,
+    diagnosis_date,
+    years_with_condition,
+    treatment_types,
+    target_glucose_fasting,
+    target_glucose_postprandial,
+    uses_cgm,
+    cgm_device,
+    cgm_api_connected,
+    height_cm,
+    current_weight_kg,
+    target_weight_kg,
+    waist_circumference_cm,
+    body_fat_percentage,
+    hba1c_target,
+    last_hba1c,
+    last_hba1c_date,
+    activity_level,
+    daily_steps_goal,
+    weekly_exercise_goal_minutes,
+    preferred_activity_type_ids,
+    dietary_pattern,
+    daily_carb_target_grams,
+    daily_calorie_target,
+    daily_protein_target_grams,
+    daily_fat_target_grams,
+    meals_per_day,
+    snacks_per_day,
+    food_allergies,
+    food_intolerances,
+    foods_to_avoid,
+    cultural_cuisines,
+    dietary_restrictions,
+    has_hypertension,
+    hypertension_medication,
+    has_kidney_disease,
+    kidney_disease_stage,
+    egfr_value,
+    has_cardiovascular_disease,
+    has_neuropathy,
+    has_retinopathy,
+    has_gastroparesis,
+    has_hypoglycemia_unawareness,
+    other_conditions,
+    smoking_status,
+    smoking_years,
+    alcohol_frequency,
+    alcohol_drinks_per_week,
+    stress_level,
+    typical_sleep_hours,
+    sleep_quality,
+    is_pregnant,
+    is_breastfeeding,
+    expected_due_date,
+    preferred_units,
+    glucose_unit,
+    timezone,
+    language_code,
+    enable_glucose_alerts,
+    enable_meal_reminders,
+    enable_activity_reminders,
+    enable_medication_reminders,
+    share_data_for_research,
+    share_anonymized_data
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66
+)
+ON CONFLICT (user_id) DO UPDATE SET
+    app_experience = COALESCE($2, user_health_profiles.app_experience),
+    condition_id = COALESCE($3, user_health_profiles.condition_id),
+    diagnosis_date = COALESCE($4, user_health_profiles.diagnosis_date),
+    years_with_condition = COALESCE($5, user_health_profiles.years_with_condition),
+    treatment_types = COALESCE($6, user_health_profiles.treatment_types),
+    target_glucose_fasting = COALESCE($7, user_health_profiles.target_glucose_fasting),
+    target_glucose_postprandial = COALESCE($8, user_health_profiles.target_glucose_postprandial),
+    uses_cgm = COALESCE($9, user_health_profiles.uses_cgm),
+    cgm_device = COALESCE($10, user_health_profiles.cgm_device),
+    cgm_api_connected = COALESCE($11, user_health_profiles.cgm_api_connected),
+    height_cm = COALESCE($12, user_health_profiles.height_cm),
+    current_weight_kg = COALESCE($13, user_health_profiles.current_weight_kg),
+    target_weight_kg = COALESCE($14, user_health_profiles.target_weight_kg),
+    waist_circumference_cm = COALESCE($15, user_health_profiles.waist_circumference_cm),
+    body_fat_percentage = COALESCE($16, user_health_profiles.body_fat_percentage),
+    hba1c_target = COALESCE($17, user_health_profiles.hba1c_target),
+    last_hba1c = COALESCE($18, user_health_profiles.last_hba1c),
+    last_hba1c_date = COALESCE($19, user_health_profiles.last_hba1c_date),
+    activity_level = COALESCE($20, user_health_profiles.activity_level),
+    daily_steps_goal = COALESCE($21, user_health_profiles.daily_steps_goal),
+    weekly_exercise_goal_minutes = COALESCE($22, user_health_profiles.weekly_exercise_goal_minutes),
+    preferred_activity_type_ids = COALESCE($23, user_health_profiles.preferred_activity_type_ids),
+    dietary_pattern = COALESCE($24, user_health_profiles.dietary_pattern),
+    daily_carb_target_grams = COALESCE($25, user_health_profiles.daily_carb_target_grams),
+    daily_calorie_target = COALESCE($26, user_health_profiles.daily_calorie_target),
+    daily_protein_target_grams = COALESCE($27, user_health_profiles.daily_protein_target_grams),
+    daily_fat_target_grams = COALESCE($28, user_health_profiles.daily_fat_target_grams),
+    meals_per_day = COALESCE($29, user_health_profiles.meals_per_day),
+    snacks_per_day = COALESCE($30, user_health_profiles.snacks_per_day),
+    food_allergies = COALESCE($31, user_health_profiles.food_allergies),
+    food_intolerances = COALESCE($32, user_health_profiles.food_intolerances),
+    foods_to_avoid = COALESCE($33, user_health_profiles.foods_to_avoid),
+    cultural_cuisines = COALESCE($34, user_health_profiles.cultural_cuisines),
+    dietary_restrictions = COALESCE($35, user_health_profiles.dietary_restrictions),
+    has_hypertension = COALESCE($36, user_health_profiles.has_hypertension),
+    hypertension_medication = COALESCE($37, user_health_profiles.hypertension_medication),
+    has_kidney_disease = COALESCE($38, user_health_profiles.has_kidney_disease),
+    kidney_disease_stage = COALESCE($39, user_health_profiles.kidney_disease_stage),
+    egfr_value = COALESCE($40, user_health_profiles.egfr_value),
+    has_cardiovascular_disease = COALESCE($41, user_health_profiles.has_cardiovascular_disease),
+    has_neuropathy = COALESCE($42, user_health_profiles.has_neuropathy),
+    has_retinopathy = COALESCE($43, user_health_profiles.has_retinopathy),
+    has_gastroparesis = COALESCE($44, user_health_profiles.has_gastroparesis),
+    has_hypoglycemia_unawareness = COALESCE($45, user_health_profiles.has_hypoglycemia_unawareness),
+    other_conditions = COALESCE($46, user_health_profiles.other_conditions),
+    smoking_status = COALESCE($47, user_health_profiles.smoking_status),
+    smoking_years = COALESCE($48, user_health_profiles.smoking_years),
+    alcohol_frequency = COALESCE($49, user_health_profiles.alcohol_frequency),
+    alcohol_drinks_per_week = COALESCE($50, user_health_profiles.alcohol_drinks_per_week),
+    stress_level = COALESCE($51, user_health_profiles.stress_level),
+    typical_sleep_hours = COALESCE($52, user_health_profiles.typical_sleep_hours),
+    sleep_quality = COALESCE($53, user_health_profiles.sleep_quality),
+    is_pregnant = COALESCE($54, user_health_profiles.is_pregnant),
+    is_breastfeeding = COALESCE($55, user_health_profiles.is_breastfeeding),
+    expected_due_date = COALESCE($56, user_health_profiles.expected_due_date),
+    preferred_units = COALESCE($57, user_health_profiles.preferred_units),
+    glucose_unit = COALESCE($58, user_health_profiles.glucose_unit),
+    timezone = COALESCE($59, user_health_profiles.timezone),
+    language_code = COALESCE($60, user_health_profiles.language_code),
+    enable_glucose_alerts = COALESCE($61, user_health_profiles.enable_glucose_alerts),
+    enable_meal_reminders = COALESCE($62, user_health_profiles.enable_meal_reminders),
+    enable_activity_reminders = COALESCE($63, user_health_profiles.enable_activity_reminders),
+    enable_medication_reminders = COALESCE($64, user_health_profiles.enable_medication_reminders),
+    share_data_for_research = COALESCE($65, user_health_profiles.share_data_for_research),
+    share_anonymized_data = COALESCE($66, user_health_profiles.share_anonymized_data)
+RETURNING profile_id, user_id, app_experience, condition_id, diagnosis_date, years_with_condition, treatment_types, target_glucose_fasting, target_glucose_postprandial, uses_cgm, cgm_device, cgm_api_connected, height_cm, current_weight_kg, target_weight_kg, bmi, waist_circumference_cm, body_fat_percentage, hba1c_target, last_hba1c, last_hba1c_date, activity_level, daily_steps_goal, weekly_exercise_goal_minutes, preferred_activity_type_ids, dietary_pattern, daily_carb_target_grams, daily_calorie_target, daily_protein_target_grams, daily_fat_target_grams, meals_per_day, snacks_per_day, food_allergies, food_intolerances, foods_to_avoid, cultural_cuisines, dietary_restrictions, has_hypertension, hypertension_medication, has_kidney_disease, kidney_disease_stage, egfr_value, has_cardiovascular_disease, has_neuropathy, has_retinopathy, has_gastroparesis, has_hypoglycemia_unawareness, other_conditions, smoking_status, smoking_years, alcohol_frequency, alcohol_drinks_per_week, stress_level, typical_sleep_hours, sleep_quality, is_pregnant, is_breastfeeding, expected_due_date, preferred_units, glucose_unit, timezone, language_code, enable_glucose_alerts, enable_meal_reminders, enable_activity_reminders, enable_medication_reminders, share_data_for_research, share_anonymized_data, created_at, updated_at
+`
+
+type UpsertUserHealthProfileParams struct {
+	UserID                     string         `json:"user_id"`
+	AppExperience              string         `json:"app_experience"`
+	ConditionID                int32          `json:"condition_id"`
+	DiagnosisDate              pgtype.Date    `json:"diagnosis_date"`
+	YearsWithCondition         pgtype.Numeric `json:"years_with_condition"`
+	TreatmentTypes             []string       `json:"treatment_types"`
+	TargetGlucoseFasting       pgtype.Int4    `json:"target_glucose_fasting"`
+	TargetGlucosePostprandial  pgtype.Int4    `json:"target_glucose_postprandial"`
+	UsesCgm                    pgtype.Bool    `json:"uses_cgm"`
+	CgmDevice                  pgtype.Text    `json:"cgm_device"`
+	CgmApiConnected            pgtype.Bool    `json:"cgm_api_connected"`
+	HeightCm                   pgtype.Numeric `json:"height_cm"`
+	CurrentWeightKg            pgtype.Numeric `json:"current_weight_kg"`
+	TargetWeightKg             pgtype.Numeric `json:"target_weight_kg"`
+	WaistCircumferenceCm       pgtype.Numeric `json:"waist_circumference_cm"`
+	BodyFatPercentage          pgtype.Numeric `json:"body_fat_percentage"`
+	Hba1cTarget                pgtype.Numeric `json:"hba1c_target"`
+	LastHba1c                  pgtype.Numeric `json:"last_hba1c"`
+	LastHba1cDate              pgtype.Date    `json:"last_hba1c_date"`
+	ActivityLevel              pgtype.Text    `json:"activity_level"`
+	DailyStepsGoal             pgtype.Int4    `json:"daily_steps_goal"`
+	WeeklyExerciseGoalMinutes  pgtype.Int4    `json:"weekly_exercise_goal_minutes"`
+	PreferredActivityTypeIds   []int32        `json:"preferred_activity_type_ids"`
+	DietaryPattern             pgtype.Text    `json:"dietary_pattern"`
+	DailyCarbTargetGrams       pgtype.Int4    `json:"daily_carb_target_grams"`
+	DailyCalorieTarget         pgtype.Int4    `json:"daily_calorie_target"`
+	DailyProteinTargetGrams    pgtype.Int4    `json:"daily_protein_target_grams"`
+	DailyFatTargetGrams        pgtype.Int4    `json:"daily_fat_target_grams"`
+	MealsPerDay                pgtype.Int4    `json:"meals_per_day"`
+	SnacksPerDay               pgtype.Int4    `json:"snacks_per_day"`
+	FoodAllergies              []string       `json:"food_allergies"`
+	FoodIntolerances           []string       `json:"food_intolerances"`
+	FoodsToAvoid               []string       `json:"foods_to_avoid"`
+	CulturalCuisines           []string       `json:"cultural_cuisines"`
+	DietaryRestrictions        []string       `json:"dietary_restrictions"`
+	HasHypertension            pgtype.Bool    `json:"has_hypertension"`
+	HypertensionMedication     pgtype.Text    `json:"hypertension_medication"`
+	HasKidneyDisease           pgtype.Bool    `json:"has_kidney_disease"`
+	KidneyDiseaseStage         pgtype.Int4    `json:"kidney_disease_stage"`
+	EgfrValue                  pgtype.Numeric `json:"egfr_value"`
+	HasCardiovascularDisease   pgtype.Bool    `json:"has_cardiovascular_disease"`
+	HasNeuropathy              pgtype.Bool    `json:"has_neuropathy"`
+	HasRetinopathy             pgtype.Bool    `json:"has_retinopathy"`
+	HasGastroparesis           pgtype.Bool    `json:"has_gastroparesis"`
+	HasHypoglycemiaUnawareness pgtype.Bool    `json:"has_hypoglycemia_unawareness"`
+	OtherConditions            []string       `json:"other_conditions"`
+	SmokingStatus              pgtype.Text    `json:"smoking_status"`
+	SmokingYears               pgtype.Int4    `json:"smoking_years"`
+	AlcoholFrequency           pgtype.Text    `json:"alcohol_frequency"`
+	AlcoholDrinksPerWeek       pgtype.Int4    `json:"alcohol_drinks_per_week"`
+	StressLevel                pgtype.Text    `json:"stress_level"`
+	TypicalSleepHours          pgtype.Numeric `json:"typical_sleep_hours"`
+	SleepQuality               pgtype.Text    `json:"sleep_quality"`
+	IsPregnant                 pgtype.Bool    `json:"is_pregnant"`
+	IsBreastfeeding            pgtype.Bool    `json:"is_breastfeeding"`
+	ExpectedDueDate            pgtype.Date    `json:"expected_due_date"`
+	PreferredUnits             pgtype.Text    `json:"preferred_units"`
+	GlucoseUnit                pgtype.Text    `json:"glucose_unit"`
+	Timezone                   pgtype.Text    `json:"timezone"`
+	LanguageCode               pgtype.Text    `json:"language_code"`
+	EnableGlucoseAlerts        pgtype.Bool    `json:"enable_glucose_alerts"`
+	EnableMealReminders        pgtype.Bool    `json:"enable_meal_reminders"`
+	EnableActivityReminders    pgtype.Bool    `json:"enable_activity_reminders"`
+	EnableMedicationReminders  pgtype.Bool    `json:"enable_medication_reminders"`
+	ShareDataForResearch       pgtype.Bool    `json:"share_data_for_research"`
+	ShareAnonymizedData        pgtype.Bool    `json:"share_anonymized_data"`
+}
+
+func (q *Queries) UpsertUserHealthProfile(ctx context.Context, arg UpsertUserHealthProfileParams) (UserHealthProfile, error) {
+	row := q.db.QueryRow(ctx, upsertUserHealthProfile,
+		arg.UserID,
+		arg.AppExperience,
+		arg.ConditionID,
+		arg.DiagnosisDate,
+		arg.YearsWithCondition,
+		arg.TreatmentTypes,
+		arg.TargetGlucoseFasting,
+		arg.TargetGlucosePostprandial,
+		arg.UsesCgm,
+		arg.CgmDevice,
+		arg.CgmApiConnected,
+		arg.HeightCm,
+		arg.CurrentWeightKg,
+		arg.TargetWeightKg,
+		arg.WaistCircumferenceCm,
+		arg.BodyFatPercentage,
+		arg.Hba1cTarget,
+		arg.LastHba1c,
+		arg.LastHba1cDate,
+		arg.ActivityLevel,
+		arg.DailyStepsGoal,
+		arg.WeeklyExerciseGoalMinutes,
+		arg.PreferredActivityTypeIds,
+		arg.DietaryPattern,
+		arg.DailyCarbTargetGrams,
+		arg.DailyCalorieTarget,
+		arg.DailyProteinTargetGrams,
+		arg.DailyFatTargetGrams,
+		arg.MealsPerDay,
+		arg.SnacksPerDay,
+		arg.FoodAllergies,
+		arg.FoodIntolerances,
+		arg.FoodsToAvoid,
+		arg.CulturalCuisines,
+		arg.DietaryRestrictions,
+		arg.HasHypertension,
+		arg.HypertensionMedication,
+		arg.HasKidneyDisease,
+		arg.KidneyDiseaseStage,
+		arg.EgfrValue,
+		arg.HasCardiovascularDisease,
+		arg.HasNeuropathy,
+		arg.HasRetinopathy,
+		arg.HasGastroparesis,
+		arg.HasHypoglycemiaUnawareness,
+		arg.OtherConditions,
+		arg.SmokingStatus,
+		arg.SmokingYears,
+		arg.AlcoholFrequency,
+		arg.AlcoholDrinksPerWeek,
+		arg.StressLevel,
+		arg.TypicalSleepHours,
+		arg.SleepQuality,
+		arg.IsPregnant,
+		arg.IsBreastfeeding,
+		arg.ExpectedDueDate,
+		arg.PreferredUnits,
+		arg.GlucoseUnit,
+		arg.Timezone,
+		arg.LanguageCode,
+		arg.EnableGlucoseAlerts,
+		arg.EnableMealReminders,
+		arg.EnableActivityReminders,
+		arg.EnableMedicationReminders,
+		arg.ShareDataForResearch,
+		arg.ShareAnonymizedData,
+	)
+	var i UserHealthProfile
+	err := row.Scan(
+		&i.ProfileID,
+		&i.UserID,
+		&i.AppExperience,
+		&i.ConditionID,
+		&i.DiagnosisDate,
+		&i.YearsWithCondition,
+		&i.TreatmentTypes,
+		&i.TargetGlucoseFasting,
+		&i.TargetGlucosePostprandial,
+		&i.UsesCgm,
+		&i.CgmDevice,
+		&i.CgmApiConnected,
+		&i.HeightCm,
+		&i.CurrentWeightKg,
+		&i.TargetWeightKg,
+		&i.Bmi,
+		&i.WaistCircumferenceCm,
+		&i.BodyFatPercentage,
+		&i.Hba1cTarget,
+		&i.LastHba1c,
+		&i.LastHba1cDate,
+		&i.ActivityLevel,
+		&i.DailyStepsGoal,
+		&i.WeeklyExerciseGoalMinutes,
+		&i.PreferredActivityTypeIds,
+		&i.DietaryPattern,
+		&i.DailyCarbTargetGrams,
+		&i.DailyCalorieTarget,
+		&i.DailyProteinTargetGrams,
+		&i.DailyFatTargetGrams,
+		&i.MealsPerDay,
+		&i.SnacksPerDay,
+		&i.FoodAllergies,
+		&i.FoodIntolerances,
+		&i.FoodsToAvoid,
+		&i.CulturalCuisines,
+		&i.DietaryRestrictions,
+		&i.HasHypertension,
+		&i.HypertensionMedication,
+		&i.HasKidneyDisease,
+		&i.KidneyDiseaseStage,
+		&i.EgfrValue,
+		&i.HasCardiovascularDisease,
+		&i.HasNeuropathy,
+		&i.HasRetinopathy,
+		&i.HasGastroparesis,
+		&i.HasHypoglycemiaUnawareness,
+		&i.OtherConditions,
+		&i.SmokingStatus,
+		&i.SmokingYears,
+		&i.AlcoholFrequency,
+		&i.AlcoholDrinksPerWeek,
+		&i.StressLevel,
+		&i.TypicalSleepHours,
+		&i.SleepQuality,
+		&i.IsPregnant,
+		&i.IsBreastfeeding,
+		&i.ExpectedDueDate,
+		&i.PreferredUnits,
+		&i.GlucoseUnit,
+		&i.Timezone,
+		&i.LanguageCode,
+		&i.EnableGlucoseAlerts,
+		&i.EnableMealReminders,
+		&i.EnableActivityReminders,
+		&i.EnableMedicationReminders,
+		&i.ShareDataForResearch,
+		&i.ShareAnonymizedData,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

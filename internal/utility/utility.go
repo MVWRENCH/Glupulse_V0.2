@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 	"sync"
@@ -66,6 +67,19 @@ func PgtypeUUIDToString(pgtypeUUID pgtype.UUID) (string, error) {
 	}
 
 	return UUID.String(), nil
+}
+
+func StringToPgtypeUUID(uuidStr string) (pgtype.UUID, error) {
+	parsedUUID, err := uuid.Parse(uuidStr)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("invalid UUID format: %w", err)
+	}
+
+	var entityUUID pgtype.UUID
+	copy(entityUUID.Bytes[:], parsedUUID[:])
+	entityUUID.Valid = true
+
+	return entityUUID, nil
 }
 
 func BoolToByte(b bool) byte {
@@ -152,4 +166,54 @@ func GenerateSecureToken(length int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// floatToNumeric correctly converts a Go float64 into a pgtype.Numeric
+func FloatToNumeric(f float64) pgtype.Numeric {
+	var n pgtype.Numeric
+
+	s := fmt.Sprintf("%.2f", f)
+
+	if err := (&n).Scan(s); err != nil {
+		log.Warn().Err(err).Float64("value", f).Str("string_val", s).Msg("Warning: Failed to scan string to pgtype.Numeric")
+		return pgtype.Numeric{Valid: false}
+	}
+
+	return n
+}
+
+// BMI Calculation (Redundant if using DB generated column, but useful for frontend projection)
+func CalculateBMI(weightKg float64, heightCm float64) float64 {
+	if heightCm == 0 {
+		return 0
+	}
+	heightM := heightCm / 100
+	return math.Round((weightKg/(heightM*heightM))*100) / 100
+}
+
+// Unit Conversion Helpers
+func LbsToKg(lbs float64) float64 {
+	return lbs * 0.453592
+}
+
+func KgToLbs(kg float64) float64 {
+	return kg * 2.20462
+}
+
+func FeetInchesToCm(feet int, inches int) float64 {
+	totalInches := (feet * 12) + inches
+	return float64(totalInches) * 2.54
+}
+
+func CmToFeetInches(cm float64) (int, int) {
+	totalInches := cm / 2.54
+	feet := int(totalInches / 12)
+	inches := int(math.Round(totalInches)) % 12
+	return feet, inches
+}
+
+// A1C Converter
+func A1cToMmol(percentage float64) float64 {
+	// Formula: (A1c * 10.93) - 23.5
+	return math.Round(((percentage*10.93)-23.5)*100) / 100
 }

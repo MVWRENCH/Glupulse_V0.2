@@ -19,6 +19,7 @@ import (
 type AddressRequest struct {
 	AddressLine1      string   `json:"address_line1" validate:"required,min=5,max=255"`
 	AddressLine2      *string  `json:"address_line2" validate:"omitempty,max=255"`
+	AddressDistrict   *string  `json:"address_district" validate:"omitempty,max=100"`
 	AddressCity       string   `json:"address_city" validate:"required,min=2,max=100"`
 	AddressProvince   *string  `json:"address_province" validate:"omitempty,max=100"`
 	AddressPostalCode *string  `json:"address_postalcode" validate:"omitempty,max=10"`
@@ -37,6 +38,7 @@ type AddressResponse struct {
 	UserID            string   `json:"user_id"`
 	AddressLine1      string   `json:"address_line1"`
 	AddressLine2      *string  `json:"address_line2,omitempty"`
+	AddressDistrict   *string  `json:"address_district" validate:"omitempty,max=100"`
 	AddressCity       string   `json:"address_city"`
 	AddressProvince   *string  `json:"address_province,omitempty"`
 	AddressPostalCode *string  `json:"address_postalcode,omitempty"`
@@ -139,6 +141,10 @@ func ToAddressResponse(addr database.UserAddress) AddressResponse {
 		line2 := addr.AddressLine2.String
 		resp.AddressLine2 = &line2
 	}
+	if addr.AddressDistrict.Valid {
+		district := addr.AddressDistrict.String
+		resp.AddressDistrict = &district
+	}
 	if addr.AddressProvince.Valid {
 		province := addr.AddressProvince.String
 		resp.AddressProvince = &province
@@ -225,6 +231,9 @@ func CreateAddressHandler(c echo.Context) error {
 	if req.AddressLine2 != nil {
 		params.AddressLine2 = pgtype.Text{String: *req.AddressLine2, Valid: true}
 	}
+	if req.AddressDistrict != nil {
+        params.AddressDistrict = pgtype.Text{String: *req.AddressDistrict, Valid: true}
+    }
 	if req.AddressProvince != nil {
 		params.AddressProvince = pgtype.Text{String: *req.AddressProvince, Valid: true}
 	}
@@ -364,6 +373,9 @@ func UpdateAddressHandler(c echo.Context) error {
 
 	if req.AddressLine2 != nil {
 		params.AddressLine2 = pgtype.Text{String: *req.AddressLine2, Valid: true}
+	}
+	if req.AddressDistrict != nil {
+		params.AddressDistrict = pgtype.Text{String: *req.AddressDistrict, Valid: true}
 	}
 	if req.AddressProvince != nil {
 		params.AddressProvince = pgtype.Text{String: *req.AddressProvince, Valid: true}

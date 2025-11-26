@@ -2,12 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"text/template"
-
-	"fmt"
-	//"log"
 	"time"
 
 	user "Glupulse_V0.2/internal/User"
@@ -96,7 +94,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.DELETE("/profile", user.DeleteAccountHandler)
 	protected.POST("/auth/mobile/google/link", auth.LinkGoogleAccountHandler)
 	protected.POST("/auth/mobile/google/unlink", auth.UnlinkGoogleAccountHandler)
-	protected.GET("/recommendations", user.GetRecommendationHandler)
+	protected.GET("user/data", user.GetUserDataAllHandler)
 
 	//User's Addresses Management
 	protected.POST("/addresses", user.CreateAddressHandler)
@@ -104,6 +102,52 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.PUT("/addresses/:address_id", user.UpdateAddressHandler)
 	protected.DELETE("/addresses/:address_id", user.DeleteAddressHandler)
 	protected.POST("/addresses/:address_id/set-default", user.SetDefaultAddressHandler)
+
+	//Cart & Order Routes
+	protected.GET("/cart", user.GetCartHandler)
+	protected.POST("/cart/add", user.AddItemToCartHandler)
+	protected.PUT("/cart/update", user.UpdateCartItemHandler)
+	protected.POST("/cart/remove", user.RemoveItemFromCartHandler) // Use POST to support a body
+	protected.POST("/checkout", user.CheckoutHandler)
+	protected.GET("/foods", user.ListAllFoodsHandler)
+
+	//Health Data Routes
+	protected.GET("/health/profile", user.GetHealthProfileHandler)
+	protected.PUT("/health/profile", user.UpsertHealthProfileHandler)
+	protected.POST("/health/hba1c", user.CreateHBA1CRecordHandler)
+	protected.GET("/health/hba1c", user.GetHBA1CRecordsHandler)
+	protected.PUT("/health/hba1c/:record_id", user.UpdateHBA1CRecordHandler)
+	protected.DELETE("/health/hba1c/:record_id", user.DeleteHBA1CRecordHandler)
+	protected.POST("/health/events", user.CreateHealthEventHandler)
+	protected.GET("/health/events", user.GetHealthEventsHandler)
+	protected.PUT("/health/events/:event_id", user.UpdateHealthEventHandler)
+	protected.DELETE("/health/events/:event_id", user.DeleteHealthEventHandler)
+	protected.POST("/health/glucose", user.CreateGlucoseReadingHandler)
+	protected.GET("/health/glucose", user.GetGlucoseReadingsHandler)
+	protected.PUT("/health/glucose/:reading_id", user.UpdateGlucoseReadingHandler)
+	protected.DELETE("/health/glucose/:reading_id", user.DeleteGlucoseReadingHandler)
+	protected.GET("/health/activity_type", user.GetActivityTypesHandler)
+	protected.POST("/health/log/activity", user.CreateActivityLogHandler)
+	protected.GET("/health/log/activity", user.GetActivityLogsHandler)
+	protected.PUT("/health/log/activity/:activity_id", user.UpdateActivityLogHandler)
+	protected.DELETE("/health/log/activity/:activity_id", user.DeleteActivityLogHandler)
+	protected.POST("/health/log/sleep", user.CreateSleepLogHandler)
+	protected.GET("/health/log/sleep", user.GetSleepLogsHandler)
+	protected.PUT("/health/log/sleep/:sleep_id", user.UpdateSleepLogHandler)
+	protected.DELETE("/health/log/sleep/:sleep_id", user.DeleteSleepLogHandler)
+	protected.POST("/health/medication", user.CreateUserMedicationHandler)
+	protected.GET("/health/medication", user.GetUserMedicationsHandler)
+	protected.PUT("/health/medication/:medication_id", user.UpdateUserMedicationHandler)
+	protected.DELETE("/health/medication/:medication_id", user.DeleteUserMedicationHandler)
+	protected.POST("/health/log/medication", user.CreateMedicationLogHandler)
+	protected.GET("/health/log/medication", user.GetMedicationLogsHandler)
+	protected.PUT("/health/log/medication/:medicationlog_id", user.UpdateMedicationLogHandler)
+	protected.DELETE("/health/log/medication/:medicationlog_id", user.DeleteMedicationLogHandler)
+	protected.POST("/health/log/meal", user.CreateMealLogHandler)
+	protected.GET("/health/log/meals", user.GetAllMealLogsHandler)
+	protected.GET("/health/log/meal/:meallog_id", user.GetMealLogHandler)
+	protected.PUT("/health/log/meal/:meallog_id", user.UpdateMealLogHandler)
+	protected.DELETE("/health/log/meal/:meallog_id", user.DeleteMealLogHandler)
 
 	return e
 }
