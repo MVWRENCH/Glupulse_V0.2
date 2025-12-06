@@ -82,8 +82,7 @@ DO UPDATE SET
     user_name_auth = EXCLUDED.user_name_auth,
     user_avatar_url = EXCLUDED.user_avatar_url,
     user_raw_data = EXCLUDED.user_raw_data,
-    user_last_login_at = EXCLUDED.user_last_login_at,
-    updated_at = CURRENT_TIMESTAMP
+    user_last_login_at = EXCLUDED.user_last_login_at
 RETURNING *;
 
 -- name: UpdateUserGoogleLink :exec
@@ -94,8 +93,7 @@ SET
   user_provider = $3,
   user_provider_user_id = $4,
   user_raw_data = $5,
-  user_email_auth = $6,
-  updated_at = NOW()
+  user_email_auth = $6
 WHERE 
   user_id = $7;
 
@@ -106,8 +104,7 @@ SET
   user_provider = NULL,
   user_provider_user_id = NULL,
   user_avatar_url = NULL,   -- Clear the avatar linked to Google
-  user_raw_data = NULL,     -- Clear the raw data from Google
-  updated_at = NOW()
+  user_raw_data = NULL     -- Clear the raw data from Google
 WHERE 
   user_id = $1;
 
@@ -157,8 +154,7 @@ INSERT INTO logs_auth (
 
 -- name: UpdateUserPassword :exec
 UPDATE users
-SET user_password = $2,
-    updated_at = NOW()
+SET user_password = $2
 WHERE user_id = $1;
 
 -- name: CreateEmailChangeRequest :one
@@ -185,14 +181,12 @@ WHERE
 
 -- name: UpdateUserEmail :exec
 UPDATE users
-SET user_email = $2,
-    updated_at = NOW()
+SET user_email = $2
 WHERE user_id = $1;
 
 -- name: UpdateUserUsername :exec
 UPDATE users
-SET user_username = $2,
-    updated_at = NOW()
+SET user_username = $2
 WHERE user_id = $1;
 
 -- name: DeleteUser :exec
@@ -441,13 +435,13 @@ WHERE cart_id = $1;
 
 -- name: SetCartSeller :exec
 UPDATE user_carts
-SET seller_id = $2, updated_at = NOW()
+SET seller_id = $2
 WHERE user_id = $1;
 
 -- name: ClearCartSeller :exec
 -- This is called when the last item is removed from a cart
 UPDATE user_carts
-SET seller_id = NULL, updated_at = NOW()
+SET seller_id = NULL
 WHERE cart_id = $1;
 
 -- name: GetFoodForUpdate :one
@@ -712,8 +706,7 @@ SET
     activity_changes = COALESCE($10, activity_changes),
     notes = COALESCE($11, notes),
     document_url = COALESCE($12, document_url),
-    trend = COALESCE($13, trend), -- Trend will be calculated on the client/server
-    updated_at = NOW()
+    trend = COALESCE($13, trend) -- Trend will be calculated on the client/server
 WHERE 
     hba1c_id = $1 AND user_id = $2
 RETURNING *;
@@ -771,8 +764,7 @@ SET
     symptoms = COALESCE($8, symptoms),
     treatments = COALESCE($9, treatments),
     required_medical_attention = COALESCE($10, required_medical_attention),
-    notes = COALESCE($11, notes),
-    updated_at = NOW()
+    notes = COALESCE($11, notes)
 WHERE 
     event_id = $1 AND user_id = $2
 RETURNING *;
@@ -828,8 +820,7 @@ SET
     flag_reason = COALESCE($10, flag_reason),
     is_outlier = COALESCE($11, is_outlier),
     notes = COALESCE($12, notes),
-    symptoms = COALESCE($13, symptoms),
-    updated_at = NOW()
+    symptoms = COALESCE($13, symptoms)
 WHERE 
     reading_id = $1 AND user_id = $2
 RETURNING *;
@@ -898,8 +889,7 @@ SET
     issue_description = COALESCE(sqlc.narg('issue_description'), issue_description),
     source = COALESCE(sqlc.narg('source'), source),
     sync_id = COALESCE(sqlc.narg('sync_id'), sync_id),
-    notes = COALESCE(sqlc.narg('notes'), notes),
-    updated_at = NOW()
+    notes = COALESCE(sqlc.narg('notes'), notes)
 WHERE 
     activity_id = $1 AND user_id = $2
 RETURNING *;
@@ -962,8 +952,7 @@ SET
     resting_heart_rate = COALESCE(sqlc.narg('resting_heart_rate'), resting_heart_rate),
     tags = COALESCE(sqlc.narg('tags'), tags),
     source = COALESCE(sqlc.narg('source'), source),
-    notes = COALESCE(sqlc.narg('notes'), notes),
-    updated_at = NOW()
+    notes = COALESCE(sqlc.narg('notes'), notes)
 WHERE 
     sleep_id = $1 AND user_id = $2
 RETURNING *;
@@ -1011,7 +1000,7 @@ RETURNING *;
 -- name: DeleteUserMedication :exec
 -- Soft deletes the medication configuration (sets is_active = false).
 UPDATE user_medications
-SET is_active = false, updated_at = NOW()
+SET is_active = false
 WHERE medication_id = $1 AND user_id = $2;
 
 -- name: CreateMedicationLog :one
@@ -1095,8 +1084,7 @@ SET
     total_fat_grams = COALESCE(sqlc.narg('total_fat_grams'), total_fat_grams),
     total_fiber_grams = COALESCE(sqlc.narg('total_fiber_grams'), total_fiber_grams),
     total_sugar_grams = COALESCE(sqlc.narg('total_sugar_grams'), total_sugar_grams),
-    tags = COALESCE(sqlc.narg('tags'), tags),
-    updated_at = NOW()
+    tags = COALESCE(sqlc.narg('tags'), tags)
 WHERE 
     meal_id = $1 AND user_id = $2
 RETURNING *;
@@ -1106,7 +1094,23 @@ SELECT * FROM user_meal_logs WHERE meal_id = $1 AND user_id = $2;
 
 -- name: GetMealLogs :many
 -- Retrieves all meal logs for the user, ordered newest first, with optional date range
-SELECT * FROM user_meal_logs
+SELECT 
+    ml.meal_id, 
+    ml.meal_timestamp, 
+    ml.meal_type_id,
+    mt.display_name as meal_type_name,
+    ml.description,
+    ml.total_calories,
+    ml.total_carbs_grams,
+    ml.total_protein_grams,
+    ml.total_fat_grams,
+    ml.total_fiber_grams,
+    ml.total_sugar_grams,
+    ml.tags,
+    ml.created_at,
+    ml.updated_at
+FROM user_meal_logs ml
+JOIN meal_types mt ON ml.meal_type_id = mt.meal_type_id
 WHERE user_id = $1
   AND meal_timestamp >= COALESCE(sqlc.narg('start_date'), '1900-01-01'::timestamptz)
   AND meal_timestamp <= COALESCE(sqlc.narg('end_date'), NOW() + INTERVAL '1 day')
@@ -1116,7 +1120,7 @@ ORDER BY meal_timestamp DESC;
 DELETE FROM user_meal_logs
 WHERE meal_id = $1 AND user_id = $2;
 
--- name: CreateMealItem :exec
+-- name: CreateMealItem :one
 INSERT INTO user_meal_items (
     meal_id,
     food_name,
@@ -1134,10 +1138,15 @@ INSERT INTO user_meal_items (
     sodium_mg,
     glycemic_index,
     glycemic_load,
-    food_category
+    food_category,
+    saturated_fat_grams,
+    monounsaturated_fat_grams,
+    polyunsaturated_fat_grams,
+    cholesterol_mg
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
-);
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+)
+RETURNING *;
 
 -- name: DeleteMealItemsByMealID :exec
 DELETE FROM user_meal_items WHERE meal_id = $1;
@@ -1146,6 +1155,439 @@ DELETE FROM user_meal_items WHERE meal_id = $1;
 SELECT * FROM user_meal_items
 WHERE meal_id = $1
 ORDER BY created_at ASC;
+
+/* ====================================================================
+                     AI Recommendation Queries
+==================================================================== */
+
+-- name: CreateRecommendationSession :exec
+--Inserts a new recommendation session after AI generates recommendations. Called in storeRecommendationSession func in recommendation.go
+INSERT INTO recommendation_sessions (
+    session_id,
+    user_id,
+    requested_types,
+    meal_type,
+    food_category_codes,
+    food_preferences,
+    activity_type_codes,
+    activity_preferences,
+    insights_question,
+    analysis_summary,
+    insights_response,
+    latest_glucose_value,
+    latest_hba1c,
+    user_condition_id,
+    ai_model_used,
+    ai_confidence_score
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+);
+
+-- name: CreateRecommendedFood :exec
+-- After AI picks foods, this stores each recommendation with reasoning. Called in processFoodRecommendations func in recommendation.go
+INSERT INTO recommended_foods (
+    recommendation_food_id,
+    session_id,
+    food_id,
+    reason,
+    nutrition_highlight,
+    suggested_meal_type,
+    suggested_portion_size,
+    recommendation_rank,
+    confidence_score
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+);
+
+-- name: CreateRecommendedActivity :exec
+-- After AI picks activities, this stores each recommendation with reasoning. Called in processActivityRecommendations func in recommendation.go
+INSERT INTO recommended_activities (
+    recommendation_activity_id,
+    session_id,
+    activity_id,
+    reason,
+    recommended_duration_minutes,
+    recommended_intensity,
+    safety_notes,
+    best_time_of_day,
+    glucose_management_tip,
+    recommendation_rank,
+    confidence_score
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+);
+
+-- name: ListRecommendedFoods :many
+-- Fetches foods from database based on user's filters BEFORE sending to AI. 
+/*
+Filters applied:
+
+is_available = true → Only show foods in stock
+food_category IN [...] → Only requested categories (e.g., "ASIAN_GENERIC")
+glycemic_load <= max → Safety limit (e.g., GL < 10 for diabetics)
+carbs_grams <= max → Carb limit (e.g., < 30g per meal)
+
+Ordering:
+
+Primary: Low glycemic load first (safer for blood sugar)
+Secondary: High fiber (better for glucose control)
+*/
+SELECT * FROM foods
+WHERE is_available = true
+    AND (
+        sqlc.narg('food_category')::TEXT[] IS NULL 
+        OR food_category::TEXT[] && sqlc.narg('food_category')::TEXT[]
+    )
+    AND (
+        sqlc.narg('max_glycemic_load')::NUMERIC IS NULL 
+        OR glycemic_load <= sqlc.narg('max_glycemic_load')
+    )
+    AND (
+        sqlc.narg('max_carbs')::NUMERIC IS NULL 
+        OR carbs_grams <= sqlc.narg('max_carbs')
+    )
+ORDER BY 
+    CASE 
+        WHEN glycemic_load IS NOT NULL THEN glycemic_load
+        ELSE 999
+    END ASC,
+    fiber_grams DESC,
+    protein_grams DESC
+LIMIT sqlc.arg(limit_count)::INTEGER;
+
+-- name: ListRecommendedActivities :many
+SELECT 
+    a.id,
+    a.activity_code,
+    a.activity_name,
+    a.description,
+    a.image_url,
+    a.met_value,
+    a.measurement_unit,
+    a.recommended_min_value
+FROM activities a
+WHERE (
+    sqlc.arg(activity_codes)::TEXT[] IS NULL
+    OR a.activity_code = ANY(sqlc.arg(activity_codes)::TEXT[])
+)
+ORDER BY a.met_value ASC
+LIMIT 20;
+
+-- name: GetRecommendationSession :one
+SELECT * FROM recommendation_sessions
+WHERE session_id = $1;
+
+-- name: GetRecommendedFoodsInSession :many
+SELECT 
+    rf.*,
+    f.food_name,
+    f.seller_id,
+    f.description,
+    f.price,
+    f.currency,
+    f.photo_url,
+    f.thumbnail_url,
+    f.is_available,
+    f.tags,
+    f.serving_size,
+    f.calories,
+    f.carbs_grams,
+    f.fiber_grams,
+    f.protein_grams,
+    f.fat_grams,
+    f.sugar_grams,
+    f.sodium_mg,
+    f.glycemic_index,
+    f.glycemic_load
+FROM recommended_foods rf
+JOIN foods f ON rf.food_id = f.food_id
+WHERE rf.session_id = $1
+ORDER BY rf.recommendation_rank ASC;
+
+-- name: GetRecommendedActivitiesInSession :many
+SELECT 
+    ra.*,
+    a.activity_code,
+    a.activity_name,
+    a.description,
+    a.image_url,
+    a.met_value,
+    a.measurement_unit
+FROM recommended_activities ra
+JOIN activities a ON ra.activity_id = a.id
+WHERE ra.session_id = $1
+ORDER BY ra.recommendation_rank ASC;
+
+-- name: GetUserRecommendationHistory :many
+SELECT 
+    rs.session_id,
+    rs.created_at,
+    rs.analysis_summary,
+    rs.meal_type,
+    rs.requested_types,
+    rs.overall_feedback,
+    COUNT(DISTINCT rf.food_id) as foods_count,
+    COUNT(DISTINCT ra.activity_id) as activities_count
+FROM recommendation_sessions rs
+LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
+LEFT JOIN recommended_activities ra ON rs.session_id = ra.session_id
+WHERE rs.user_id = $1
+GROUP BY rs.session_id
+ORDER BY rs.created_at DESC
+LIMIT sqlc.arg(limit_count)::INTEGER;
+
+-- name: MarkFoodAddedToCart :exec
+UPDATE recommended_foods
+SET was_added_to_cart = true,
+    last_interaction_at = NOW()
+WHERE session_id = $1 AND food_id = $2;
+
+-- name: MarkFoodPurchased :exec
+UPDATE recommended_foods
+SET was_purchased = true,
+    last_interaction_at = NOW()
+WHERE session_id = $1 AND food_id = $2;
+
+-- name: MarkActivityCompleted :exec
+UPDATE recommended_activities
+SET was_completed = true,
+    completed_at = NOW(),
+    actual_duration_minutes = $3,
+    last_interaction_at = NOW()
+WHERE session_id = $1 AND activity_id = $2;
+
+-- name: AddFoodFeedback :exec
+UPDATE recommended_foods
+SET user_rating = $3,
+    feedback = $4,
+    feedback_notes = $5,
+    glucose_spike_after_eating = $6
+WHERE session_id = $1 AND food_id = $2;
+
+-- name: AddActivityFeedback :exec
+UPDATE recommended_activities
+SET user_rating = $3,
+    feedback = $4,
+    feedback_notes = $5,
+    glucose_change_after_activity = $6
+WHERE session_id = $1 AND activity_id = $2;
+
+-- name: AddSessionFeedback :exec
+UPDATE recommendation_sessions
+SET overall_feedback = $2,
+    feedback_notes = $3
+WHERE session_id = $1;
+
+-- name: GetLatestGlucoseReading :one
+SELECT * FROM user_glucose_readings
+WHERE user_id = $1
+ORDER BY reading_timestamp DESC
+LIMIT 1;
+
+-- name: GetLatestHBA1CRecord :one
+SELECT * FROM user_hba1c_records
+WHERE user_id = $1
+ORDER BY test_date DESC
+LIMIT 1;
+
+-- name: GetRecommendationEffectiveness :many
+SELECT * FROM recommendation_effectiveness
+WHERE user_id = $1
+    AND recommendation_date >= sqlc.arg(start_date)::DATE
+ORDER BY recommendation_date DESC;
+
+-- name: GetTopRatedFoods :many
+SELECT 
+    f.food_id,
+    f.food_name,
+    f.photo_url,
+    COUNT(rf.recommendation_food_id) as times_recommended,
+    AVG(rf.user_rating) as avg_rating,
+    COUNT(rf.recommendation_food_id) FILTER (WHERE rf.was_purchased = true) as purchase_count
+FROM foods f
+JOIN recommended_foods rf ON f.food_id = rf.food_id
+JOIN recommendation_sessions rs ON rf.session_id = rs.session_id
+WHERE rs.user_id = $1
+    AND rf.user_rating IS NOT NULL
+GROUP BY f.food_id
+HAVING COUNT(rf.user_rating) >= 3
+ORDER BY AVG(rf.user_rating) DESC, COUNT(rf.was_purchased) DESC
+LIMIT 10;
+
+-- name: GetTopRatedActivities :many
+SELECT 
+    a.id,
+    a.activity_name,
+    a.image_url,
+    COUNT(ra.recommendation_activity_id) as times_recommended,
+    AVG(ra.user_rating) as avg_rating,
+    COUNT(ra.recommendation_activity_id) FILTER (WHERE ra.was_completed = true) as completion_count
+FROM activities a
+JOIN recommended_activities ra ON a.id = ra.activity_id
+JOIN recommendation_sessions rs ON ra.session_id = rs.session_id
+WHERE rs.user_id = $1
+    AND ra.user_rating IS NOT NULL
+GROUP BY a.id
+HAVING COUNT(ra.user_rating) >= 3
+ORDER BY AVG(ra.user_rating) DESC, COUNT(ra.was_completed) DESC
+LIMIT 10;
+
+
+-- name: GetUserDemographics :one
+SELECT 
+    CAST(EXTRACT(YEAR FROM AGE(CURRENT_DATE, user_DOB)) AS INTEGER) as age,
+    user_gender
+FROM users
+WHERE user_id = $1;
+
+-- =================================================================================
+-- RECOMMENDATION SESSION HISTORY QUERIES
+-- =================================================================================
+
+-- name: GetRecommendationSessions :many
+SELECT 
+    session_id,
+    user_id,
+    requested_types,
+    meal_type,
+    food_category_codes,
+    food_preferences,
+    activity_type_codes,
+    activity_preferences,
+    insights_question,
+    analysis_summary,
+    insights_response,
+    latest_glucose_value,
+    latest_hba1c,
+    user_condition_id,
+    ai_model_used,
+    ai_confidence_score,
+    overall_feedback,
+    feedback_notes,
+    created_at,
+    expires_at
+FROM recommendation_sessions
+WHERE user_id = $1
+    AND (
+        sqlc.arg(include_expired)::BOOLEAN = true 
+        OR expires_at > NOW()
+    )
+ORDER BY created_at DESC
+LIMIT sqlc.arg(limit_count)::INTEGER
+OFFSET sqlc.arg(offset_count)::INTEGER;
+
+-- name: GetRecommendationSessionsCount :one
+SELECT COUNT(*)
+FROM recommendation_sessions
+WHERE user_id = $1
+    AND (
+        sqlc.arg(include_expired)::BOOLEAN = true 
+        OR expires_at > NOW()
+    );
+
+-- name: GetSessionFoodMetrics :one
+SELECT 
+    COUNT(*) as foods_count,
+    COUNT(*) FILTER (WHERE was_purchased = true) as foods_purchased,
+    COUNT(*) FILTER (WHERE was_added_to_cart = true) as foods_added_to_cart,
+    AVG(user_rating) FILTER (WHERE user_rating IS NOT NULL) as avg_rating,
+    AVG(glucose_spike_after_eating) FILTER (WHERE glucose_spike_after_eating IS NOT NULL) as avg_glucose_spike
+FROM recommended_foods
+WHERE session_id = $1;
+
+-- name: GetSessionActivityMetrics :one
+SELECT 
+    COUNT(*) as activities_count,
+    COUNT(*) FILTER (WHERE was_completed = true) as activities_completed,
+    AVG(user_rating) FILTER (WHERE user_rating IS NOT NULL) as avg_rating,
+    AVG(glucose_change_after_activity) FILTER (WHERE glucose_change_after_activity IS NOT NULL) as avg_glucose_change
+FROM recommended_activities
+WHERE session_id = $1;
+
+-- name: ExpireRecommendationSession :exec
+UPDATE recommendation_sessions
+SET expires_at = NOW()
+WHERE session_id = $1;
+
+-- name: GetRecentSessionsByCondition :many
+-- Get recent sessions for users with similar health conditions
+-- Useful for analytics and learning patterns
+SELECT 
+    rs.session_id,
+    rs.user_id,
+    rs.user_condition_id,
+    rs.meal_type,
+    rs.food_category_codes,
+    rs.created_at,
+    COUNT(DISTINCT rf.food_id) as foods_count,
+    COUNT(DISTINCT rf.food_id) FILTER (WHERE rf.was_purchased = true) as foods_purchased,
+    AVG(rf.user_rating) FILTER (WHERE rf.user_rating IS NOT NULL) as avg_food_rating
+FROM recommendation_sessions rs
+LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
+WHERE rs.user_condition_id = sqlc.arg(condition_id)::INTEGER
+    AND rs.created_at >= NOW() - INTERVAL '30 days'
+    AND rs.expires_at > NOW()
+GROUP BY rs.session_id
+ORDER BY rs.created_at DESC
+LIMIT 50;
+
+-- name: GetSessionsByDateRange :many
+-- Get user's sessions within a date range
+SELECT 
+    session_id,
+    created_at,
+    requested_types,
+    meal_type,
+    analysis_summary,
+    overall_feedback
+FROM recommendation_sessions
+WHERE user_id = $1
+    AND created_at >= sqlc.arg(start_date)::TIMESTAMPTZ
+    AND created_at <= sqlc.arg(end_date)::TIMESTAMPTZ
+ORDER BY created_at DESC;
+
+-- name: GetSessionEffectivenessStats :one
+-- Get overall effectiveness statistics for a user
+SELECT 
+    COUNT(DISTINCT rs.session_id) as total_sessions,
+    COUNT(DISTINCT rf.food_id) as total_food_recommendations,
+    COUNT(DISTINCT rf.food_id) FILTER (WHERE rf.was_purchased = true) as foods_purchased,
+    COUNT(DISTINCT ra.activity_id) as total_activity_recommendations,
+    COUNT(DISTINCT ra.activity_id) FILTER (WHERE ra.was_completed = true) as activities_completed,
+    AVG(rf.user_rating) FILTER (WHERE rf.user_rating IS NOT NULL) as avg_food_rating,
+    AVG(ra.user_rating) FILTER (WHERE ra.user_rating IS NOT NULL) as avg_activity_rating,
+    AVG(rf.glucose_spike_after_eating) FILTER (WHERE rf.glucose_spike_after_eating IS NOT NULL) as avg_glucose_spike
+FROM recommendation_sessions rs
+LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
+LEFT JOIN recommended_activities ra ON rs.session_id = ra.session_id
+WHERE rs.user_id = $1
+    AND rs.created_at >= NOW() - INTERVAL '90 days';
+
+-- name: SearchRecommendationSessions :many
+-- Search sessions by various criteria
+SELECT 
+    rs.session_id,
+    rs.created_at,
+    rs.requested_types,
+    rs.meal_type,
+    rs.food_category_codes,
+    rs.analysis_summary,
+    rs.overall_feedback
+FROM recommendation_sessions rs
+WHERE rs.user_id = $1
+    AND (
+        sqlc.arg(search_query)::TEXT IS NULL
+        OR rs.analysis_summary ILIKE '%' || sqlc.arg(search_query) || '%'
+        OR sqlc.arg(search_query) = ANY(rs.requested_types)
+        OR sqlc.arg(search_query) = ANY(rs.food_category_codes)
+        OR rs.meal_type = sqlc.arg(search_query)
+    )
+    AND (
+        sqlc.arg(feedback_filter)::TEXT IS NULL
+        OR rs.overall_feedback = sqlc.arg(feedback_filter)
+    )
+ORDER BY rs.created_at DESC
+LIMIT 50;
 
 /* ====================================================================
                            Unused Queries

@@ -330,22 +330,26 @@ type UpdateMedicationLogRequest struct {
 }
 
 type MealItemRequest struct {
-	FoodName         string   `json:"food_name" validate:"required"`
-	FoodID           *string  `json:"food_id"` // Optional link to master food
-	Seller           *string  `json:"seller"`
-	ServingSize      *string  `json:"serving_size"`
-	ServingSizeGrams *float64 `json:"serving_size_grams"`
-	Quantity         float64  `json:"quantity" validate:"required"` // Default 1.0
-	Calories         *int32   `json:"calories"`
-	CarbsGrams       *float64 `json:"carbs_grams"`
-	ProteinGrams     *float64 `json:"protein_grams"`
-	FatGrams         *float64 `json:"fat_grams"`
-	FiberGrams       *float64 `json:"fiber_grams"`
-	SugarGrams       *float64 `json:"sugar_grams"`
-	SodiumMg         *int32   `json:"sodium_mg"`
-	GlycemicIndex    *int32   `json:"glycemic_index"`
-	GlycemicLoad     *float64 `json:"glycemic_load"`
-	FoodCategory     *string  `json:"food_category"`
+	FoodName                string   `json:"food_name" validate:"required"`
+	FoodID                  *string  `json:"food_id"` // Optional link to master food
+	Seller                  *string  `json:"seller"`
+	ServingSize             *string  `json:"serving_size"`
+	ServingSizeGrams        *float64 `json:"serving_size_grams"`
+	Quantity                float64  `json:"quantity" validate:"required"` // Default 1.0
+	Calories                *int32   `json:"calories"`
+	CarbsGrams              *float64 `json:"carbs_grams"`
+	ProteinGrams            *float64 `json:"protein_grams"`
+	FatGrams                *float64 `json:"fat_grams"`
+	FiberGrams              *float64 `json:"fiber_grams"`
+	SugarGrams              *float64 `json:"sugar_grams"`
+	SodiumMg                *int32   `json:"sodium_mg"`
+	GlycemicIndex           *int32   `json:"glycemic_index"`
+	GlycemicLoad            *float64 `json:"glycemic_load"`
+	FoodCategory            *string  `json:"food_category"`
+	SaturatedFatGrams       *float64 `json:"saturated_fat_grams"`
+	MonounsaturatedFatGrams *float64 `json:"monounsaturated_fat_grams"`
+	PolyunsaturatedFatGrams *float64 `json:"polyunsaturated_fat_grams"`
+	CholesterolMg           *int32   `json:"cholesterol_mg"`
 }
 
 // Request struct for Create/Update
@@ -358,8 +362,8 @@ type FullMealLogRequest struct {
 }
 
 type MealLogWithItemsResponse struct {
-	database.UserMealLog
-	Items []database.UserMealItem `json:"items"`
+	MealLog database.GetMealLogsRow `json:"meal_log"`
+	Items   []database.UserMealItem `json:"items"`
 }
 
 // mapRequestToParams handles the complex logic of converting the RequestHealthProfile (pointers)
@@ -2239,39 +2243,69 @@ func CreateMealLogHandler(c echo.Context) error {
 	}
 
 	// 4. Insert Items
-	for _, item := range req.Items {
-		foodUUID, _ := utility.StringToPgtypeUUID(*item.FoodID) // Optional
+	var createdItems []database.UserMealItem
 
-		err := qtx.CreateMealItem(ctx, database.CreateMealItemParams{
-			MealID:           mealLog.MealID,
-			FoodName:         item.FoodName,
-			FoodID:           foodUUID, // Can be invalid (NULL) if string was empty
-			Seller:           pgtype.Text{String: *item.Seller, Valid: item.Seller != nil},
-			ServingSize:      pgtype.Text{String: *item.ServingSize, Valid: item.ServingSize != nil},
-			ServingSizeGrams: utility.FloatToNumeric(*item.ServingSizeGrams),
-			Quantity:         utility.FloatToNumeric(item.Quantity),
-			Calories:         pgtype.Int4{Int32: *item.Calories, Valid: item.Calories != nil},
-			CarbsGrams:       utility.FloatToNumeric(*item.CarbsGrams),
-			FiberGrams:       utility.FloatToNumeric(*item.FiberGrams),
-			ProteinGrams:     utility.FloatToNumeric(*item.ProteinGrams),
-			FatGrams:         utility.FloatToNumeric(*item.FatGrams),
-			SugarGrams:       utility.FloatToNumeric(*item.SugarGrams),
-			SodiumMg:         pgtype.Int4{Int32: *item.SodiumMg, Valid: item.SodiumMg != nil},
-			GlycemicIndex:    pgtype.Int4{Int32: *item.GlycemicIndex, Valid: item.GlycemicIndex != nil},
-			GlycemicLoad:     utility.FloatToNumeric(*item.GlycemicLoad),
-			FoodCategory:     pgtype.Text{String: *item.FoodCategory, Valid: item.FoodCategory != nil},
-		})
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to insert meal item")
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save meal items"})
+	for _, item := range req.Items {
+		foodUUID, _ := utility.StringToPgtypeUUID(*item.FoodID)
+		itemParams := database.CreateMealItemParams{
+			MealID:                  mealLog.MealID,
+			FoodName:                item.FoodName,
+			FoodID:                  foodUUID, // Can be invalid (NULL) if string was empty
+			Seller:                  pgtype.Text{String: *item.Seller, Valid: item.Seller != nil},
+			ServingSize:             pgtype.Text{String: *item.ServingSize, Valid: item.ServingSize != nil},
+			ServingSizeGrams:        utility.FloatToNumeric(*item.ServingSizeGrams),
+			Quantity:                utility.FloatToNumeric(item.Quantity),
+			Calories:                pgtype.Int4{Int32: *item.Calories, Valid: item.Calories != nil},
+			CarbsGrams:              utility.FloatToNumeric(*item.CarbsGrams),
+			FiberGrams:              utility.FloatToNumeric(*item.FiberGrams),
+			ProteinGrams:            utility.FloatToNumeric(*item.ProteinGrams),
+			FatGrams:                utility.FloatToNumeric(*item.FatGrams),
+			SugarGrams:              utility.FloatToNumeric(*item.SugarGrams),
+			SodiumMg:                pgtype.Int4{Int32: *item.SodiumMg, Valid: item.SodiumMg != nil},
+			GlycemicIndex:           pgtype.Int4{Int32: *item.GlycemicIndex, Valid: item.GlycemicIndex != nil},
+			GlycemicLoad:            utility.FloatToNumeric(*item.GlycemicLoad),
+			FoodCategory:            pgtype.Text{String: *item.FoodCategory, Valid: item.FoodCategory != nil},
+			SaturatedFatGrams:       utility.FloatToNumeric(*item.SaturatedFatGrams),
+			MonounsaturatedFatGrams: utility.FloatToNumeric(*item.MonounsaturatedFatGrams),
+			PolyunsaturatedFatGrams: utility.FloatToNumeric(*item.PolyunsaturatedFatGrams),
+			CholesterolMg:           pgtype.Int4{Int32: *item.CholesterolMg, Valid: item.CholesterolMg != nil},
 		}
+		newItem, err := qtx.CreateMealItem(ctx, itemParams)
+		if err != nil {
+			log.Error().Err(err).Msgf("Failed to create meal item %s", item.FoodName)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save item details"})
+		}
+		createdItems = append(createdItems, newItem)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Commit failed"})
 	}
 
-	return c.JSON(http.StatusCreated, mealLog)
+	mealTypeName := utility.GetMealTypeName(mealLog.MealTypeID)
+
+	// 3. Manually construct the expected struct
+	responseLog := database.GetMealLogsRow{
+		MealID:            mealLog.MealID,
+		MealTimestamp:     mealLog.MealTimestamp,
+		MealTypeID:        mealLog.MealTypeID,
+		MealTypeName:      mealTypeName,
+		Description:       mealLog.Description,
+		TotalCalories:     mealLog.TotalCalories,
+		TotalCarbsGrams:   mealLog.TotalCarbsGrams,
+		TotalProteinGrams: mealLog.TotalProteinGrams,
+		TotalFatGrams:     mealLog.TotalFatGrams,
+		TotalFiberGrams:   mealLog.TotalFiberGrams,
+		TotalSugarGrams:   mealLog.TotalSugarGrams,
+		Tags:              mealLog.Tags,
+		CreatedAt:         mealLog.CreatedAt,
+		UpdatedAt:         mealLog.UpdatedAt,
+	}
+
+	return c.JSON(http.StatusCreated, MealLogWithItemsResponse{
+		MealLog: responseLog,
+		Items:   createdItems,
+	})
 }
 
 // GetMealLogsHandler handles GET /health/meals
@@ -2339,8 +2373,8 @@ func GetMealLogHandler(c echo.Context) error {
 
 	// 4. Return Combined Response
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"meal_log": mealLog,
-		"items":    items,
+		"items":     items,
+		"_meal_log": mealLog,
 	})
 }
 
@@ -2408,39 +2442,68 @@ func UpdateMealLogHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update items"})
 	}
 
+	var createdItems []database.UserMealItem
+
 	for _, item := range req.Items {
 		foodUUID, _ := utility.StringToPgtypeUUID(*item.FoodID)
-
-		err := qtx.CreateMealItem(ctx, database.CreateMealItemParams{
-			MealID:           mealID, // Link to existing ID
-			FoodName:         item.FoodName,
-			FoodID:           foodUUID,
-			Seller:           pgtype.Text{String: *item.Seller, Valid: item.Seller != nil},
-			ServingSize:      pgtype.Text{String: *item.ServingSize, Valid: item.ServingSize != nil},
-			ServingSizeGrams: utility.FloatToNumeric(*item.ServingSizeGrams),
-			Quantity:         utility.FloatToNumeric(item.Quantity),
-			Calories:         pgtype.Int4{Int32: *item.Calories, Valid: item.Calories != nil},
-			CarbsGrams:       utility.FloatToNumeric(*item.CarbsGrams),
-			FiberGrams:       utility.FloatToNumeric(*item.FiberGrams),
-			ProteinGrams:     utility.FloatToNumeric(*item.ProteinGrams),
-			FatGrams:         utility.FloatToNumeric(*item.FatGrams),
-			SugarGrams:       utility.FloatToNumeric(*item.SugarGrams),
-			SodiumMg:         pgtype.Int4{Int32: *item.SodiumMg, Valid: item.SodiumMg != nil},
-			GlycemicIndex:    pgtype.Int4{Int32: *item.GlycemicIndex, Valid: item.GlycemicIndex != nil},
-			GlycemicLoad:     utility.FloatToNumeric(*item.GlycemicLoad),
-			FoodCategory:     pgtype.Text{String: *item.FoodCategory, Valid: item.FoodCategory != nil},
-		})
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to insert new item during update")
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save items"})
+		itemParams := database.CreateMealItemParams{
+			MealID:                  mealID, // Link to existing ID
+			FoodName:                item.FoodName,
+			FoodID:                  foodUUID,
+			Seller:                  pgtype.Text{String: *item.Seller, Valid: item.Seller != nil},
+			ServingSize:             pgtype.Text{String: *item.ServingSize, Valid: item.ServingSize != nil},
+			ServingSizeGrams:        utility.FloatToNumeric(*item.ServingSizeGrams),
+			Quantity:                utility.FloatToNumeric(item.Quantity),
+			Calories:                pgtype.Int4{Int32: *item.Calories, Valid: item.Calories != nil},
+			CarbsGrams:              utility.FloatToNumeric(*item.CarbsGrams),
+			FiberGrams:              utility.FloatToNumeric(*item.FiberGrams),
+			ProteinGrams:            utility.FloatToNumeric(*item.ProteinGrams),
+			FatGrams:                utility.FloatToNumeric(*item.FatGrams),
+			SugarGrams:              utility.FloatToNumeric(*item.SugarGrams),
+			SodiumMg:                pgtype.Int4{Int32: *item.SodiumMg, Valid: item.SodiumMg != nil},
+			GlycemicIndex:           pgtype.Int4{Int32: *item.GlycemicIndex, Valid: item.GlycemicIndex != nil},
+			GlycemicLoad:            utility.FloatToNumeric(*item.GlycemicLoad),
+			FoodCategory:            pgtype.Text{String: *item.FoodCategory, Valid: item.FoodCategory != nil},
+			SaturatedFatGrams:       utility.FloatToNumeric(*item.SaturatedFatGrams),
+			MonounsaturatedFatGrams: utility.FloatToNumeric(*item.MonounsaturatedFatGrams),
+			PolyunsaturatedFatGrams: utility.FloatToNumeric(*item.PolyunsaturatedFatGrams),
+			CholesterolMg:           pgtype.Int4{Int32: *item.CholesterolMg, Valid: item.CholesterolMg != nil},
 		}
+		newItem, err := qtx.CreateMealItem(ctx, itemParams)
+		if err != nil {
+			log.Error().Err(err).Msgf("Failed to create meal item %s", item.FoodName)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save item details"})
+		}
+		createdItems = append(createdItems, newItem)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Commit failed"})
 	}
 
-	return c.JSON(http.StatusOK, mealLog)
+	mealTypeName := utility.GetMealTypeName(mealLog.MealTypeID)
+
+	responseLog := database.GetMealLogsRow{
+		MealID:            mealLog.MealID,
+		MealTimestamp:     mealLog.MealTimestamp,
+		MealTypeID:        mealLog.MealTypeID,
+		MealTypeName:      mealTypeName,
+		Description:       mealLog.Description,
+		TotalCalories:     mealLog.TotalCalories,
+		TotalCarbsGrams:   mealLog.TotalCarbsGrams,
+		TotalProteinGrams: mealLog.TotalProteinGrams,
+		TotalFatGrams:     mealLog.TotalFatGrams,
+		TotalFiberGrams:   mealLog.TotalFiberGrams,
+		TotalSugarGrams:   mealLog.TotalSugarGrams,
+		Tags:              mealLog.Tags,
+		CreatedAt:         mealLog.CreatedAt,
+		UpdatedAt:         mealLog.UpdatedAt,
+	}
+
+	return c.JSON(http.StatusCreated, MealLogWithItemsResponse{
+		MealLog: responseLog,
+		Items:   createdItems,
+	})
 }
 
 // DeleteMealLogHandler handles DELETE /health/meals/:meal_id

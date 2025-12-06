@@ -12,6 +12,84 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addActivityFeedback = `-- name: AddActivityFeedback :exec
+UPDATE recommended_activities
+SET user_rating = $3,
+    feedback = $4,
+    feedback_notes = $5,
+    glucose_change_after_activity = $6
+WHERE session_id = $1 AND activity_id = $2
+`
+
+type AddActivityFeedbackParams struct {
+	SessionID                  pgtype.UUID `json:"session_id"`
+	ActivityID                 int32       `json:"activity_id"`
+	UserRating                 pgtype.Int4 `json:"user_rating"`
+	Feedback                   pgtype.Text `json:"feedback"`
+	FeedbackNotes              pgtype.Text `json:"feedback_notes"`
+	GlucoseChangeAfterActivity pgtype.Int4 `json:"glucose_change_after_activity"`
+}
+
+func (q *Queries) AddActivityFeedback(ctx context.Context, arg AddActivityFeedbackParams) error {
+	_, err := q.db.Exec(ctx, addActivityFeedback,
+		arg.SessionID,
+		arg.ActivityID,
+		arg.UserRating,
+		arg.Feedback,
+		arg.FeedbackNotes,
+		arg.GlucoseChangeAfterActivity,
+	)
+	return err
+}
+
+const addFoodFeedback = `-- name: AddFoodFeedback :exec
+UPDATE recommended_foods
+SET user_rating = $3,
+    feedback = $4,
+    feedback_notes = $5,
+    glucose_spike_after_eating = $6
+WHERE session_id = $1 AND food_id = $2
+`
+
+type AddFoodFeedbackParams struct {
+	SessionID               pgtype.UUID `json:"session_id"`
+	FoodID                  pgtype.UUID `json:"food_id"`
+	UserRating              pgtype.Int4 `json:"user_rating"`
+	Feedback                pgtype.Text `json:"feedback"`
+	FeedbackNotes           pgtype.Text `json:"feedback_notes"`
+	GlucoseSpikeAfterEating pgtype.Int4 `json:"glucose_spike_after_eating"`
+}
+
+func (q *Queries) AddFoodFeedback(ctx context.Context, arg AddFoodFeedbackParams) error {
+	_, err := q.db.Exec(ctx, addFoodFeedback,
+		arg.SessionID,
+		arg.FoodID,
+		arg.UserRating,
+		arg.Feedback,
+		arg.FeedbackNotes,
+		arg.GlucoseSpikeAfterEating,
+	)
+	return err
+}
+
+const addSessionFeedback = `-- name: AddSessionFeedback :exec
+UPDATE recommendation_sessions
+SET overall_feedback = $2,
+    feedback_notes = $3
+WHERE session_id = $1
+`
+
+type AddSessionFeedbackParams struct {
+	SessionID       pgtype.UUID `json:"session_id"`
+	OverallFeedback pgtype.Text `json:"overall_feedback"`
+	FeedbackNotes   pgtype.Text `json:"feedback_notes"`
+}
+
+func (q *Queries) AddSessionFeedback(ctx context.Context, arg AddSessionFeedbackParams) error {
+	_, err := q.db.Exec(ctx, addSessionFeedback, arg.SessionID, arg.OverallFeedback, arg.FeedbackNotes)
+	return err
+}
+
 const assignUserRole = `-- name: AssignUserRole :exec
 INSERT INTO user_roles (user_id, role_id)
 SELECT $1, role_id FROM roles WHERE role_name = $2
@@ -105,7 +183,7 @@ func (q *Queries) ClearCart(ctx context.Context, cartID pgtype.UUID) error {
 
 const clearCartSeller = `-- name: ClearCartSeller :exec
 UPDATE user_carts
-SET seller_id = NULL, updated_at = NOW()
+SET seller_id = NULL
 WHERE cart_id = $1
 `
 
@@ -537,7 +615,7 @@ func (q *Queries) CreateHealthEvent(ctx context.Context, arg CreateHealthEventPa
 	return i, err
 }
 
-const createMealItem = `-- name: CreateMealItem :exec
+const createMealItem = `-- name: CreateMealItem :one
 INSERT INTO user_meal_items (
     meal_id,
     food_name,
@@ -555,34 +633,43 @@ INSERT INTO user_meal_items (
     sodium_mg,
     glycemic_index,
     glycemic_load,
-    food_category
+    food_category,
+    saturated_fat_grams,
+    monounsaturated_fat_grams,
+    polyunsaturated_fat_grams,
+    cholesterol_mg
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 )
+RETURNING item_id, meal_id, food_name, food_id, seller, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, created_at, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg
 `
 
 type CreateMealItemParams struct {
-	MealID           pgtype.UUID    `json:"meal_id"`
-	FoodName         string         `json:"food_name"`
-	FoodID           pgtype.UUID    `json:"food_id"`
-	Seller           pgtype.Text    `json:"seller"`
-	ServingSize      pgtype.Text    `json:"serving_size"`
-	ServingSizeGrams pgtype.Numeric `json:"serving_size_grams"`
-	Quantity         pgtype.Numeric `json:"quantity"`
-	Calories         pgtype.Int4    `json:"calories"`
-	CarbsGrams       pgtype.Numeric `json:"carbs_grams"`
-	FiberGrams       pgtype.Numeric `json:"fiber_grams"`
-	ProteinGrams     pgtype.Numeric `json:"protein_grams"`
-	FatGrams         pgtype.Numeric `json:"fat_grams"`
-	SugarGrams       pgtype.Numeric `json:"sugar_grams"`
-	SodiumMg         pgtype.Int4    `json:"sodium_mg"`
-	GlycemicIndex    pgtype.Int4    `json:"glycemic_index"`
-	GlycemicLoad     pgtype.Numeric `json:"glycemic_load"`
-	FoodCategory     pgtype.Text    `json:"food_category"`
+	MealID                  pgtype.UUID    `json:"meal_id"`
+	FoodName                string         `json:"food_name"`
+	FoodID                  pgtype.UUID    `json:"food_id"`
+	Seller                  pgtype.Text    `json:"seller"`
+	ServingSize             pgtype.Text    `json:"serving_size"`
+	ServingSizeGrams        pgtype.Numeric `json:"serving_size_grams"`
+	Quantity                pgtype.Numeric `json:"quantity"`
+	Calories                pgtype.Int4    `json:"calories"`
+	CarbsGrams              pgtype.Numeric `json:"carbs_grams"`
+	FiberGrams              pgtype.Numeric `json:"fiber_grams"`
+	ProteinGrams            pgtype.Numeric `json:"protein_grams"`
+	FatGrams                pgtype.Numeric `json:"fat_grams"`
+	SugarGrams              pgtype.Numeric `json:"sugar_grams"`
+	SodiumMg                pgtype.Int4    `json:"sodium_mg"`
+	GlycemicIndex           pgtype.Int4    `json:"glycemic_index"`
+	GlycemicLoad            pgtype.Numeric `json:"glycemic_load"`
+	FoodCategory            pgtype.Text    `json:"food_category"`
+	SaturatedFatGrams       pgtype.Numeric `json:"saturated_fat_grams"`
+	MonounsaturatedFatGrams pgtype.Numeric `json:"monounsaturated_fat_grams"`
+	PolyunsaturatedFatGrams pgtype.Numeric `json:"polyunsaturated_fat_grams"`
+	CholesterolMg           pgtype.Int4    `json:"cholesterol_mg"`
 }
 
-func (q *Queries) CreateMealItem(ctx context.Context, arg CreateMealItemParams) error {
-	_, err := q.db.Exec(ctx, createMealItem,
+func (q *Queries) CreateMealItem(ctx context.Context, arg CreateMealItemParams) (UserMealItem, error) {
+	row := q.db.QueryRow(ctx, createMealItem,
 		arg.MealID,
 		arg.FoodName,
 		arg.FoodID,
@@ -600,8 +687,38 @@ func (q *Queries) CreateMealItem(ctx context.Context, arg CreateMealItemParams) 
 		arg.GlycemicIndex,
 		arg.GlycemicLoad,
 		arg.FoodCategory,
+		arg.SaturatedFatGrams,
+		arg.MonounsaturatedFatGrams,
+		arg.PolyunsaturatedFatGrams,
+		arg.CholesterolMg,
 	)
-	return err
+	var i UserMealItem
+	err := row.Scan(
+		&i.ItemID,
+		&i.MealID,
+		&i.FoodName,
+		&i.FoodID,
+		&i.Seller,
+		&i.ServingSize,
+		&i.ServingSizeGrams,
+		&i.Quantity,
+		&i.Calories,
+		&i.CarbsGrams,
+		&i.FiberGrams,
+		&i.ProteinGrams,
+		&i.FatGrams,
+		&i.SugarGrams,
+		&i.SodiumMg,
+		&i.GlycemicIndex,
+		&i.GlycemicLoad,
+		&i.FoodCategory,
+		&i.CreatedAt,
+		&i.SaturatedFatGrams,
+		&i.MonounsaturatedFatGrams,
+		&i.PolyunsaturatedFatGrams,
+		&i.CholesterolMg,
+	)
+	return i, err
 }
 
 const createMealLog = `-- name: CreateMealLog :one
@@ -903,6 +1020,169 @@ func (q *Queries) CreatePendingRegistration(ctx context.Context, arg CreatePendi
 	var pending_id pgtype.UUID
 	err := row.Scan(&pending_id)
 	return pending_id, err
+}
+
+const createRecommendationSession = `-- name: CreateRecommendationSession :exec
+/* ====================================================================
+                     AI Recommendation Queries
+==================================================================== */
+
+INSERT INTO recommendation_sessions (
+    session_id,
+    user_id,
+    requested_types,
+    meal_type,
+    food_category_codes,
+    food_preferences,
+    activity_type_codes,
+    activity_preferences,
+    insights_question,
+    analysis_summary,
+    insights_response,
+    latest_glucose_value,
+    latest_hba1c,
+    user_condition_id,
+    ai_model_used,
+    ai_confidence_score
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+)
+`
+
+type CreateRecommendationSessionParams struct {
+	SessionID           pgtype.UUID    `json:"session_id"`
+	UserID              string         `json:"user_id"`
+	RequestedTypes      []string       `json:"requested_types"`
+	MealType            pgtype.Text    `json:"meal_type"`
+	FoodCategoryCodes   []string       `json:"food_category_codes"`
+	FoodPreferences     pgtype.Text    `json:"food_preferences"`
+	ActivityTypeCodes   []string       `json:"activity_type_codes"`
+	ActivityPreferences pgtype.Text    `json:"activity_preferences"`
+	InsightsQuestion    pgtype.Text    `json:"insights_question"`
+	AnalysisSummary     string         `json:"analysis_summary"`
+	InsightsResponse    pgtype.Text    `json:"insights_response"`
+	LatestGlucoseValue  pgtype.Int4    `json:"latest_glucose_value"`
+	LatestHba1c         pgtype.Numeric `json:"latest_hba1c"`
+	UserConditionID     pgtype.Int4    `json:"user_condition_id"`
+	AiModelUsed         pgtype.Text    `json:"ai_model_used"`
+	AiConfidenceScore   pgtype.Numeric `json:"ai_confidence_score"`
+}
+
+// Inserts a new recommendation session after AI generates recommendations. Called in storeRecommendationSession func in recommendation.go
+func (q *Queries) CreateRecommendationSession(ctx context.Context, arg CreateRecommendationSessionParams) error {
+	_, err := q.db.Exec(ctx, createRecommendationSession,
+		arg.SessionID,
+		arg.UserID,
+		arg.RequestedTypes,
+		arg.MealType,
+		arg.FoodCategoryCodes,
+		arg.FoodPreferences,
+		arg.ActivityTypeCodes,
+		arg.ActivityPreferences,
+		arg.InsightsQuestion,
+		arg.AnalysisSummary,
+		arg.InsightsResponse,
+		arg.LatestGlucoseValue,
+		arg.LatestHba1c,
+		arg.UserConditionID,
+		arg.AiModelUsed,
+		arg.AiConfidenceScore,
+	)
+	return err
+}
+
+const createRecommendedActivity = `-- name: CreateRecommendedActivity :exec
+INSERT INTO recommended_activities (
+    recommendation_activity_id,
+    session_id,
+    activity_id,
+    reason,
+    recommended_duration_minutes,
+    recommended_intensity,
+    safety_notes,
+    best_time_of_day,
+    glucose_management_tip,
+    recommendation_rank,
+    confidence_score
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+)
+`
+
+type CreateRecommendedActivityParams struct {
+	RecommendationActivityID   pgtype.UUID    `json:"recommendation_activity_id"`
+	SessionID                  pgtype.UUID    `json:"session_id"`
+	ActivityID                 int32          `json:"activity_id"`
+	Reason                     string         `json:"reason"`
+	RecommendedDurationMinutes int32          `json:"recommended_duration_minutes"`
+	RecommendedIntensity       pgtype.Text    `json:"recommended_intensity"`
+	SafetyNotes                pgtype.Text    `json:"safety_notes"`
+	BestTimeOfDay              pgtype.Text    `json:"best_time_of_day"`
+	GlucoseManagementTip       pgtype.Text    `json:"glucose_management_tip"`
+	RecommendationRank         pgtype.Int4    `json:"recommendation_rank"`
+	ConfidenceScore            pgtype.Numeric `json:"confidence_score"`
+}
+
+// After AI picks activities, this stores each recommendation with reasoning. Called in processActivityRecommendations func in recommendation.go
+func (q *Queries) CreateRecommendedActivity(ctx context.Context, arg CreateRecommendedActivityParams) error {
+	_, err := q.db.Exec(ctx, createRecommendedActivity,
+		arg.RecommendationActivityID,
+		arg.SessionID,
+		arg.ActivityID,
+		arg.Reason,
+		arg.RecommendedDurationMinutes,
+		arg.RecommendedIntensity,
+		arg.SafetyNotes,
+		arg.BestTimeOfDay,
+		arg.GlucoseManagementTip,
+		arg.RecommendationRank,
+		arg.ConfidenceScore,
+	)
+	return err
+}
+
+const createRecommendedFood = `-- name: CreateRecommendedFood :exec
+INSERT INTO recommended_foods (
+    recommendation_food_id,
+    session_id,
+    food_id,
+    reason,
+    nutrition_highlight,
+    suggested_meal_type,
+    suggested_portion_size,
+    recommendation_rank,
+    confidence_score
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+`
+
+type CreateRecommendedFoodParams struct {
+	RecommendationFoodID pgtype.UUID    `json:"recommendation_food_id"`
+	SessionID            pgtype.UUID    `json:"session_id"`
+	FoodID               pgtype.UUID    `json:"food_id"`
+	Reason               string         `json:"reason"`
+	NutritionHighlight   pgtype.Text    `json:"nutrition_highlight"`
+	SuggestedMealType    pgtype.Text    `json:"suggested_meal_type"`
+	SuggestedPortionSize pgtype.Text    `json:"suggested_portion_size"`
+	RecommendationRank   pgtype.Int4    `json:"recommendation_rank"`
+	ConfidenceScore      pgtype.Numeric `json:"confidence_score"`
+}
+
+// After AI picks foods, this stores each recommendation with reasoning. Called in processFoodRecommendations func in recommendation.go
+func (q *Queries) CreateRecommendedFood(ctx context.Context, arg CreateRecommendedFoodParams) error {
+	_, err := q.db.Exec(ctx, createRecommendedFood,
+		arg.RecommendationFoodID,
+		arg.SessionID,
+		arg.FoodID,
+		arg.Reason,
+		arg.NutritionHighlight,
+		arg.SuggestedMealType,
+		arg.SuggestedPortionSize,
+		arg.RecommendationRank,
+		arg.ConfidenceScore,
+	)
+	return err
 }
 
 const createRefreshToken = `-- name: CreateRefreshToken :one
@@ -1482,7 +1762,7 @@ func (q *Queries) DeleteUserHealthProfile(ctx context.Context, userID string) er
 
 const deleteUserMedication = `-- name: DeleteUserMedication :exec
 UPDATE user_medications
-SET is_active = false, updated_at = NOW()
+SET is_active = false
 WHERE medication_id = $1 AND user_id = $2
 `
 
@@ -1494,6 +1774,17 @@ type DeleteUserMedicationParams struct {
 // Soft deletes the medication configuration (sets is_active = false).
 func (q *Queries) DeleteUserMedication(ctx context.Context, arg DeleteUserMedicationParams) error {
 	_, err := q.db.Exec(ctx, deleteUserMedication, arg.MedicationID, arg.UserID)
+	return err
+}
+
+const expireRecommendationSession = `-- name: ExpireRecommendationSession :exec
+UPDATE recommendation_sessions
+SET expires_at = NOW()
+WHERE session_id = $1
+`
+
+func (q *Queries) ExpireRecommendationSession(ctx context.Context, sessionID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, expireRecommendationSession, sessionID)
 	return err
 }
 
@@ -1920,7 +2211,7 @@ func (q *Queries) GetFailedLoginAttempts(ctx context.Context, createdAt pgtype.T
 }
 
 const getFood = `-- name: GetFood :one
-SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size_g, calories, protein_g, fat_g, carbohydrate_g, dietary_fiber_g, sugars_g, saturated_fat_g, polyunsaturated_fat_g, monounsaturated_fat_g, trans_fat_g, cholesterol_mg, sodium_mg, potassium_mg, water_g, vitamin_a_mcg, vitamin_c_mg, vitamin_d_mcg, vitamin_e_mg, vitamin_k_mcg, thiamin_mg, riboflavin_mg, niacin_mg, vitamin_b5_mg, vitamin_b6_mg, folate_mcg, vitamin_b12_mcg, calcium_mg, copper_mg, iron_mg, magnesium_mg, manganese_mg, phosphorus_mg, selenium_mcg, zinc_mg, caffeine_mg, nutrition_density FROM foods
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg FROM foods
 WHERE food_id = $1
 `
 
@@ -1941,43 +2232,23 @@ func (q *Queries) GetFood(ctx context.Context, foodID pgtype.UUID) (Food, error)
 		&i.Tags,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ServingSizeG,
+		&i.ServingSize,
+		&i.ServingSizeGrams,
+		&i.Quantity,
 		&i.Calories,
-		&i.ProteinG,
-		&i.FatG,
-		&i.CarbohydrateG,
-		&i.DietaryFiberG,
-		&i.SugarsG,
-		&i.SaturatedFatG,
-		&i.PolyunsaturatedFatG,
-		&i.MonounsaturatedFatG,
-		&i.TransFatG,
-		&i.CholesterolMg,
+		&i.CarbsGrams,
+		&i.FiberGrams,
+		&i.ProteinGrams,
+		&i.FatGrams,
+		&i.SugarGrams,
 		&i.SodiumMg,
-		&i.PotassiumMg,
-		&i.WaterG,
-		&i.VitaminAMcg,
-		&i.VitaminCMg,
-		&i.VitaminDMcg,
-		&i.VitaminEMg,
-		&i.VitaminKMcg,
-		&i.ThiaminMg,
-		&i.RiboflavinMg,
-		&i.NiacinMg,
-		&i.VitaminB5Mg,
-		&i.VitaminB6Mg,
-		&i.FolateMcg,
-		&i.VitaminB12Mcg,
-		&i.CalciumMg,
-		&i.CopperMg,
-		&i.IronMg,
-		&i.MagnesiumMg,
-		&i.ManganeseMg,
-		&i.PhosphorusMg,
-		&i.SeleniumMcg,
-		&i.ZincMg,
-		&i.CaffeineMg,
-		&i.NutritionDensity,
+		&i.GlycemicIndex,
+		&i.GlycemicLoad,
+		&i.FoodCategory,
+		&i.SaturatedFatGrams,
+		&i.MonounsaturatedFatGrams,
+		&i.PolyunsaturatedFatGrams,
+		&i.CholesterolMg,
 	)
 	return i, err
 }
@@ -2295,8 +2566,71 @@ func (q *Queries) GetLastHBA1CRecord(ctx context.Context, arg GetLastHBA1CRecord
 	return hba1c_percentage, err
 }
 
+const getLatestGlucoseReading = `-- name: GetLatestGlucoseReading :one
+SELECT reading_id, user_id, glucose_value, reading_timestamp, reading_type, trend_arrow, rate_of_change, source, device_id, device_name, is_flagged, flag_reason, is_outlier, notes, symptoms, created_at, updated_at FROM user_glucose_readings
+WHERE user_id = $1
+ORDER BY reading_timestamp DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestGlucoseReading(ctx context.Context, userID string) (UserGlucoseReading, error) {
+	row := q.db.QueryRow(ctx, getLatestGlucoseReading, userID)
+	var i UserGlucoseReading
+	err := row.Scan(
+		&i.ReadingID,
+		&i.UserID,
+		&i.GlucoseValue,
+		&i.ReadingTimestamp,
+		&i.ReadingType,
+		&i.TrendArrow,
+		&i.RateOfChange,
+		&i.Source,
+		&i.DeviceID,
+		&i.DeviceName,
+		&i.IsFlagged,
+		&i.FlagReason,
+		&i.IsOutlier,
+		&i.Notes,
+		&i.Symptoms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestHBA1CRecord = `-- name: GetLatestHBA1CRecord :one
+SELECT hba1c_id, user_id, test_date, hba1c_percentage, hba1c_mmol_mol, estimated_avg_glucose, treatment_changed, medication_changes, diet_changes, activity_changes, change_from_previous, trend, notes, document_url, created_at, updated_at FROM user_hba1c_records
+WHERE user_id = $1
+ORDER BY test_date DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestHBA1CRecord(ctx context.Context, userID string) (UserHba1cRecord, error) {
+	row := q.db.QueryRow(ctx, getLatestHBA1CRecord, userID)
+	var i UserHba1cRecord
+	err := row.Scan(
+		&i.Hba1cID,
+		&i.UserID,
+		&i.TestDate,
+		&i.Hba1cPercentage,
+		&i.Hba1cMmolMol,
+		&i.EstimatedAvgGlucose,
+		&i.TreatmentChanged,
+		&i.MedicationChanges,
+		&i.DietChanges,
+		&i.ActivityChanges,
+		&i.ChangeFromPrevious,
+		&i.Trend,
+		&i.Notes,
+		&i.DocumentUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getMealItemsByMealID = `-- name: GetMealItemsByMealID :many
-SELECT item_id, meal_id, food_name, food_id, seller, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, created_at FROM user_meal_items
+SELECT item_id, meal_id, food_name, food_id, seller, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, created_at, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg FROM user_meal_items
 WHERE meal_id = $1
 ORDER BY created_at ASC
 `
@@ -2330,6 +2664,10 @@ func (q *Queries) GetMealItemsByMealID(ctx context.Context, mealID pgtype.UUID) 
 			&i.GlycemicLoad,
 			&i.FoodCategory,
 			&i.CreatedAt,
+			&i.SaturatedFatGrams,
+			&i.MonounsaturatedFatGrams,
+			&i.PolyunsaturatedFatGrams,
+			&i.CholesterolMg,
 		); err != nil {
 			return nil, err
 		}
@@ -2373,7 +2711,23 @@ func (q *Queries) GetMealLogByID(ctx context.Context, arg GetMealLogByIDParams) 
 }
 
 const getMealLogs = `-- name: GetMealLogs :many
-SELECT meal_id, user_id, meal_timestamp, meal_type_id, description, total_calories, total_carbs_grams, total_protein_grams, total_fat_grams, total_fiber_grams, total_sugar_grams, tags, created_at, updated_at FROM user_meal_logs
+SELECT 
+    ml.meal_id, 
+    ml.meal_timestamp, 
+    ml.meal_type_id,
+    mt.display_name as meal_type_name,
+    ml.description,
+    ml.total_calories,
+    ml.total_carbs_grams,
+    ml.total_protein_grams,
+    ml.total_fat_grams,
+    ml.total_fiber_grams,
+    ml.total_sugar_grams,
+    ml.tags,
+    ml.created_at,
+    ml.updated_at
+FROM user_meal_logs ml
+JOIN meal_types mt ON ml.meal_type_id = mt.meal_type_id
 WHERE user_id = $1
   AND meal_timestamp >= COALESCE($2, '1900-01-01'::timestamptz)
   AND meal_timestamp <= COALESCE($3, NOW() + INTERVAL '1 day')
@@ -2386,21 +2740,38 @@ type GetMealLogsParams struct {
 	EndDate   pgtype.Timestamptz `json:"end_date"`
 }
 
+type GetMealLogsRow struct {
+	MealID            pgtype.UUID        `json:"meal_id"`
+	MealTimestamp     pgtype.Timestamptz `json:"meal_timestamp"`
+	MealTypeID        int32              `json:"meal_type_id"`
+	MealTypeName      string             `json:"meal_type_name"`
+	Description       pgtype.Text        `json:"description"`
+	TotalCalories     pgtype.Int4        `json:"total_calories"`
+	TotalCarbsGrams   pgtype.Numeric     `json:"total_carbs_grams"`
+	TotalProteinGrams pgtype.Numeric     `json:"total_protein_grams"`
+	TotalFatGrams     pgtype.Numeric     `json:"total_fat_grams"`
+	TotalFiberGrams   pgtype.Numeric     `json:"total_fiber_grams"`
+	TotalSugarGrams   pgtype.Numeric     `json:"total_sugar_grams"`
+	Tags              []string           `json:"tags"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 // Retrieves all meal logs for the user, ordered newest first, with optional date range
-func (q *Queries) GetMealLogs(ctx context.Context, arg GetMealLogsParams) ([]UserMealLog, error) {
+func (q *Queries) GetMealLogs(ctx context.Context, arg GetMealLogsParams) ([]GetMealLogsRow, error) {
 	rows, err := q.db.Query(ctx, getMealLogs, arg.UserID, arg.StartDate, arg.EndDate)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UserMealLog
+	var items []GetMealLogsRow
 	for rows.Next() {
-		var i UserMealLog
+		var i GetMealLogsRow
 		if err := rows.Scan(
 			&i.MealID,
-			&i.UserID,
 			&i.MealTimestamp,
 			&i.MealTypeID,
+			&i.MealTypeName,
 			&i.Description,
 			&i.TotalCalories,
 			&i.TotalCarbsGrams,
@@ -2696,6 +3067,483 @@ func (q *Queries) GetRecentAuthActivity(ctx context.Context, arg GetRecentAuthAc
 	return items, nil
 }
 
+const getRecentSessionsByCondition = `-- name: GetRecentSessionsByCondition :many
+SELECT 
+    rs.session_id,
+    rs.user_id,
+    rs.user_condition_id,
+    rs.meal_type,
+    rs.food_category_codes,
+    rs.created_at,
+    COUNT(DISTINCT rf.food_id) as foods_count,
+    COUNT(DISTINCT rf.food_id) FILTER (WHERE rf.was_purchased = true) as foods_purchased,
+    AVG(rf.user_rating) FILTER (WHERE rf.user_rating IS NOT NULL) as avg_food_rating
+FROM recommendation_sessions rs
+LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
+WHERE rs.user_condition_id = $1::INTEGER
+    AND rs.created_at >= NOW() - INTERVAL '30 days'
+    AND rs.expires_at > NOW()
+GROUP BY rs.session_id
+ORDER BY rs.created_at DESC
+LIMIT 50
+`
+
+type GetRecentSessionsByConditionRow struct {
+	SessionID         pgtype.UUID        `json:"session_id"`
+	UserID            string             `json:"user_id"`
+	UserConditionID   pgtype.Int4        `json:"user_condition_id"`
+	MealType          pgtype.Text        `json:"meal_type"`
+	FoodCategoryCodes []string           `json:"food_category_codes"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	FoodsCount        int64              `json:"foods_count"`
+	FoodsPurchased    int64              `json:"foods_purchased"`
+	AvgFoodRating     float64            `json:"avg_food_rating"`
+}
+
+// Get recent sessions for users with similar health conditions
+// Useful for analytics and learning patterns
+func (q *Queries) GetRecentSessionsByCondition(ctx context.Context, conditionID int32) ([]GetRecentSessionsByConditionRow, error) {
+	rows, err := q.db.Query(ctx, getRecentSessionsByCondition, conditionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecentSessionsByConditionRow
+	for rows.Next() {
+		var i GetRecentSessionsByConditionRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.UserID,
+			&i.UserConditionID,
+			&i.MealType,
+			&i.FoodCategoryCodes,
+			&i.CreatedAt,
+			&i.FoodsCount,
+			&i.FoodsPurchased,
+			&i.AvgFoodRating,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecommendationEffectiveness = `-- name: GetRecommendationEffectiveness :many
+SELECT user_id, user_condition_id, meal_type, recommendation_date, foods_recommended, foods_viewed, foods_purchased, avg_food_rating, activities_recommended, activities_viewed, activities_completed, avg_activity_rating, overall_feedback FROM recommendation_effectiveness
+WHERE user_id = $1
+    AND recommendation_date >= $2::DATE
+ORDER BY recommendation_date DESC
+`
+
+type GetRecommendationEffectivenessParams struct {
+	UserID    string      `json:"user_id"`
+	StartDate pgtype.Date `json:"start_date"`
+}
+
+func (q *Queries) GetRecommendationEffectiveness(ctx context.Context, arg GetRecommendationEffectivenessParams) ([]RecommendationEffectiveness, error) {
+	rows, err := q.db.Query(ctx, getRecommendationEffectiveness, arg.UserID, arg.StartDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecommendationEffectiveness
+	for rows.Next() {
+		var i RecommendationEffectiveness
+		if err := rows.Scan(
+			&i.UserID,
+			&i.UserConditionID,
+			&i.MealType,
+			&i.RecommendationDate,
+			&i.FoodsRecommended,
+			&i.FoodsViewed,
+			&i.FoodsPurchased,
+			&i.AvgFoodRating,
+			&i.ActivitiesRecommended,
+			&i.ActivitiesViewed,
+			&i.ActivitiesCompleted,
+			&i.AvgActivityRating,
+			&i.OverallFeedback,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecommendationSession = `-- name: GetRecommendationSession :one
+SELECT session_id, user_id, requested_types, meal_type, food_category_codes, food_preferences, activity_type_codes, activity_preferences, insights_question, analysis_summary, insights_response, latest_glucose_value, latest_hba1c, user_condition_id, ai_model_used, ai_confidence_score, overall_feedback, feedback_notes, created_at, expires_at FROM recommendation_sessions
+WHERE session_id = $1
+`
+
+func (q *Queries) GetRecommendationSession(ctx context.Context, sessionID pgtype.UUID) (RecommendationSession, error) {
+	row := q.db.QueryRow(ctx, getRecommendationSession, sessionID)
+	var i RecommendationSession
+	err := row.Scan(
+		&i.SessionID,
+		&i.UserID,
+		&i.RequestedTypes,
+		&i.MealType,
+		&i.FoodCategoryCodes,
+		&i.FoodPreferences,
+		&i.ActivityTypeCodes,
+		&i.ActivityPreferences,
+		&i.InsightsQuestion,
+		&i.AnalysisSummary,
+		&i.InsightsResponse,
+		&i.LatestGlucoseValue,
+		&i.LatestHba1c,
+		&i.UserConditionID,
+		&i.AiModelUsed,
+		&i.AiConfidenceScore,
+		&i.OverallFeedback,
+		&i.FeedbackNotes,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getRecommendationSessions = `-- name: GetRecommendationSessions :many
+
+SELECT 
+    session_id,
+    user_id,
+    requested_types,
+    meal_type,
+    food_category_codes,
+    food_preferences,
+    activity_type_codes,
+    activity_preferences,
+    insights_question,
+    analysis_summary,
+    insights_response,
+    latest_glucose_value,
+    latest_hba1c,
+    user_condition_id,
+    ai_model_used,
+    ai_confidence_score,
+    overall_feedback,
+    feedback_notes,
+    created_at,
+    expires_at
+FROM recommendation_sessions
+WHERE user_id = $1
+    AND (
+        $2::BOOLEAN = true 
+        OR expires_at > NOW()
+    )
+ORDER BY created_at DESC
+LIMIT $4::INTEGER
+OFFSET $3::INTEGER
+`
+
+type GetRecommendationSessionsParams struct {
+	UserID         string `json:"user_id"`
+	IncludeExpired bool   `json:"include_expired"`
+	OffsetCount    int32  `json:"offset_count"`
+	LimitCount     int32  `json:"limit_count"`
+}
+
+// =================================================================================
+// RECOMMENDATION SESSION HISTORY QUERIES
+// =================================================================================
+func (q *Queries) GetRecommendationSessions(ctx context.Context, arg GetRecommendationSessionsParams) ([]RecommendationSession, error) {
+	rows, err := q.db.Query(ctx, getRecommendationSessions,
+		arg.UserID,
+		arg.IncludeExpired,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecommendationSession
+	for rows.Next() {
+		var i RecommendationSession
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.UserID,
+			&i.RequestedTypes,
+			&i.MealType,
+			&i.FoodCategoryCodes,
+			&i.FoodPreferences,
+			&i.ActivityTypeCodes,
+			&i.ActivityPreferences,
+			&i.InsightsQuestion,
+			&i.AnalysisSummary,
+			&i.InsightsResponse,
+			&i.LatestGlucoseValue,
+			&i.LatestHba1c,
+			&i.UserConditionID,
+			&i.AiModelUsed,
+			&i.AiConfidenceScore,
+			&i.OverallFeedback,
+			&i.FeedbackNotes,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecommendationSessionsCount = `-- name: GetRecommendationSessionsCount :one
+SELECT COUNT(*)
+FROM recommendation_sessions
+WHERE user_id = $1
+    AND (
+        $2::BOOLEAN = true 
+        OR expires_at > NOW()
+    )
+`
+
+type GetRecommendationSessionsCountParams struct {
+	UserID         string `json:"user_id"`
+	IncludeExpired bool   `json:"include_expired"`
+}
+
+func (q *Queries) GetRecommendationSessionsCount(ctx context.Context, arg GetRecommendationSessionsCountParams) (int64, error) {
+	row := q.db.QueryRow(ctx, getRecommendationSessionsCount, arg.UserID, arg.IncludeExpired)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getRecommendedActivitiesInSession = `-- name: GetRecommendedActivitiesInSession :many
+SELECT 
+    ra.recommendation_activity_id, ra.session_id, ra.activity_id, ra.reason, ra.recommended_duration_minutes, ra.recommended_intensity, ra.safety_notes, ra.best_time_of_day, ra.glucose_management_tip, ra.recommendation_rank, ra.confidence_score, ra.was_viewed, ra.was_completed, ra.actual_duration_minutes, ra.user_rating, ra.feedback, ra.feedback_notes, ra.glucose_change_after_activity, ra.created_at, ra.completed_at, ra.last_interaction_at,
+    a.activity_code,
+    a.activity_name,
+    a.description,
+    a.image_url,
+    a.met_value,
+    a.measurement_unit
+FROM recommended_activities ra
+JOIN activities a ON ra.activity_id = a.id
+WHERE ra.session_id = $1
+ORDER BY ra.recommendation_rank ASC
+`
+
+type GetRecommendedActivitiesInSessionRow struct {
+	RecommendationActivityID   pgtype.UUID        `json:"recommendation_activity_id"`
+	SessionID                  pgtype.UUID        `json:"session_id"`
+	ActivityID                 int32              `json:"activity_id"`
+	Reason                     string             `json:"reason"`
+	RecommendedDurationMinutes int32              `json:"recommended_duration_minutes"`
+	RecommendedIntensity       pgtype.Text        `json:"recommended_intensity"`
+	SafetyNotes                pgtype.Text        `json:"safety_notes"`
+	BestTimeOfDay              pgtype.Text        `json:"best_time_of_day"`
+	GlucoseManagementTip       pgtype.Text        `json:"glucose_management_tip"`
+	RecommendationRank         pgtype.Int4        `json:"recommendation_rank"`
+	ConfidenceScore            pgtype.Numeric     `json:"confidence_score"`
+	WasViewed                  pgtype.Bool        `json:"was_viewed"`
+	WasCompleted               pgtype.Bool        `json:"was_completed"`
+	ActualDurationMinutes      pgtype.Int4        `json:"actual_duration_minutes"`
+	UserRating                 pgtype.Int4        `json:"user_rating"`
+	Feedback                   pgtype.Text        `json:"feedback"`
+	FeedbackNotes              pgtype.Text        `json:"feedback_notes"`
+	GlucoseChangeAfterActivity pgtype.Int4        `json:"glucose_change_after_activity"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
+	LastInteractionAt          pgtype.Timestamptz `json:"last_interaction_at"`
+	ActivityCode               pgtype.Text        `json:"activity_code"`
+	ActivityName               string             `json:"activity_name"`
+	Description                pgtype.Text        `json:"description"`
+	ImageUrl                   pgtype.Text        `json:"image_url"`
+	MetValue                   pgtype.Numeric     `json:"met_value"`
+	MeasurementUnit            pgtype.Text        `json:"measurement_unit"`
+}
+
+func (q *Queries) GetRecommendedActivitiesInSession(ctx context.Context, sessionID pgtype.UUID) ([]GetRecommendedActivitiesInSessionRow, error) {
+	rows, err := q.db.Query(ctx, getRecommendedActivitiesInSession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecommendedActivitiesInSessionRow
+	for rows.Next() {
+		var i GetRecommendedActivitiesInSessionRow
+		if err := rows.Scan(
+			&i.RecommendationActivityID,
+			&i.SessionID,
+			&i.ActivityID,
+			&i.Reason,
+			&i.RecommendedDurationMinutes,
+			&i.RecommendedIntensity,
+			&i.SafetyNotes,
+			&i.BestTimeOfDay,
+			&i.GlucoseManagementTip,
+			&i.RecommendationRank,
+			&i.ConfidenceScore,
+			&i.WasViewed,
+			&i.WasCompleted,
+			&i.ActualDurationMinutes,
+			&i.UserRating,
+			&i.Feedback,
+			&i.FeedbackNotes,
+			&i.GlucoseChangeAfterActivity,
+			&i.CreatedAt,
+			&i.CompletedAt,
+			&i.LastInteractionAt,
+			&i.ActivityCode,
+			&i.ActivityName,
+			&i.Description,
+			&i.ImageUrl,
+			&i.MetValue,
+			&i.MeasurementUnit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecommendedFoodsInSession = `-- name: GetRecommendedFoodsInSession :many
+SELECT 
+    rf.recommendation_food_id, rf.session_id, rf.food_id, rf.reason, rf.nutrition_highlight, rf.suggested_meal_type, rf.suggested_portion_size, rf.recommendation_rank, rf.confidence_score, rf.was_viewed, rf.was_added_to_cart, rf.was_purchased, rf.was_logged_as_meal, rf.user_rating, rf.feedback, rf.feedback_notes, rf.glucose_spike_after_eating, rf.created_at, rf.last_interaction_at,
+    f.food_name,
+    f.seller_id,
+    f.description,
+    f.price,
+    f.currency,
+    f.photo_url,
+    f.thumbnail_url,
+    f.is_available,
+    f.tags,
+    f.serving_size,
+    f.calories,
+    f.carbs_grams,
+    f.fiber_grams,
+    f.protein_grams,
+    f.fat_grams,
+    f.sugar_grams,
+    f.sodium_mg,
+    f.glycemic_index,
+    f.glycemic_load
+FROM recommended_foods rf
+JOIN foods f ON rf.food_id = f.food_id
+WHERE rf.session_id = $1
+ORDER BY rf.recommendation_rank ASC
+`
+
+type GetRecommendedFoodsInSessionRow struct {
+	RecommendationFoodID    pgtype.UUID        `json:"recommendation_food_id"`
+	SessionID               pgtype.UUID        `json:"session_id"`
+	FoodID                  pgtype.UUID        `json:"food_id"`
+	Reason                  string             `json:"reason"`
+	NutritionHighlight      pgtype.Text        `json:"nutrition_highlight"`
+	SuggestedMealType       pgtype.Text        `json:"suggested_meal_type"`
+	SuggestedPortionSize    pgtype.Text        `json:"suggested_portion_size"`
+	RecommendationRank      pgtype.Int4        `json:"recommendation_rank"`
+	ConfidenceScore         pgtype.Numeric     `json:"confidence_score"`
+	WasViewed               pgtype.Bool        `json:"was_viewed"`
+	WasAddedToCart          pgtype.Bool        `json:"was_added_to_cart"`
+	WasPurchased            pgtype.Bool        `json:"was_purchased"`
+	WasLoggedAsMeal         pgtype.Bool        `json:"was_logged_as_meal"`
+	UserRating              pgtype.Int4        `json:"user_rating"`
+	Feedback                pgtype.Text        `json:"feedback"`
+	FeedbackNotes           pgtype.Text        `json:"feedback_notes"`
+	GlucoseSpikeAfterEating pgtype.Int4        `json:"glucose_spike_after_eating"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	LastInteractionAt       pgtype.Timestamptz `json:"last_interaction_at"`
+	FoodName                string             `json:"food_name"`
+	SellerID                pgtype.UUID        `json:"seller_id"`
+	Description             pgtype.Text        `json:"description"`
+	Price                   pgtype.Numeric     `json:"price"`
+	Currency                string             `json:"currency"`
+	PhotoUrl                pgtype.Text        `json:"photo_url"`
+	ThumbnailUrl            pgtype.Text        `json:"thumbnail_url"`
+	IsAvailable             pgtype.Bool        `json:"is_available"`
+	Tags                    []string           `json:"tags"`
+	ServingSize             pgtype.Text        `json:"serving_size"`
+	Calories                pgtype.Int4        `json:"calories"`
+	CarbsGrams              pgtype.Numeric     `json:"carbs_grams"`
+	FiberGrams              pgtype.Numeric     `json:"fiber_grams"`
+	ProteinGrams            pgtype.Numeric     `json:"protein_grams"`
+	FatGrams                pgtype.Numeric     `json:"fat_grams"`
+	SugarGrams              pgtype.Numeric     `json:"sugar_grams"`
+	SodiumMg                pgtype.Numeric     `json:"sodium_mg"`
+	GlycemicIndex           pgtype.Int4        `json:"glycemic_index"`
+	GlycemicLoad            pgtype.Numeric     `json:"glycemic_load"`
+}
+
+func (q *Queries) GetRecommendedFoodsInSession(ctx context.Context, sessionID pgtype.UUID) ([]GetRecommendedFoodsInSessionRow, error) {
+	rows, err := q.db.Query(ctx, getRecommendedFoodsInSession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecommendedFoodsInSessionRow
+	for rows.Next() {
+		var i GetRecommendedFoodsInSessionRow
+		if err := rows.Scan(
+			&i.RecommendationFoodID,
+			&i.SessionID,
+			&i.FoodID,
+			&i.Reason,
+			&i.NutritionHighlight,
+			&i.SuggestedMealType,
+			&i.SuggestedPortionSize,
+			&i.RecommendationRank,
+			&i.ConfidenceScore,
+			&i.WasViewed,
+			&i.WasAddedToCart,
+			&i.WasPurchased,
+			&i.WasLoggedAsMeal,
+			&i.UserRating,
+			&i.Feedback,
+			&i.FeedbackNotes,
+			&i.GlucoseSpikeAfterEating,
+			&i.CreatedAt,
+			&i.LastInteractionAt,
+			&i.FoodName,
+			&i.SellerID,
+			&i.Description,
+			&i.Price,
+			&i.Currency,
+			&i.PhotoUrl,
+			&i.ThumbnailUrl,
+			&i.IsAvailable,
+			&i.Tags,
+			&i.ServingSize,
+			&i.Calories,
+			&i.CarbsGrams,
+			&i.FiberGrams,
+			&i.ProteinGrams,
+			&i.FatGrams,
+			&i.SugarGrams,
+			&i.SodiumMg,
+			&i.GlycemicIndex,
+			&i.GlycemicLoad,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRefreshTokenByHash = `-- name: GetRefreshTokenByHash :one
 SELECT id, user_id, token_hash, device_info, ip_address, expires_at, created_at, revoked_at, replaced_by_token_id FROM users_refresh_tokens
 WHERE token_hash = $1 AND revoked_at IS NULL
@@ -2750,6 +3598,170 @@ func (q *Queries) GetSellerProfile(ctx context.Context, sellerID pgtype.UUID) (S
 		&i.GmapsLink,
 	)
 	return i, err
+}
+
+const getSessionActivityMetrics = `-- name: GetSessionActivityMetrics :one
+SELECT 
+    COUNT(*) as activities_count,
+    COUNT(*) FILTER (WHERE was_completed = true) as activities_completed,
+    AVG(user_rating) FILTER (WHERE user_rating IS NOT NULL) as avg_rating,
+    AVG(glucose_change_after_activity) FILTER (WHERE glucose_change_after_activity IS NOT NULL) as avg_glucose_change
+FROM recommended_activities
+WHERE session_id = $1
+`
+
+type GetSessionActivityMetricsRow struct {
+	ActivitiesCount     int64   `json:"activities_count"`
+	ActivitiesCompleted int64   `json:"activities_completed"`
+	AvgRating           float64 `json:"avg_rating"`
+	AvgGlucoseChange    float64 `json:"avg_glucose_change"`
+}
+
+func (q *Queries) GetSessionActivityMetrics(ctx context.Context, sessionID pgtype.UUID) (GetSessionActivityMetricsRow, error) {
+	row := q.db.QueryRow(ctx, getSessionActivityMetrics, sessionID)
+	var i GetSessionActivityMetricsRow
+	err := row.Scan(
+		&i.ActivitiesCount,
+		&i.ActivitiesCompleted,
+		&i.AvgRating,
+		&i.AvgGlucoseChange,
+	)
+	return i, err
+}
+
+const getSessionEffectivenessStats = `-- name: GetSessionEffectivenessStats :one
+SELECT 
+    COUNT(DISTINCT rs.session_id) as total_sessions,
+    COUNT(DISTINCT rf.food_id) as total_food_recommendations,
+    COUNT(DISTINCT rf.food_id) FILTER (WHERE rf.was_purchased = true) as foods_purchased,
+    COUNT(DISTINCT ra.activity_id) as total_activity_recommendations,
+    COUNT(DISTINCT ra.activity_id) FILTER (WHERE ra.was_completed = true) as activities_completed,
+    AVG(rf.user_rating) FILTER (WHERE rf.user_rating IS NOT NULL) as avg_food_rating,
+    AVG(ra.user_rating) FILTER (WHERE ra.user_rating IS NOT NULL) as avg_activity_rating,
+    AVG(rf.glucose_spike_after_eating) FILTER (WHERE rf.glucose_spike_after_eating IS NOT NULL) as avg_glucose_spike
+FROM recommendation_sessions rs
+LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
+LEFT JOIN recommended_activities ra ON rs.session_id = ra.session_id
+WHERE rs.user_id = $1
+    AND rs.created_at >= NOW() - INTERVAL '90 days'
+`
+
+type GetSessionEffectivenessStatsRow struct {
+	TotalSessions                int64   `json:"total_sessions"`
+	TotalFoodRecommendations     int64   `json:"total_food_recommendations"`
+	FoodsPurchased               int64   `json:"foods_purchased"`
+	TotalActivityRecommendations int64   `json:"total_activity_recommendations"`
+	ActivitiesCompleted          int64   `json:"activities_completed"`
+	AvgFoodRating                float64 `json:"avg_food_rating"`
+	AvgActivityRating            float64 `json:"avg_activity_rating"`
+	AvgGlucoseSpike              float64 `json:"avg_glucose_spike"`
+}
+
+// Get overall effectiveness statistics for a user
+func (q *Queries) GetSessionEffectivenessStats(ctx context.Context, userID string) (GetSessionEffectivenessStatsRow, error) {
+	row := q.db.QueryRow(ctx, getSessionEffectivenessStats, userID)
+	var i GetSessionEffectivenessStatsRow
+	err := row.Scan(
+		&i.TotalSessions,
+		&i.TotalFoodRecommendations,
+		&i.FoodsPurchased,
+		&i.TotalActivityRecommendations,
+		&i.ActivitiesCompleted,
+		&i.AvgFoodRating,
+		&i.AvgActivityRating,
+		&i.AvgGlucoseSpike,
+	)
+	return i, err
+}
+
+const getSessionFoodMetrics = `-- name: GetSessionFoodMetrics :one
+SELECT 
+    COUNT(*) as foods_count,
+    COUNT(*) FILTER (WHERE was_purchased = true) as foods_purchased,
+    COUNT(*) FILTER (WHERE was_added_to_cart = true) as foods_added_to_cart,
+    AVG(user_rating) FILTER (WHERE user_rating IS NOT NULL) as avg_rating,
+    AVG(glucose_spike_after_eating) FILTER (WHERE glucose_spike_after_eating IS NOT NULL) as avg_glucose_spike
+FROM recommended_foods
+WHERE session_id = $1
+`
+
+type GetSessionFoodMetricsRow struct {
+	FoodsCount       int64   `json:"foods_count"`
+	FoodsPurchased   int64   `json:"foods_purchased"`
+	FoodsAddedToCart int64   `json:"foods_added_to_cart"`
+	AvgRating        float64 `json:"avg_rating"`
+	AvgGlucoseSpike  float64 `json:"avg_glucose_spike"`
+}
+
+func (q *Queries) GetSessionFoodMetrics(ctx context.Context, sessionID pgtype.UUID) (GetSessionFoodMetricsRow, error) {
+	row := q.db.QueryRow(ctx, getSessionFoodMetrics, sessionID)
+	var i GetSessionFoodMetricsRow
+	err := row.Scan(
+		&i.FoodsCount,
+		&i.FoodsPurchased,
+		&i.FoodsAddedToCart,
+		&i.AvgRating,
+		&i.AvgGlucoseSpike,
+	)
+	return i, err
+}
+
+const getSessionsByDateRange = `-- name: GetSessionsByDateRange :many
+SELECT 
+    session_id,
+    created_at,
+    requested_types,
+    meal_type,
+    analysis_summary,
+    overall_feedback
+FROM recommendation_sessions
+WHERE user_id = $1
+    AND created_at >= $2::TIMESTAMPTZ
+    AND created_at <= $3::TIMESTAMPTZ
+ORDER BY created_at DESC
+`
+
+type GetSessionsByDateRangeParams struct {
+	UserID    string             `json:"user_id"`
+	StartDate pgtype.Timestamptz `json:"start_date"`
+	EndDate   pgtype.Timestamptz `json:"end_date"`
+}
+
+type GetSessionsByDateRangeRow struct {
+	SessionID       pgtype.UUID        `json:"session_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	RequestedTypes  []string           `json:"requested_types"`
+	MealType        pgtype.Text        `json:"meal_type"`
+	AnalysisSummary string             `json:"analysis_summary"`
+	OverallFeedback pgtype.Text        `json:"overall_feedback"`
+}
+
+// Get user's sessions within a date range
+func (q *Queries) GetSessionsByDateRange(ctx context.Context, arg GetSessionsByDateRangeParams) ([]GetSessionsByDateRangeRow, error) {
+	rows, err := q.db.Query(ctx, getSessionsByDateRange, arg.UserID, arg.StartDate, arg.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSessionsByDateRangeRow
+	for rows.Next() {
+		var i GetSessionsByDateRangeRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.CreatedAt,
+			&i.RequestedTypes,
+			&i.MealType,
+			&i.AnalysisSummary,
+			&i.OverallFeedback,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getSleepLogByID = `-- name: GetSleepLogByID :one
@@ -2832,6 +3844,116 @@ func (q *Queries) GetSleepLogs(ctx context.Context, arg GetSleepLogsParams) ([]U
 			&i.Notes,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTopRatedActivities = `-- name: GetTopRatedActivities :many
+SELECT 
+    a.id,
+    a.activity_name,
+    a.image_url,
+    COUNT(ra.recommendation_activity_id) as times_recommended,
+    AVG(ra.user_rating) as avg_rating,
+    COUNT(ra.recommendation_activity_id) FILTER (WHERE ra.was_completed = true) as completion_count
+FROM activities a
+JOIN recommended_activities ra ON a.id = ra.activity_id
+JOIN recommendation_sessions rs ON ra.session_id = rs.session_id
+WHERE rs.user_id = $1
+    AND ra.user_rating IS NOT NULL
+GROUP BY a.id
+HAVING COUNT(ra.user_rating) >= 3
+ORDER BY AVG(ra.user_rating) DESC, COUNT(ra.was_completed) DESC
+LIMIT 10
+`
+
+type GetTopRatedActivitiesRow struct {
+	ID               int32       `json:"id"`
+	ActivityName     string      `json:"activity_name"`
+	ImageUrl         pgtype.Text `json:"image_url"`
+	TimesRecommended int64       `json:"times_recommended"`
+	AvgRating        float64     `json:"avg_rating"`
+	CompletionCount  int64       `json:"completion_count"`
+}
+
+func (q *Queries) GetTopRatedActivities(ctx context.Context, userID string) ([]GetTopRatedActivitiesRow, error) {
+	rows, err := q.db.Query(ctx, getTopRatedActivities, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTopRatedActivitiesRow
+	for rows.Next() {
+		var i GetTopRatedActivitiesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActivityName,
+			&i.ImageUrl,
+			&i.TimesRecommended,
+			&i.AvgRating,
+			&i.CompletionCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTopRatedFoods = `-- name: GetTopRatedFoods :many
+SELECT 
+    f.food_id,
+    f.food_name,
+    f.photo_url,
+    COUNT(rf.recommendation_food_id) as times_recommended,
+    AVG(rf.user_rating) as avg_rating,
+    COUNT(rf.recommendation_food_id) FILTER (WHERE rf.was_purchased = true) as purchase_count
+FROM foods f
+JOIN recommended_foods rf ON f.food_id = rf.food_id
+JOIN recommendation_sessions rs ON rf.session_id = rs.session_id
+WHERE rs.user_id = $1
+    AND rf.user_rating IS NOT NULL
+GROUP BY f.food_id
+HAVING COUNT(rf.user_rating) >= 3
+ORDER BY AVG(rf.user_rating) DESC, COUNT(rf.was_purchased) DESC
+LIMIT 10
+`
+
+type GetTopRatedFoodsRow struct {
+	FoodID           pgtype.UUID `json:"food_id"`
+	FoodName         string      `json:"food_name"`
+	PhotoUrl         pgtype.Text `json:"photo_url"`
+	TimesRecommended int64       `json:"times_recommended"`
+	AvgRating        float64     `json:"avg_rating"`
+	PurchaseCount    int64       `json:"purchase_count"`
+}
+
+func (q *Queries) GetTopRatedFoods(ctx context.Context, userID string) ([]GetTopRatedFoodsRow, error) {
+	rows, err := q.db.Query(ctx, getTopRatedFoods, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTopRatedFoodsRow
+	for rows.Next() {
+		var i GetTopRatedFoodsRow
+		if err := rows.Scan(
+			&i.FoodID,
+			&i.FoodName,
+			&i.PhotoUrl,
+			&i.TimesRecommended,
+			&i.AvgRating,
+			&i.PurchaseCount,
 		); err != nil {
 			return nil, err
 		}
@@ -3097,6 +4219,26 @@ func (q *Queries) GetUserByUsername(ctx context.Context, userUsername pgtype.Tex
 	return i, err
 }
 
+const getUserDemographics = `-- name: GetUserDemographics :one
+SELECT 
+    CAST(EXTRACT(YEAR FROM AGE(CURRENT_DATE, user_DOB)) AS INTEGER) as age,
+    user_gender
+FROM users
+WHERE user_id = $1
+`
+
+type GetUserDemographicsRow struct {
+	Age        int32               `json:"age"`
+	UserGender NullUsersUserGender `json:"user_gender"`
+}
+
+func (q *Queries) GetUserDemographics(ctx context.Context, userID string) (GetUserDemographicsRow, error) {
+	row := q.db.QueryRow(ctx, getUserDemographics, userID)
+	var i GetUserDemographicsRow
+	err := row.Scan(&i.Age, &i.UserGender)
+	return i, err
+}
+
 const getUserHealthProfile = `-- name: GetUserHealthProfile :one
 /* ====================================================================
                    Health Profile Queries
@@ -3316,6 +4458,70 @@ func (q *Queries) GetUserProviderID(ctx context.Context, userProviderUserID pgty
 	return i, err
 }
 
+const getUserRecommendationHistory = `-- name: GetUserRecommendationHistory :many
+SELECT 
+    rs.session_id,
+    rs.created_at,
+    rs.analysis_summary,
+    rs.meal_type,
+    rs.requested_types,
+    rs.overall_feedback,
+    COUNT(DISTINCT rf.food_id) as foods_count,
+    COUNT(DISTINCT ra.activity_id) as activities_count
+FROM recommendation_sessions rs
+LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
+LEFT JOIN recommended_activities ra ON rs.session_id = ra.session_id
+WHERE rs.user_id = $1
+GROUP BY rs.session_id
+ORDER BY rs.created_at DESC
+LIMIT $2::INTEGER
+`
+
+type GetUserRecommendationHistoryParams struct {
+	UserID     string `json:"user_id"`
+	LimitCount int32  `json:"limit_count"`
+}
+
+type GetUserRecommendationHistoryRow struct {
+	SessionID       pgtype.UUID        `json:"session_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	AnalysisSummary string             `json:"analysis_summary"`
+	MealType        pgtype.Text        `json:"meal_type"`
+	RequestedTypes  []string           `json:"requested_types"`
+	OverallFeedback pgtype.Text        `json:"overall_feedback"`
+	FoodsCount      int64              `json:"foods_count"`
+	ActivitiesCount int64              `json:"activities_count"`
+}
+
+func (q *Queries) GetUserRecommendationHistory(ctx context.Context, arg GetUserRecommendationHistoryParams) ([]GetUserRecommendationHistoryRow, error) {
+	rows, err := q.db.Query(ctx, getUserRecommendationHistory, arg.UserID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUserRecommendationHistoryRow
+	for rows.Next() {
+		var i GetUserRecommendationHistoryRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.CreatedAt,
+			&i.AnalysisSummary,
+			&i.MealType,
+			&i.RequestedTypes,
+			&i.OverallFeedback,
+			&i.FoodsCount,
+			&i.ActivitiesCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const hardDeleteUserAddress = `-- name: HardDeleteUserAddress :exec
 DELETE FROM user_addresses
 WHERE address_id = $1 AND user_id = $2
@@ -3344,7 +4550,7 @@ func (q *Queries) IfAddressIsDefault(ctx context.Context, addressID pgtype.UUID)
 }
 
 const listAllAvailableFoods = `-- name: ListAllAvailableFoods :many
-SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size_g, calories, protein_g, fat_g, carbohydrate_g, dietary_fiber_g, sugars_g, saturated_fat_g, polyunsaturated_fat_g, monounsaturated_fat_g, trans_fat_g, cholesterol_mg, sodium_mg, potassium_mg, water_g, vitamin_a_mcg, vitamin_c_mg, vitamin_d_mcg, vitamin_e_mg, vitamin_k_mcg, thiamin_mg, riboflavin_mg, niacin_mg, vitamin_b5_mg, vitamin_b6_mg, folate_mcg, vitamin_b12_mcg, calcium_mg, copper_mg, iron_mg, magnesium_mg, manganese_mg, phosphorus_mg, selenium_mcg, zinc_mg, caffeine_mg, nutrition_density
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg
 FROM foods
 WHERE is_available = true
 ORDER BY food_name
@@ -3374,43 +4580,23 @@ func (q *Queries) ListAllAvailableFoods(ctx context.Context) ([]Food, error) {
 			&i.Tags,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.ServingSizeG,
+			&i.ServingSize,
+			&i.ServingSizeGrams,
+			&i.Quantity,
 			&i.Calories,
-			&i.ProteinG,
-			&i.FatG,
-			&i.CarbohydrateG,
-			&i.DietaryFiberG,
-			&i.SugarsG,
-			&i.SaturatedFatG,
-			&i.PolyunsaturatedFatG,
-			&i.MonounsaturatedFatG,
-			&i.TransFatG,
-			&i.CholesterolMg,
+			&i.CarbsGrams,
+			&i.FiberGrams,
+			&i.ProteinGrams,
+			&i.FatGrams,
+			&i.SugarGrams,
 			&i.SodiumMg,
-			&i.PotassiumMg,
-			&i.WaterG,
-			&i.VitaminAMcg,
-			&i.VitaminCMg,
-			&i.VitaminDMcg,
-			&i.VitaminEMg,
-			&i.VitaminKMcg,
-			&i.ThiaminMg,
-			&i.RiboflavinMg,
-			&i.NiacinMg,
-			&i.VitaminB5Mg,
-			&i.VitaminB6Mg,
-			&i.FolateMcg,
-			&i.VitaminB12Mcg,
-			&i.CalciumMg,
-			&i.CopperMg,
-			&i.IronMg,
-			&i.MagnesiumMg,
-			&i.ManganeseMg,
-			&i.PhosphorusMg,
-			&i.SeleniumMcg,
-			&i.ZincMg,
-			&i.CaffeineMg,
-			&i.NutritionDensity,
+			&i.GlycemicIndex,
+			&i.GlycemicLoad,
+			&i.FoodCategory,
+			&i.SaturatedFatGrams,
+			&i.MonounsaturatedFatGrams,
+			&i.PolyunsaturatedFatGrams,
+			&i.CholesterolMg,
 		); err != nil {
 			return nil, err
 		}
@@ -3420,6 +4606,210 @@ func (q *Queries) ListAllAvailableFoods(ctx context.Context) ([]Food, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const listRecommendedActivities = `-- name: ListRecommendedActivities :many
+SELECT 
+    a.id,
+    a.activity_code,
+    a.activity_name,
+    a.description,
+    a.image_url,
+    a.met_value,
+    a.measurement_unit,
+    a.recommended_min_value
+FROM activities a
+WHERE (
+    $1::TEXT[] IS NULL
+    OR a.activity_code = ANY($1::TEXT[])
+)
+ORDER BY a.met_value ASC
+LIMIT 20
+`
+
+func (q *Queries) ListRecommendedActivities(ctx context.Context, activityCodes []string) ([]Activity, error) {
+	rows, err := q.db.Query(ctx, listRecommendedActivities, activityCodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Activity
+	for rows.Next() {
+		var i Activity
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActivityCode,
+			&i.ActivityName,
+			&i.Description,
+			&i.ImageUrl,
+			&i.MetValue,
+			&i.MeasurementUnit,
+			&i.RecommendedMinValue,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecommendedFoods = `-- name: ListRecommendedFoods :many
+/*
+Filters applied:
+
+is_available = true → Only show foods in stock
+food_category IN [...] → Only requested categories (e.g., "ASIAN_GENERIC")
+glycemic_load <= max → Safety limit (e.g., GL < 10 for diabetics)
+carbs_grams <= max → Carb limit (e.g., < 30g per meal)
+
+Ordering:
+
+Primary: Low glycemic load first (safer for blood sugar)
+Secondary: High fiber (better for glucose control)
+*/
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg FROM foods
+WHERE is_available = true
+    AND (
+        $1::TEXT[] IS NULL 
+        OR food_category::TEXT[] && $1::TEXT[]
+    )
+    AND (
+        $2::NUMERIC IS NULL 
+        OR glycemic_load <= $2
+    )
+    AND (
+        $3::NUMERIC IS NULL 
+        OR carbs_grams <= $3
+    )
+ORDER BY 
+    CASE 
+        WHEN glycemic_load IS NOT NULL THEN glycemic_load
+        ELSE 999
+    END ASC,
+    fiber_grams DESC,
+    protein_grams DESC
+LIMIT $4::INTEGER
+`
+
+type ListRecommendedFoodsParams struct {
+	FoodCategory    []string       `json:"food_category"`
+	MaxGlycemicLoad pgtype.Numeric `json:"max_glycemic_load"`
+	MaxCarbs        pgtype.Numeric `json:"max_carbs"`
+	LimitCount      int32          `json:"limit_count"`
+}
+
+// Fetches foods from database based on user's filters BEFORE sending to AI.
+func (q *Queries) ListRecommendedFoods(ctx context.Context, arg ListRecommendedFoodsParams) ([]Food, error) {
+	rows, err := q.db.Query(ctx, listRecommendedFoods,
+		arg.FoodCategory,
+		arg.MaxGlycemicLoad,
+		arg.MaxCarbs,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Food
+	for rows.Next() {
+		var i Food
+		if err := rows.Scan(
+			&i.FoodID,
+			&i.SellerID,
+			&i.FoodName,
+			&i.Description,
+			&i.Price,
+			&i.Currency,
+			&i.PhotoUrl,
+			&i.ThumbnailUrl,
+			&i.IsAvailable,
+			&i.StockCount,
+			&i.Tags,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ServingSize,
+			&i.ServingSizeGrams,
+			&i.Quantity,
+			&i.Calories,
+			&i.CarbsGrams,
+			&i.FiberGrams,
+			&i.ProteinGrams,
+			&i.FatGrams,
+			&i.SugarGrams,
+			&i.SodiumMg,
+			&i.GlycemicIndex,
+			&i.GlycemicLoad,
+			&i.FoodCategory,
+			&i.SaturatedFatGrams,
+			&i.MonounsaturatedFatGrams,
+			&i.PolyunsaturatedFatGrams,
+			&i.CholesterolMg,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markActivityCompleted = `-- name: MarkActivityCompleted :exec
+UPDATE recommended_activities
+SET was_completed = true,
+    completed_at = NOW(),
+    actual_duration_minutes = $3,
+    last_interaction_at = NOW()
+WHERE session_id = $1 AND activity_id = $2
+`
+
+type MarkActivityCompletedParams struct {
+	SessionID             pgtype.UUID `json:"session_id"`
+	ActivityID            int32       `json:"activity_id"`
+	ActualDurationMinutes pgtype.Int4 `json:"actual_duration_minutes"`
+}
+
+func (q *Queries) MarkActivityCompleted(ctx context.Context, arg MarkActivityCompletedParams) error {
+	_, err := q.db.Exec(ctx, markActivityCompleted, arg.SessionID, arg.ActivityID, arg.ActualDurationMinutes)
+	return err
+}
+
+const markFoodAddedToCart = `-- name: MarkFoodAddedToCart :exec
+UPDATE recommended_foods
+SET was_added_to_cart = true,
+    last_interaction_at = NOW()
+WHERE session_id = $1 AND food_id = $2
+`
+
+type MarkFoodAddedToCartParams struct {
+	SessionID pgtype.UUID `json:"session_id"`
+	FoodID    pgtype.UUID `json:"food_id"`
+}
+
+func (q *Queries) MarkFoodAddedToCart(ctx context.Context, arg MarkFoodAddedToCartParams) error {
+	_, err := q.db.Exec(ctx, markFoodAddedToCart, arg.SessionID, arg.FoodID)
+	return err
+}
+
+const markFoodPurchased = `-- name: MarkFoodPurchased :exec
+UPDATE recommended_foods
+SET was_purchased = true,
+    last_interaction_at = NOW()
+WHERE session_id = $1 AND food_id = $2
+`
+
+type MarkFoodPurchasedParams struct {
+	SessionID pgtype.UUID `json:"session_id"`
+	FoodID    pgtype.UUID `json:"food_id"`
+}
+
+func (q *Queries) MarkFoodPurchased(ctx context.Context, arg MarkFoodPurchasedParams) error {
+	_, err := q.db.Exec(ctx, markFoodPurchased, arg.SessionID, arg.FoodID)
+	return err
 }
 
 const revokeAllUserRefreshTokens = `-- name: RevokeAllUserRefreshTokens :exec
@@ -3444,9 +4834,80 @@ func (q *Queries) RevokeRefreshToken(ctx context.Context, id pgtype.UUID) error 
 	return err
 }
 
+const searchRecommendationSessions = `-- name: SearchRecommendationSessions :many
+SELECT 
+    rs.session_id,
+    rs.created_at,
+    rs.requested_types,
+    rs.meal_type,
+    rs.food_category_codes,
+    rs.analysis_summary,
+    rs.overall_feedback
+FROM recommendation_sessions rs
+WHERE rs.user_id = $1
+    AND (
+        $2::TEXT IS NULL
+        OR rs.analysis_summary ILIKE '%' || $2 || '%'
+        OR $2 = ANY(rs.requested_types)
+        OR $2 = ANY(rs.food_category_codes)
+        OR rs.meal_type = $2
+    )
+    AND (
+        $3::TEXT IS NULL
+        OR rs.overall_feedback = $3
+    )
+ORDER BY rs.created_at DESC
+LIMIT 50
+`
+
+type SearchRecommendationSessionsParams struct {
+	UserID         string `json:"user_id"`
+	SearchQuery    string `json:"search_query"`
+	FeedbackFilter string `json:"feedback_filter"`
+}
+
+type SearchRecommendationSessionsRow struct {
+	SessionID         pgtype.UUID        `json:"session_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	RequestedTypes    []string           `json:"requested_types"`
+	MealType          pgtype.Text        `json:"meal_type"`
+	FoodCategoryCodes []string           `json:"food_category_codes"`
+	AnalysisSummary   string             `json:"analysis_summary"`
+	OverallFeedback   pgtype.Text        `json:"overall_feedback"`
+}
+
+// Search sessions by various criteria
+func (q *Queries) SearchRecommendationSessions(ctx context.Context, arg SearchRecommendationSessionsParams) ([]SearchRecommendationSessionsRow, error) {
+	rows, err := q.db.Query(ctx, searchRecommendationSessions, arg.UserID, arg.SearchQuery, arg.FeedbackFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchRecommendationSessionsRow
+	for rows.Next() {
+		var i SearchRecommendationSessionsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.CreatedAt,
+			&i.RequestedTypes,
+			&i.MealType,
+			&i.FoodCategoryCodes,
+			&i.AnalysisSummary,
+			&i.OverallFeedback,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setCartSeller = `-- name: SetCartSeller :exec
 UPDATE user_carts
-SET seller_id = $2, updated_at = NOW()
+SET seller_id = $2
 WHERE user_id = $1
 `
 
@@ -3505,8 +4966,7 @@ SET
   user_provider = NULL,
   user_provider_user_id = NULL,
   user_avatar_url = NULL,   -- Clear the avatar linked to Google
-  user_raw_data = NULL,     -- Clear the raw data from Google
-  updated_at = NOW()
+  user_raw_data = NULL     -- Clear the raw data from Google
 WHERE 
   user_id = $1
 `
@@ -3546,8 +5006,7 @@ SET
     issue_description = COALESCE($11, issue_description),
     source = COALESCE($12, source),
     sync_id = COALESCE($13, sync_id),
-    notes = COALESCE($14, notes),
-    updated_at = NOW()
+    notes = COALESCE($14, notes)
 WHERE 
     activity_id = $1 AND user_id = $2
 RETURNING activity_id, user_id, activity_timestamp, activity_code, intensity, perceived_exertion, duration_minutes, steps_count, pre_activity_carbs, water_intake_ml, issue_description, source, sync_id, notes, created_at, updated_at
@@ -3648,8 +5107,7 @@ SET
     flag_reason = COALESCE($10, flag_reason),
     is_outlier = COALESCE($11, is_outlier),
     notes = COALESCE($12, notes),
-    symptoms = COALESCE($13, symptoms),
-    updated_at = NOW()
+    symptoms = COALESCE($13, symptoms)
 WHERE 
     reading_id = $1 AND user_id = $2
 RETURNING reading_id, user_id, glucose_value, reading_timestamp, reading_type, trend_arrow, rate_of_change, source, device_id, device_name, is_flagged, flag_reason, is_outlier, notes, symptoms, created_at, updated_at
@@ -3724,8 +5182,7 @@ SET
     activity_changes = COALESCE($10, activity_changes),
     notes = COALESCE($11, notes),
     document_url = COALESCE($12, document_url),
-    trend = COALESCE($13, trend), -- Trend will be calculated on the client/server
-    updated_at = NOW()
+    trend = COALESCE($13, trend) -- Trend will be calculated on the client/server
 WHERE 
     hba1c_id = $1 AND user_id = $2
 RETURNING hba1c_id, user_id, test_date, hba1c_percentage, hba1c_mmol_mol, estimated_avg_glucose, treatment_changed, medication_changes, diet_changes, activity_changes, change_from_previous, trend, notes, document_url, created_at, updated_at
@@ -3797,8 +5254,7 @@ SET
     symptoms = COALESCE($8, symptoms),
     treatments = COALESCE($9, treatments),
     required_medical_attention = COALESCE($10, required_medical_attention),
-    notes = COALESCE($11, notes),
-    updated_at = NOW()
+    notes = COALESCE($11, notes)
 WHERE 
     event_id = $1 AND user_id = $2
 RETURNING event_id, user_id, event_date, event_type, severity, glucose_value, ketone_value_mmol, symptoms, treatments, required_medical_attention, notes, created_at, updated_at
@@ -3864,8 +5320,7 @@ SET
     total_fat_grams = COALESCE($9, total_fat_grams),
     total_fiber_grams = COALESCE($10, total_fiber_grams),
     total_sugar_grams = COALESCE($11, total_sugar_grams),
-    tags = COALESCE($12, tags),
-    updated_at = NOW()
+    tags = COALESCE($12, tags)
 WHERE 
     meal_id = $1 AND user_id = $2
 RETURNING meal_id, user_id, meal_timestamp, meal_type_id, description, total_calories, total_carbs_grams, total_protein_grams, total_fat_grams, total_fiber_grams, total_sugar_grams, tags, created_at, updated_at
@@ -4025,8 +5480,7 @@ SET
     resting_heart_rate = COALESCE($13, resting_heart_rate),
     tags = COALESCE($14, tags),
     source = COALESCE($15, source),
-    notes = COALESCE($16, notes),
-    updated_at = NOW()
+    notes = COALESCE($16, notes)
 WHERE 
     sleep_id = $1 AND user_id = $2
 RETURNING sleep_id, user_id, sleep_date, bed_time, wake_time, quality_rating, tracker_score, deep_sleep_minutes, rem_sleep_minutes, light_sleep_minutes, awake_minutes, average_hrv, resting_heart_rate, tags, source, notes, created_at, updated_at
@@ -4174,8 +5628,7 @@ func (q *Queries) UpdateUserAddress(ctx context.Context, arg UpdateUserAddressPa
 
 const updateUserEmail = `-- name: UpdateUserEmail :exec
 UPDATE users
-SET user_email = $2,
-    updated_at = NOW()
+SET user_email = $2
 WHERE user_id = $1
 `
 
@@ -4197,8 +5650,7 @@ SET
   user_provider = $3,
   user_provider_user_id = $4,
   user_raw_data = $5,
-  user_email_auth = $6,
-  updated_at = NOW()
+  user_email_auth = $6
 WHERE 
   user_id = $7
 `
@@ -4284,8 +5736,7 @@ func (q *Queries) UpdateUserMedication(ctx context.Context, arg UpdateUserMedica
 
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 UPDATE users
-SET user_password = $2,
-    updated_at = NOW()
+SET user_password = $2
 WHERE user_id = $1
 `
 
@@ -4357,8 +5808,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 
 const updateUserUsername = `-- name: UpdateUserUsername :exec
 UPDATE users
-SET user_username = $2,
-    updated_at = NOW()
+SET user_username = $2
 WHERE user_id = $1
 `
 
@@ -4428,8 +5878,7 @@ DO UPDATE SET
     user_name_auth = EXCLUDED.user_name_auth,
     user_avatar_url = EXCLUDED.user_avatar_url,
     user_raw_data = EXCLUDED.user_raw_data,
-    user_last_login_at = EXCLUDED.user_last_login_at,
-    updated_at = CURRENT_TIMESTAMP
+    user_last_login_at = EXCLUDED.user_last_login_at
 RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 

@@ -149,6 +149,11 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.PUT("/health/log/meal/:meallog_id", user.UpdateMealLogHandler)
 	protected.DELETE("/health/log/meal/:meallog_id", user.DeleteMealLogHandler)
 
+	//Recommendations
+	protected.POST("/recommendations", user.GetRecommendationsHandler)
+	protected.GET("/recommendations", user.GetRecommendationSessionsHandler)
+	protected.GET("/recommendation/:session_id", user.GetRecommendationSessionDetailHandler)
+
 	return e
 }
 

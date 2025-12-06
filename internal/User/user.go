@@ -90,7 +90,7 @@ type UserDataAllResponse struct {
 	AccountProfile    *UserResponse               `json:"account_profile"`
 	HealthProfile     *database.UserHealthProfile `json:"health_profile"`
 	Addresses         []database.UserAddress      `json:"addresses"`
-	MedicationsConfig []database.UserMedication   `json:"medications_config"`
+	MedicationsConfig []database.UserMedication   `json:"medications_list"`
 
 	// --- E-Commerce State ---
 	Cart         *FullCartResponse    `json:"cart,omitempty"` // Re-use your cart response struct
@@ -652,9 +652,9 @@ func UpdateUsernameHandler(c echo.Context) error {
 	}
 
 	// OAuth users don't have usernames
-	if user.UserProvider.Valid && user.UserProvider.String != "" {
+	if user.UserProvider.Valid && user.UserProvider.String != "" && user.UserUsername.Valid {
 		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "OAuth users cannot set username",
+			"error": "Google account users cannot change username.",
 		})
 	}
 
@@ -1003,8 +1003,8 @@ func GetUserDataAllHandler(c echo.Context) error {
 
 			// Combine into response struct
 			fullMeal := MealLogWithItemsResponse{
-				UserMealLog: header,
-				Items:       items, // Will be [] if error or empty
+				MealLog: header,
+				Items:   items, // Will be [] if error or empty
 			}
 			response.MealLogs = append(response.MealLogs, fullMeal)
 		}

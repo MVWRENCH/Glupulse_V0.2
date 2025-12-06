@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -182,6 +183,22 @@ func FloatToNumeric(f float64) pgtype.Numeric {
 	return n
 }
 
+// NumericToFloat converts a pgtype.Numeric to a standard float64.
+// Returns 0.0 if the value is NULL or invalid.
+func NumericToFloat(n pgtype.Numeric) float64 {
+	if !n.Valid {
+		return 0.0
+	}
+
+	// Float64Value() is a method on pgtype.Numeric that returns (pgtype.Float8, error)
+	f, err := n.Float64Value()
+	if err != nil {
+		return 0.0
+	}
+
+	return f.Float64
+}
+
 // BMI Calculation (Redundant if using DB generated column, but useful for frontend projection)
 func CalculateBMI(weightKg float64, heightCm float64) float64 {
 	if heightCm == 0 {
@@ -216,4 +233,57 @@ func CmToFeetInches(cm float64) (int, int) {
 func A1cToMmol(percentage float64) float64 {
 	// Formula: (A1c * 10.93) - 23.5
 	return math.Round(((percentage*10.93)-23.5)*100) / 100
+}
+
+func GetMealTypeName(id int32) string {
+	switch id {
+	case 1:
+		return "Breakfast"
+	case 2:
+		return "Lunch"
+	case 3:
+		return "Dinner"
+	case 4:
+		return "Snack"
+	default:
+		return "Other"
+	}
+}
+
+func Contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// uuidToString safely converts pgtype.UUID to string
+func UuidToString(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return uuid.UUID(u.Bytes).String()
+}
+
+func StringToText(s string) pgtype.Text {
+	return pgtype.Text{
+		String: s,
+		Valid:  s != "",
+	}
+}
+
+func ParseIntParam(param string, defaultValue int) int {
+	if param == "" {
+		return defaultValue
+	}
+
+	val, err := strconv.Atoi(param)
+	if err != nil {
+		// Log the error if necessary, or just fail silently to default
+		return defaultValue
+	}
+
+	return val
 }

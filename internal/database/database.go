@@ -45,8 +45,6 @@ var (
 	schema     = os.Getenv("BLUEPRINT_DB_SCHEMA")
 	dbInstance *service
 
-	// FIX: Create an exported, package-level variable for the connection pool.
-	// By capitalizing 'Dbpool', it becomes accessible to other packages like 'main'.
 	Dbpool *pgxpool.Pool
 )
 

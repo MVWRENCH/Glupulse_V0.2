@@ -406,100 +406,55 @@ $$;
 ALTER FUNCTION public.ensure_one_default_address() OWNER TO postgres;
 
 --
--- Name: on_update_current_timestamp_chat_conversations(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: link_activity_to_recommendation(uuid, integer); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.on_update_current_timestamp_chat_conversations() RETURNS trigger
+CREATE FUNCTION public.link_activity_to_recommendation(p_activity_log_id uuid, p_activity_id integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
 BEGIN
-   NEW.last_message_at = now();
-   RETURN NEW;
+    UPDATE recommended_activities
+    SET was_completed = TRUE,
+        completed_at = NOW(),
+        last_interaction_at = NOW()
+    WHERE activity_id = p_activity_id
+      AND session_id IN (
+          SELECT session_id 
+          FROM recommendation_sessions 
+          WHERE user_id = (SELECT user_id FROM activity_logs WHERE activity_id = p_activity_log_id)
+          AND created_at >= NOW() - INTERVAL '7 days'
+      )
+      AND was_completed = FALSE;
 END;
 $$;
 
 
-ALTER FUNCTION public.on_update_current_timestamp_chat_conversations() OWNER TO postgres;
+ALTER FUNCTION public.link_activity_to_recommendation(p_activity_log_id uuid, p_activity_id integer) OWNER TO postgres;
 
 --
--- Name: on_update_current_timestamp_delivery_orders(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: link_meal_to_recommendation(uuid, uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.on_update_current_timestamp_delivery_orders() RETURNS trigger
+CREATE FUNCTION public.link_meal_to_recommendation(p_meal_id uuid, p_food_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
 BEGIN
-   NEW.updated_at = now();
-   RETURN NEW;
+    UPDATE recommended_foods
+    SET was_logged_as_meal = TRUE,
+        last_interaction_at = NOW()
+    WHERE food_id = p_food_id
+      AND session_id IN (
+          SELECT session_id 
+          FROM recommendation_sessions 
+          WHERE user_id = (SELECT user_id FROM meal_logs WHERE meal_id = p_meal_id)
+          AND created_at >= NOW() - INTERVAL '7 days'
+      )
+      AND was_logged_as_meal = FALSE;
 END;
 $$;
 
 
-ALTER FUNCTION public.on_update_current_timestamp_delivery_orders() OWNER TO postgres;
-
---
--- Name: on_update_current_timestamp_doctor_appointments(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.on_update_current_timestamp_doctor_appointments() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-   NEW.updated_at = now();
-   RETURN NEW;
-END;
-$$;
-
-
-ALTER FUNCTION public.on_update_current_timestamp_doctor_appointments() OWNER TO postgres;
-
---
--- Name: on_update_current_timestamp_doctor_consultation_records(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.on_update_current_timestamp_doctor_consultation_records() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-   NEW.updated_at = now();
-   RETURN NEW;
-END;
-$$;
-
-
-ALTER FUNCTION public.on_update_current_timestamp_doctor_consultation_records() OWNER TO postgres;
-
---
--- Name: on_update_current_timestamp_glucose_manual(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.on_update_current_timestamp_glucose_manual() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-   NEW.glucose_inputdate = now();
-   RETURN NEW;
-END;
-$$;
-
-
-ALTER FUNCTION public.on_update_current_timestamp_glucose_manual() OWNER TO postgres;
-
---
--- Name: on_update_current_timestamp_seller_promotions(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.on_update_current_timestamp_seller_promotions() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-   NEW.updated_at = now();
-   RETURN NEW;
-END;
-$$;
-
-
-ALTER FUNCTION public.on_update_current_timestamp_seller_promotions() OWNER TO postgres;
+ALTER FUNCTION public.link_meal_to_recommendation(p_meal_id uuid, p_food_id uuid) OWNER TO postgres;
 
 --
 -- Name: update_address_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -746,219 +701,6 @@ ALTER SEQUENCE public.activity_types_activity_type_id_seq OWNED BY public.activi
 
 
 --
--- Name: chat_conversations; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.chat_conversations (
-    conversation_id character varying(60) NOT NULL,
-    participant1_id character varying(20) NOT NULL,
-    participant1_type public.chat_conversations_participant1_type NOT NULL,
-    participant2_id character varying(20) NOT NULL,
-    participant2_type public.chat_conversations_participant2_type NOT NULL,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    last_message_at timestamp with time zone
-);
-
-
-ALTER TABLE public.chat_conversations OWNER TO postgres;
-
---
--- Name: chat_messages; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.chat_messages (
-    message_id character varying(70) NOT NULL,
-    conversation_id character varying(60) NOT NULL,
-    sender_id bigint NOT NULL,
-    sender_type public.chat_messages_sender_type NOT NULL,
-    message_content text NOT NULL,
-    sent_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    is_read boolean DEFAULT false
-);
-
-
-ALTER TABLE public.chat_messages OWNER TO postgres;
-
---
--- Name: doctor; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.doctor (
-    doctor_id character varying(20) NOT NULL,
-    doctor_username character varying(30) NOT NULL,
-    doctor_password character varying(255) NOT NULL,
-    doctor_firstname character varying(50) NOT NULL,
-    doctor_lastname character varying(50) DEFAULT NULL::character varying,
-    doctor_email character varying(100) NOT NULL,
-    doctor_phonenumber character varying(15) NOT NULL,
-    doctor_specialist character varying(50) DEFAULT NULL::character varying,
-    doctor_sip character varying(30) DEFAULT NULL::character varying,
-    doctor_province character varying(50) DEFAULT NULL::character varying,
-    doctor_city character varying(50) DEFAULT NULL::character varying,
-    doctor_district character varying(50) DEFAULT NULL::character varying,
-    doctor_gmapslink character varying(500) DEFAULT NULL::character varying,
-    doctor_practiceaddress character varying(255) DEFAULT NULL::character varying,
-    doctor_practiceschedule text,
-    doctor_accountstatus boolean DEFAULT true NOT NULL,
-    doctor_photopath character varying(255) DEFAULT NULL::character varying
-);
-
-
-ALTER TABLE public.doctor OWNER TO postgres;
-
---
--- Name: doctor_appointments; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.doctor_appointments (
-    appointment_id bigint NOT NULL,
-    user_id character varying(20) NOT NULL,
-    doctor_id character varying(20) NOT NULL,
-    appointment_datetime timestamp with time zone NOT NULL,
-    appointment_status public.doctor_appointments_appointment_status DEFAULT 'scheduled'::public.doctor_appointments_appointment_status NOT NULL,
-    appointment_type public.doctor_appointments_appointment_type NOT NULL,
-    appointment_reason text,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone
-);
-
-
-ALTER TABLE public.doctor_appointments OWNER TO postgres;
-
---
--- Name: doctor_appointments_appointment_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.doctor_appointments_appointment_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.doctor_appointments_appointment_id_seq OWNER TO postgres;
-
---
--- Name: doctor_appointments_appointment_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.doctor_appointments_appointment_id_seq OWNED BY public.doctor_appointments.appointment_id;
-
-
---
--- Name: doctor_availability; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.doctor_availability (
-    availability_id bigint NOT NULL,
-    doctor_id character varying(20) NOT NULL,
-    day_of_week character varying(50) NOT NULL,
-    start_time time without time zone NOT NULL,
-    end_time time without time zone NOT NULL
-);
-
-
-ALTER TABLE public.doctor_availability OWNER TO postgres;
-
---
--- Name: doctor_availability_availability_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.doctor_availability_availability_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.doctor_availability_availability_id_seq OWNER TO postgres;
-
---
--- Name: doctor_availability_availability_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.doctor_availability_availability_id_seq OWNED BY public.doctor_availability.availability_id;
-
-
---
--- Name: doctor_consultation_records; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.doctor_consultation_records (
-    record_id bigint NOT NULL,
-    appointment_id bigint NOT NULL,
-    doctor_notes text,
-    doctor_diagnosis text,
-    next_consultation boolean DEFAULT false,
-    next_consultation_date date,
-    recorded_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone
-);
-
-
-ALTER TABLE public.doctor_consultation_records OWNER TO postgres;
-
---
--- Name: doctor_consultation_records_record_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.doctor_consultation_records_record_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.doctor_consultation_records_record_id_seq OWNER TO postgres;
-
---
--- Name: doctor_consultation_records_record_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.doctor_consultation_records_record_id_seq OWNED BY public.doctor_consultation_records.record_id;
-
-
---
--- Name: doctor_reviews; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.doctor_reviews (
-    review_id bigint NOT NULL,
-    doctor_id character varying(20) NOT NULL,
-    user_id character varying(20) NOT NULL,
-    review_rating smallint NOT NULL,
-    review_comment text,
-    review_date timestamp with time zone DEFAULT CURRENT_TIMESTAMP
-);
-
-
-ALTER TABLE public.doctor_reviews OWNER TO postgres;
-
---
--- Name: doctor_reviews_review_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.doctor_reviews_review_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.doctor_reviews_review_id_seq OWNER TO postgres;
-
---
--- Name: doctor_reviews_review_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.doctor_reviews_review_id_seq OWNED BY public.doctor_reviews.review_id;
-
-
---
 -- Name: food_categories; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -995,56 +737,6 @@ ALTER SEQUENCE public.food_categories_category_id_seq OWNED BY public.food_categ
 
 
 --
--- Name: food_picture; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.food_picture (
-    photo_id bigint NOT NULL,
-    food_id character varying(20) DEFAULT NULL::character varying,
-    food_photopath character varying(255) DEFAULT NULL::character varying,
-    food_photodescription character varying(100) DEFAULT NULL::character varying
-);
-
-
-ALTER TABLE public.food_picture OWNER TO postgres;
-
---
--- Name: food_picture_photo_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.food_picture_photo_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.food_picture_photo_id_seq OWNER TO postgres;
-
---
--- Name: food_picture_photo_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.food_picture_photo_id_seq OWNED BY public.food_picture.photo_id;
-
-
---
--- Name: food_recommendation; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.food_recommendation (
-    recommendation_id character varying(40) NOT NULL,
-    user_id character varying(20) NOT NULL,
-    generated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    notes text,
-    source_agent character varying(50) DEFAULT NULL::character varying
-);
-
-
-ALTER TABLE public.food_recommendation OWNER TO postgres;
-
---
 -- Name: foods; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1062,43 +754,23 @@ CREATE TABLE public.foods (
     tags text[],
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    serving_size_g numeric(10,2),
-    calories numeric(10,2),
-    protein_g numeric(10,2),
-    fat_g numeric(10,2),
-    carbohydrate_g numeric(10,2),
-    dietary_fiber_g numeric(10,2),
-    sugars_g numeric(10,2),
-    saturated_fat_g numeric(10,2),
-    polyunsaturated_fat_g numeric(10,2),
-    monounsaturated_fat_g numeric(10,2),
-    trans_fat_g numeric(10,2),
-    cholesterol_mg numeric(10,2),
-    sodium_mg numeric(10,2),
-    potassium_mg numeric(10,2),
-    water_g numeric(10,2),
-    vitamin_a_mcg numeric(10,2),
-    vitamin_c_mg numeric(10,2),
-    vitamin_d_mcg numeric(10,2),
-    vitamin_e_mg numeric(10,2),
-    vitamin_k_mcg numeric(10,2),
-    thiamin_mg numeric(10,2),
-    riboflavin_mg numeric(10,2),
-    niacin_mg numeric(10,2),
-    vitamin_b5_mg numeric(10,2),
-    vitamin_b6_mg numeric(10,2),
-    folate_mcg numeric(10,2),
-    vitamin_b12_mcg numeric(10,2),
-    calcium_mg numeric(10,2),
-    copper_mg numeric(10,2),
-    iron_mg numeric(10,2),
-    magnesium_mg numeric(10,2),
-    manganese_mg numeric(10,2),
-    phosphorus_mg numeric(10,2),
-    selenium_mcg numeric(10,2),
-    zinc_mg numeric(10,2),
-    caffeine_mg numeric(10,2),
-    nutrition_density numeric(10,2)
+    serving_size character varying(100),
+    serving_size_grams numeric(8,2),
+    quantity numeric(6,2),
+    calories integer,
+    carbs_grams numeric(6,2),
+    fiber_grams numeric(5,2),
+    protein_grams numeric(6,2),
+    fat_grams numeric(6,2),
+    sugar_grams numeric(6,2),
+    sodium_mg numeric(6,2),
+    glycemic_index integer,
+    glycemic_load numeric(5,2),
+    food_category character varying(150)[],
+    saturated_fat_grams numeric(6,2),
+    monounsaturated_fat_grams numeric(6,2),
+    polyunsaturated_fat_grams numeric(6,2),
+    cholesterol_mg numeric(6,2)
 );
 
 
@@ -1166,7 +838,6 @@ ALTER TABLE public.logs_auth OWNER TO postgres;
 
 CREATE TABLE public.meal_types (
     meal_type_id integer NOT NULL,
-    meal_code character varying(50) NOT NULL,
     display_name character varying(100) NOT NULL
 );
 
@@ -1193,44 +864,6 @@ ALTER SEQUENCE public.meal_types_meal_type_id_seq OWNER TO postgres;
 --
 
 ALTER SEQUENCE public.meal_types_meal_type_id_seq OWNED BY public.meal_types.meal_type_id;
-
-
---
--- Name: message_attachments; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.message_attachments (
-    attachment_id bigint NOT NULL,
-    message_id character varying(70) NOT NULL,
-    file_url character varying(512) NOT NULL,
-    file_type character varying(100) NOT NULL,
-    file_name character varying(255) DEFAULT NULL::character varying,
-    file_size_bytes bigint,
-    uploaded_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
-);
-
-
-ALTER TABLE public.message_attachments OWNER TO postgres;
-
---
--- Name: message_attachments_attachment_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.message_attachments_attachment_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.message_attachments_attachment_id_seq OWNER TO postgres;
-
---
--- Name: message_attachments_attachment_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.message_attachments_attachment_id_seq OWNED BY public.message_attachments.attachment_id;
 
 
 --
@@ -1275,39 +908,132 @@ CREATE TABLE public.pending_registrations (
 ALTER TABLE public.pending_registrations OWNER TO postgres;
 
 --
--- Name: recommendation_types; Type: TABLE; Schema: public; Owner: postgres
+-- Name: recommendation_sessions; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.recommendation_types (
-    rec_type_id integer NOT NULL,
-    rec_code character varying(50) NOT NULL,
-    display_name character varying(100) NOT NULL
+CREATE TABLE public.recommendation_sessions (
+    session_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id text NOT NULL,
+    requested_types text[] NOT NULL,
+    meal_type character varying(50),
+    food_category_codes text[],
+    food_preferences text,
+    activity_type_codes text[],
+    activity_preferences text,
+    insights_question text,
+    analysis_summary text NOT NULL,
+    insights_response text,
+    latest_glucose_value integer,
+    latest_hba1c numeric(4,2),
+    user_condition_id integer,
+    ai_model_used character varying(100) DEFAULT 'gemini-2.5-flash-preview-09-2025'::character varying,
+    ai_confidence_score numeric(4,3),
+    overall_feedback character varying(20),
+    feedback_notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (now() + '7 days'::interval),
+    CONSTRAINT recommendation_sessions_ai_confidence_score_check CHECK (((ai_confidence_score >= (0)::numeric) AND (ai_confidence_score <= (1)::numeric))),
+    CONSTRAINT recommendation_sessions_overall_feedback_check CHECK (((overall_feedback)::text = ANY ((ARRAY['helpful'::character varying, 'neutral'::character varying, 'not_helpful'::character varying, 'very_helpful'::character varying])::text[]))),
+    CONSTRAINT valid_requested_types CHECK ((requested_types <@ ARRAY['food'::text, 'activity'::text, 'insights'::text]))
 );
 
 
-ALTER TABLE public.recommendation_types OWNER TO postgres;
+ALTER TABLE public.recommendation_sessions OWNER TO postgres;
 
 --
--- Name: recommendation_types_rec_type_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+-- Name: recommended_activities; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE SEQUENCE public.recommendation_types_rec_type_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
+CREATE TABLE public.recommended_activities (
+    recommendation_activity_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id uuid NOT NULL,
+    activity_id integer NOT NULL,
+    reason text NOT NULL,
+    recommended_duration_minutes integer NOT NULL,
+    recommended_intensity character varying(20),
+    safety_notes text,
+    best_time_of_day character varying(20),
+    glucose_management_tip text,
+    recommendation_rank integer,
+    confidence_score numeric(4,3),
+    was_viewed boolean DEFAULT false,
+    was_completed boolean DEFAULT false,
+    actual_duration_minutes integer,
+    user_rating integer,
+    feedback character varying(20),
+    feedback_notes text,
+    glucose_change_after_activity integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    last_interaction_at timestamp with time zone,
+    CONSTRAINT recommended_activities_best_time_of_day_check CHECK (((best_time_of_day)::text = ANY ((ARRAY['morning'::character varying, 'afternoon'::character varying, 'evening'::character varying, 'any'::character varying])::text[]))),
+    CONSTRAINT recommended_activities_confidence_score_check CHECK (((confidence_score >= (0)::numeric) AND (confidence_score <= (1)::numeric))),
+    CONSTRAINT recommended_activities_feedback_check CHECK (((feedback)::text = ANY ((ARRAY['enjoyed_it'::character varying, 'felt_great'::character varying, 'neutral'::character varying, 'too_hard'::character varying, 'caused_hypo'::character varying])::text[]))),
+    CONSTRAINT recommended_activities_recommended_duration_minutes_check CHECK ((recommended_duration_minutes > 0)),
+    CONSTRAINT recommended_activities_recommended_intensity_check CHECK (((recommended_intensity)::text = ANY ((ARRAY['light'::character varying, 'moderate'::character varying, 'vigorous'::character varying])::text[]))),
+    CONSTRAINT recommended_activities_user_rating_check CHECK (((user_rating >= 1) AND (user_rating <= 5)))
+);
 
 
-ALTER SEQUENCE public.recommendation_types_rec_type_id_seq OWNER TO postgres;
+ALTER TABLE public.recommended_activities OWNER TO postgres;
 
 --
--- Name: recommendation_types_rec_type_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+-- Name: recommended_foods; Type: TABLE; Schema: public; Owner: postgres
 --
 
-ALTER SEQUENCE public.recommendation_types_rec_type_id_seq OWNED BY public.recommendation_types.rec_type_id;
+CREATE TABLE public.recommended_foods (
+    recommendation_food_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    session_id uuid NOT NULL,
+    food_id uuid NOT NULL,
+    reason text NOT NULL,
+    nutrition_highlight text,
+    suggested_meal_type character varying(50),
+    suggested_portion_size character varying(100),
+    recommendation_rank integer,
+    confidence_score numeric(4,3),
+    was_viewed boolean DEFAULT false,
+    was_added_to_cart boolean DEFAULT false,
+    was_purchased boolean DEFAULT false,
+    was_logged_as_meal boolean DEFAULT false,
+    user_rating integer,
+    feedback character varying(20),
+    feedback_notes text,
+    glucose_spike_after_eating integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_interaction_at timestamp with time zone,
+    CONSTRAINT recommended_foods_confidence_score_check CHECK (((confidence_score >= (0)::numeric) AND (confidence_score <= (1)::numeric))),
+    CONSTRAINT recommended_foods_feedback_check CHECK (((feedback)::text = ANY ((ARRAY['loved_it'::character varying, 'liked_it'::character varying, 'neutral'::character varying, 'disliked_it'::character varying, 'caused_spike'::character varying])::text[]))),
+    CONSTRAINT recommended_foods_user_rating_check CHECK (((user_rating >= 1) AND (user_rating <= 5)))
+);
 
+
+ALTER TABLE public.recommended_foods OWNER TO postgres;
+
+--
+-- Name: recommendation_effectiveness; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.recommendation_effectiveness AS
+ SELECT rs.user_id,
+    rs.user_condition_id,
+    rs.meal_type,
+    (rs.created_at)::date AS recommendation_date,
+    count(DISTINCT rf.food_id) FILTER (WHERE ('food'::text = ANY (rs.requested_types))) AS foods_recommended,
+    count(DISTINCT rf.food_id) FILTER (WHERE (rf.was_viewed = true)) AS foods_viewed,
+    count(DISTINCT rf.food_id) FILTER (WHERE (rf.was_purchased = true)) AS foods_purchased,
+    avg(rf.user_rating) FILTER (WHERE (rf.user_rating IS NOT NULL)) AS avg_food_rating,
+    count(DISTINCT ra.activity_id) FILTER (WHERE ('activity'::text = ANY (rs.requested_types))) AS activities_recommended,
+    count(DISTINCT ra.activity_id) FILTER (WHERE (ra.was_viewed = true)) AS activities_viewed,
+    count(DISTINCT ra.activity_id) FILTER (WHERE (ra.was_completed = true)) AS activities_completed,
+    avg(ra.user_rating) FILTER (WHERE (ra.user_rating IS NOT NULL)) AS avg_activity_rating,
+    rs.overall_feedback
+   FROM ((public.recommendation_sessions rs
+     LEFT JOIN public.recommended_foods rf ON ((rs.session_id = rf.session_id)))
+     LEFT JOIN public.recommended_activities ra ON ((rs.session_id = ra.session_id)))
+  GROUP BY rs.session_id, rs.user_id, rs.user_condition_id, rs.meal_type, rs.created_at, rs.overall_feedback;
+
+
+ALTER VIEW public.recommendation_effectiveness OWNER TO postgres;
 
 --
 -- Name: roles; Type: TABLE; Schema: public; Owner: postgres
@@ -1477,31 +1203,6 @@ CREATE TABLE public.user_email_change_requests (
 
 
 ALTER TABLE public.user_email_change_requests OWNER TO postgres;
-
---
--- Name: user_food_insights; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.user_food_insights (
-    insight_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    user_id text NOT NULL,
-    food_id uuid,
-    food_name character varying(200) NOT NULL,
-    times_consumed integer DEFAULT 0,
-    last_eaten_at timestamp with time zone,
-    health_score integer,
-    avg_glucose_spike integer,
-    avg_time_to_peak_minutes integer,
-    ai_tags jsonb DEFAULT '{}'::jsonb,
-    is_trigger_food boolean DEFAULT false,
-    is_favorite boolean DEFAULT false,
-    user_notes text,
-    updated_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT user_food_insights_health_score_check CHECK (((health_score >= 0) AND (health_score <= 100)))
-);
-
-
-ALTER TABLE public.user_food_insights OWNER TO postgres;
 
 --
 -- Name: user_glucose_readings; Type: TABLE; Schema: public; Owner: postgres
@@ -1705,6 +1406,10 @@ CREATE TABLE public.user_meal_items (
     glycemic_load numeric(5,2),
     food_category character varying(50),
     created_at timestamp with time zone DEFAULT now(),
+    saturated_fat_grams numeric(6,2),
+    monounsaturated_fat_grams numeric(6,2),
+    polyunsaturated_fat_grams numeric(6,2),
+    cholesterol_mg integer,
     CONSTRAINT user_meal_items_glycemic_index_check CHECK (((glycemic_index >= 0) AND (glycemic_index <= 100)))
 );
 
@@ -2017,45 +1722,10 @@ ALTER TABLE ONLY public.activity_types ALTER COLUMN activity_type_id SET DEFAULT
 
 
 --
--- Name: doctor_appointments appointment_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_appointments ALTER COLUMN appointment_id SET DEFAULT nextval('public.doctor_appointments_appointment_id_seq'::regclass);
-
-
---
--- Name: doctor_availability availability_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_availability ALTER COLUMN availability_id SET DEFAULT nextval('public.doctor_availability_availability_id_seq'::regclass);
-
-
---
--- Name: doctor_consultation_records record_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_consultation_records ALTER COLUMN record_id SET DEFAULT nextval('public.doctor_consultation_records_record_id_seq'::regclass);
-
-
---
--- Name: doctor_reviews review_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_reviews ALTER COLUMN review_id SET DEFAULT nextval('public.doctor_reviews_review_id_seq'::regclass);
-
-
---
 -- Name: food_categories category_id; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.food_categories ALTER COLUMN category_id SET DEFAULT nextval('public.food_categories_category_id_seq'::regclass);
-
-
---
--- Name: food_picture photo_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food_picture ALTER COLUMN photo_id SET DEFAULT nextval('public.food_picture_photo_id_seq'::regclass);
 
 
 --
@@ -2070,20 +1740,6 @@ ALTER TABLE ONLY public.health_condition_types ALTER COLUMN condition_id SET DEF
 --
 
 ALTER TABLE ONLY public.meal_types ALTER COLUMN meal_type_id SET DEFAULT nextval('public.meal_types_meal_type_id_seq'::regclass);
-
-
---
--- Name: message_attachments attachment_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.message_attachments ALTER COLUMN attachment_id SET DEFAULT nextval('public.message_attachments_attachment_id_seq'::regclass);
-
-
---
--- Name: recommendation_types rec_type_id; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.recommendation_types ALTER COLUMN rec_type_id SET DEFAULT nextval('public.recommendation_types_rec_type_id_seq'::regclass);
 
 
 --
@@ -2181,99 +1837,11 @@ ALTER TABLE ONLY public.health_condition_types
 
 
 --
--- Name: chat_conversations idx_17145_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.chat_conversations
-    ADD CONSTRAINT idx_17145_primary PRIMARY KEY (conversation_id);
-
-
---
--- Name: chat_messages idx_17154_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.chat_messages
-    ADD CONSTRAINT idx_17154_primary PRIMARY KEY (message_id);
-
-
---
--- Name: doctor idx_17266_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor
-    ADD CONSTRAINT idx_17266_primary PRIMARY KEY (doctor_id);
-
-
---
--- Name: doctor_appointments idx_17289_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_appointments
-    ADD CONSTRAINT idx_17289_primary PRIMARY KEY (appointment_id);
-
-
---
--- Name: doctor_availability idx_17304_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_availability
-    ADD CONSTRAINT idx_17304_primary PRIMARY KEY (availability_id);
-
-
---
--- Name: doctor_consultation_records idx_17314_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_consultation_records
-    ADD CONSTRAINT idx_17314_primary PRIMARY KEY (record_id);
-
-
---
--- Name: doctor_reviews idx_17325_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_reviews
-    ADD CONSTRAINT idx_17325_primary PRIMARY KEY (review_id);
-
-
---
--- Name: food_picture idx_17353_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food_picture
-    ADD CONSTRAINT idx_17353_primary PRIMARY KEY (photo_id);
-
-
---
--- Name: food_recommendation idx_17361_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.food_recommendation
-    ADD CONSTRAINT idx_17361_primary PRIMARY KEY (recommendation_id);
-
-
---
--- Name: message_attachments idx_17386_primary; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.message_attachments
-    ADD CONSTRAINT idx_17386_primary PRIMARY KEY (attachment_id);
-
-
---
 -- Name: logs_auth logs_auth_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.logs_auth
     ADD CONSTRAINT logs_auth_pkey PRIMARY KEY (log_id);
-
-
---
--- Name: meal_types meal_types_meal_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.meal_types
-    ADD CONSTRAINT meal_types_meal_code_key UNIQUE (meal_code);
 
 
 --
@@ -2325,19 +1893,27 @@ ALTER TABLE ONLY public.pending_registrations
 
 
 --
--- Name: recommendation_types recommendation_types_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: recommendation_sessions recommendation_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.recommendation_types
-    ADD CONSTRAINT recommendation_types_pkey PRIMARY KEY (rec_type_id);
+ALTER TABLE ONLY public.recommendation_sessions
+    ADD CONSTRAINT recommendation_sessions_pkey PRIMARY KEY (session_id);
 
 
 --
--- Name: recommendation_types recommendation_types_rec_code_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: recommended_activities recommended_activities_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.recommendation_types
-    ADD CONSTRAINT recommendation_types_rec_code_key UNIQUE (rec_code);
+ALTER TABLE ONLY public.recommended_activities
+    ADD CONSTRAINT recommended_activities_pkey PRIMARY KEY (recommendation_activity_id);
+
+
+--
+-- Name: recommended_foods recommended_foods_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recommended_foods
+    ADD CONSTRAINT recommended_foods_pkey PRIMARY KEY (recommendation_food_id);
 
 
 --
@@ -2365,11 +1941,19 @@ ALTER TABLE ONLY public.seller_profiles
 
 
 --
--- Name: user_food_insights unique_user_food_insight; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: recommended_activities unique_session_activity; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.user_food_insights
-    ADD CONSTRAINT unique_user_food_insight UNIQUE (user_id, food_name);
+ALTER TABLE ONLY public.recommended_activities
+    ADD CONSTRAINT unique_session_activity UNIQUE (session_id, activity_id);
+
+
+--
+-- Name: recommended_foods unique_session_food; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recommended_foods
+    ADD CONSTRAINT unique_session_food UNIQUE (session_id, food_id);
 
 
 --
@@ -2442,14 +2026,6 @@ ALTER TABLE ONLY public.user_email_change_requests
 
 ALTER TABLE ONLY public.user_email_change_requests
     ADD CONSTRAINT user_email_change_requests_verification_token_key UNIQUE (verification_token);
-
-
---
--- Name: user_food_insights user_food_insights_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_food_insights
-    ADD CONSTRAINT user_food_insights_pkey PRIMARY KEY (insight_id);
 
 
 --
@@ -2602,76 +2178,6 @@ ALTER TABLE ONLY public.users_refresh_tokens
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_user_username_key UNIQUE (user_username);
-
-
---
--- Name: idx_17154_conversation_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17154_conversation_id ON public.chat_messages USING btree (conversation_id);
-
-
---
--- Name: idx_17289_doctor_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17289_doctor_id ON public.doctor_appointments USING btree (doctor_id);
-
-
---
--- Name: idx_17289_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17289_user_id ON public.doctor_appointments USING btree (user_id);
-
-
---
--- Name: idx_17304_doctor_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17304_doctor_id ON public.doctor_availability USING btree (doctor_id);
-
-
---
--- Name: idx_17314_appointment_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE UNIQUE INDEX idx_17314_appointment_id ON public.doctor_consultation_records USING btree (appointment_id);
-
-
---
--- Name: idx_17325_doctor_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17325_doctor_id ON public.doctor_reviews USING btree (doctor_id);
-
-
---
--- Name: idx_17325_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17325_user_id ON public.doctor_reviews USING btree (user_id);
-
-
---
--- Name: idx_17353_food_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17353_food_id ON public.food_picture USING btree (food_id);
-
-
---
--- Name: idx_17361_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17361_user_id ON public.food_recommendation USING btree (user_id);
-
-
---
--- Name: idx_17386_message_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_17386_message_id ON public.message_attachments USING btree (message_id);
 
 
 --
@@ -3060,6 +2566,104 @@ CREATE INDEX idx_pending_registrations_username ON public.pending_registrations 
 
 
 --
+-- Name: idx_recommendation_sessions_created_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommendation_sessions_created_at ON public.recommendation_sessions USING btree (created_at DESC);
+
+
+--
+-- Name: idx_recommendation_sessions_types; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommendation_sessions_types ON public.recommendation_sessions USING gin (requested_types);
+
+
+--
+-- Name: idx_recommendation_sessions_user_date; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommendation_sessions_user_date ON public.recommendation_sessions USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: idx_recommendation_sessions_user_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommendation_sessions_user_id ON public.recommendation_sessions USING btree (user_id);
+
+
+--
+-- Name: idx_recommended_activities_activity_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_activities_activity_id ON public.recommended_activities USING btree (activity_id);
+
+
+--
+-- Name: idx_recommended_activities_completed; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_activities_completed ON public.recommended_activities USING btree (was_completed) WHERE (was_completed = true);
+
+
+--
+-- Name: idx_recommended_activities_feedback; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_activities_feedback ON public.recommended_activities USING btree (feedback) WHERE (feedback IS NOT NULL);
+
+
+--
+-- Name: idx_recommended_activities_rank; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_activities_rank ON public.recommended_activities USING btree (recommendation_rank);
+
+
+--
+-- Name: idx_recommended_activities_session_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_activities_session_id ON public.recommended_activities USING btree (session_id);
+
+
+--
+-- Name: idx_recommended_foods_feedback; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_foods_feedback ON public.recommended_foods USING btree (feedback) WHERE (feedback IS NOT NULL);
+
+
+--
+-- Name: idx_recommended_foods_food_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_foods_food_id ON public.recommended_foods USING btree (food_id);
+
+
+--
+-- Name: idx_recommended_foods_purchased; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_foods_purchased ON public.recommended_foods USING btree (was_purchased) WHERE (was_purchased = true);
+
+
+--
+-- Name: idx_recommended_foods_rank; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_foods_rank ON public.recommended_foods USING btree (recommendation_rank);
+
+
+--
+-- Name: idx_recommended_foods_session_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_recommended_foods_session_id ON public.recommended_foods USING btree (session_id);
+
+
+--
 -- Name: idx_refresh_tokens_expires_at; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -3144,34 +2748,6 @@ CREATE INDEX idx_user_addresses_user_id ON public.user_addresses USING btree (us
 
 
 --
--- Name: idx_user_food_insights_favorite; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_user_food_insights_favorite ON public.user_food_insights USING btree (is_favorite);
-
-
---
--- Name: idx_user_food_insights_score; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_user_food_insights_score ON public.user_food_insights USING btree (health_score);
-
-
---
--- Name: idx_user_food_insights_trigger; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_user_food_insights_trigger ON public.user_food_insights USING btree (is_trigger_food) WHERE (is_trigger_food = true);
-
-
---
--- Name: idx_user_food_insights_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_user_food_insights_user_id ON public.user_food_insights USING btree (user_id);
-
-
---
 -- Name: idx_user_health_profiles_condition; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -3249,27 +2825,6 @@ CREATE TRIGGER "Trigger_Ensure_One_Default_Address" BEFORE INSERT OR UPDATE ON p
 
 
 --
--- Name: chat_conversations on_update_current_timestamp; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.chat_conversations FOR EACH ROW EXECUTE FUNCTION public.on_update_current_timestamp_chat_conversations();
-
-
---
--- Name: doctor_appointments on_update_current_timestamp; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.doctor_appointments FOR EACH ROW EXECUTE FUNCTION public.on_update_current_timestamp_doctor_appointments();
-
-
---
--- Name: doctor_consultation_records on_update_current_timestamp; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER on_update_current_timestamp BEFORE UPDATE ON public.doctor_consultation_records FOR EACH ROW EXECUTE FUNCTION public.on_update_current_timestamp_doctor_consultation_records();
-
-
---
 -- Name: user_glucose_readings trigger_calculate_glucose_trend; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -3326,6 +2881,55 @@ CREATE TRIGGER "update_updated_at()" BEFORE UPDATE ON public.user_medications FO
 
 
 --
+-- Name: foods update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.foods FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_activity_logs update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_activity_logs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_carts update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_carts FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_glucose_readings update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_glucose_readings FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_hba1c_records update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_hba1c_records FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_meal_logs update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_meal_logs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_sleep_logs update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_sleep_logs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
 -- Name: user_health_profiles update_user_health_profiles_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -3371,46 +2975,6 @@ ALTER TABLE ONLY public.user_cart_items
 
 
 --
--- Name: chat_messages chat_messages_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.chat_messages
-    ADD CONSTRAINT chat_messages_ibfk_1 FOREIGN KEY (conversation_id) REFERENCES public.chat_conversations(conversation_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
--- Name: doctor_appointments doctor_appointments_ibfk_2; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_appointments
-    ADD CONSTRAINT doctor_appointments_ibfk_2 FOREIGN KEY (doctor_id) REFERENCES public.doctor(doctor_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
--- Name: doctor_availability doctor_availability_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_availability
-    ADD CONSTRAINT doctor_availability_ibfk_1 FOREIGN KEY (doctor_id) REFERENCES public.doctor(doctor_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
--- Name: doctor_consultation_records doctor_consultation_records_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_consultation_records
-    ADD CONSTRAINT doctor_consultation_records_ibfk_1 FOREIGN KEY (appointment_id) REFERENCES public.doctor_appointments(appointment_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
--- Name: doctor_reviews doctor_reviews_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor_reviews
-    ADD CONSTRAINT doctor_reviews_ibfk_1 FOREIGN KEY (doctor_id) REFERENCES public.doctor(doctor_id) ON UPDATE RESTRICT ON DELETE CASCADE;
-
-
---
 -- Name: seller_profiles fk_seller_profiles_user_id; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -3427,11 +2991,43 @@ ALTER TABLE ONLY public.foods
 
 
 --
--- Name: message_attachments message_attachments_ibfk_1; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: recommendation_sessions recommendation_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.message_attachments
-    ADD CONSTRAINT message_attachments_ibfk_1 FOREIGN KEY (message_id) REFERENCES public.chat_messages(message_id) ON UPDATE RESTRICT ON DELETE CASCADE;
+ALTER TABLE ONLY public.recommendation_sessions
+    ADD CONSTRAINT recommendation_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: recommended_activities recommended_activities_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recommended_activities
+    ADD CONSTRAINT recommended_activities_activity_id_fkey FOREIGN KEY (activity_id) REFERENCES public.activities(id) ON DELETE CASCADE;
+
+
+--
+-- Name: recommended_activities recommended_activities_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recommended_activities
+    ADD CONSTRAINT recommended_activities_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.recommendation_sessions(session_id) ON DELETE CASCADE;
+
+
+--
+-- Name: recommended_foods recommended_foods_food_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recommended_foods
+    ADD CONSTRAINT recommended_foods_food_id_fkey FOREIGN KEY (food_id) REFERENCES public.foods(food_id) ON DELETE CASCADE;
+
+
+--
+-- Name: recommended_foods recommended_foods_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recommended_foods
+    ADD CONSTRAINT recommended_foods_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.recommendation_sessions(session_id) ON DELETE CASCADE;
 
 
 --
@@ -3480,22 +3076,6 @@ ALTER TABLE ONLY public.user_carts
 
 ALTER TABLE ONLY public.user_email_change_requests
     ADD CONSTRAINT user_email_change_requests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
-
-
---
--- Name: user_food_insights user_food_insights_food_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_food_insights
-    ADD CONSTRAINT user_food_insights_food_id_fkey FOREIGN KEY (food_id) REFERENCES public.foods(food_id) ON DELETE SET NULL;
-
-
---
--- Name: user_food_insights user_food_insights_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.user_food_insights
-    ADD CONSTRAINT user_food_insights_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
 
 
 --
