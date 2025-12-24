@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Partner - Glupulse Seller</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9', // Sky 500 (Primary)
+                            600: '#0284c7', // Sky 600 (Hover)
+                            900: '#0c4a6e',
+                        }
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                        'slide-up': 'slideUp 0.5s ease-out forwards',
+                        'fade-in': 'fadeIn 0.8s ease-out forwards',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Floating Label Logic */
+        .floating-input:focus ~ label,
+        .floating-input:not(:placeholder-shown) ~ label {
+            transform: translateY(-1.5rem) scale(0.85);
+            color: #0284c7; /* Brand 600 */
+        }
+        
+        /* Smooth transitions for all interactive elements */
+        * { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-brand-50 min-h-screen flex items-center justify-center p-0 md:p-4 overflow-hidden">
+
+    <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-3 pointer-events-none"></div>
+
+    <div class="w-full max-w-[1200px] bg-white rounded-none md:rounded-3xl shadow-2xl overflow-hidden flex min-h-screen md:min-h-[700px]">
+        
+        <div class="hidden md:flex w-1/2 bg-gradient-to-br from-brand-600 to-brand-900 relative items-center justify-center p-12 text-white overflow-hidden">
+            <div class="absolute top-[-10%] right-[-10%] w-64 h-64 bg-white opacity-10 rounded-full blur-3xl animate-float"></div>
+            <div class="absolute bottom-[-10%] left-[-10%] w-80 h-80 bg-brand-500 opacity-20 rounded-full blur-3xl animate-float" style="animation-delay: 2s;"></div>
+            
+            <div class="relative z-10 text-center animate-fade-in">
+                <img src="https://images.unsplash.com/photo-1546069901-ba9599a7e63c?ixlib=rb-4.0.3&auto=format&fit=crop&w=600&q=80" 
+                     alt="Healthy Food" 
+                     class="w-64 h-64 object-cover rounded-full mx-auto mb-8 shadow-2xl border-4 border-white/20 animate-float">
+                
+                <h2 class="text-3xl font-bold mb-4">Grow Your Business</h2>
+                <p class="text-brand-100 text-lg leading-relaxed">
+                    Bergabunglah dengan ribuan penjual makanan sehat lainnya. 
+                    Kelola pesanan, pantau nutrisi, dan jangkau pelanggan diabetes dengan mudah.
+                </p>
+                
+                <div class="mt-8 flex justify-center gap-4 opacity-80">
+                    <div class="flex flex-col items-center">
+                        <i class="fas fa-shield-alt text-2xl mb-1"></i>
+                        <span class="text-xs">Secure Data</span>
+                    </div>
+                    <div class="w-px h-10 bg-white/30"></div>
+                    <div class="flex flex-col items-center">
+                        <i class="fas fa-chart-line text-2xl mb-1"></i>
+                        <span class="text-xs">Real-time Analytics</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="w-full md:w-1/2 p-8 md:p-12 flex flex-col justify-center relative bg-white">
+            
+            <div class="max-w-md mx-auto w-full animate-slide-up">
+                <div class="mb-10 text-center md:text-left">
+                    <h1 class="text-brand-900 font-extrabold text-4xl tracking-tight inline-block">
+                        Glupulse
+                        <span class="text-gray-400 font-medium text-2xl ml-1 align-baseline">Seller</span>
+                    </h1>
+                    <p class="text-gray-500 mt-2 text-sm">Portal Manajemen Mitra Sehat</p>
+                </div>
+
+                <form id="loginForm" class="space-y-6" novalidate>
+                    
+                    <div class="relative group">
+                        <input type="text" id="username" name="username" placeholder=" " required
+                               class="floating-input peer w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl outline-none focus:border-brand-500 bg-transparent text-gray-700 font-medium transition-colors">
+                        <label for="username" 
+                               class="absolute left-4 top-3.5 text-gray-400 text-sm transition-all pointer-events-none bg-white px-1">
+                            <i class="fas fa-user mr-2"></i>Username atau Email
+                        </label>
+                    </div>
+
+                    <div class="relative group">
+                        <input type="password" id="password" name="password" placeholder=" " required
+                               class="floating-input peer w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl outline-none focus:border-brand-500 bg-transparent text-gray-700 font-medium transition-colors pr-12">
+                        <label for="password" 
+                               class="absolute left-4 top-3.5 text-gray-400 text-sm transition-all pointer-events-none bg-white px-1">
+                            <i class="fas fa-lock mr-2"></i>Password
+                        </label>
+                        
+                        <button type="button" onclick="togglePassword()" 
+                                class="absolute right-4 top-3.5 text-gray-400 hover:text-brand-600 focus:outline-none cursor-pointer">
+                            <i id="eyeIcon" class="fas fa-eye"></i>
+                        </button>
+                    </div>
+
+                    <div class="flex items-center justify-between text-sm">
+                        <label class="flex items-center text-gray-500 cursor-pointer hover:text-brand-600">
+                            <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 mr-2 accent-brand-500">
+                            Ingat saya
+                        </label>
+                        <a href="/seller/forgot_password" class="font-semibold text-brand-600 hover:text-brand-800 hover:underline">Lupa Password?</a>
+                    </div>
+
+                    <button type="submit" id="loginButton"
+                            class="w-full bg-brand-600 text-white font-bold py-3.5 rounded-xl hover:bg-brand-700 hover:shadow-lg hover:shadow-brand-500/30 transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 group">
+                        <span>Masuk Dashboard</span>
+                        <i class="fas fa-arrow-right group-hover:translate-x-1 transition-transform"></i>
+                    </button>
+
+                    <div class="relative flex py-2 items-center">
+                        <div class="flex-grow border-t border-gray-200"></div>
+                        <span class="flex-shrink mx-4 text-gray-400 text-xs uppercase tracking-wider">Atau masuk dengan</span>
+                        <div class="flex-grow border-t border-gray-200"></div>
+                    </div>
+
+                    <button type="button" id="googleLogin"
+                            class="w-full border-2 border-gray-100 bg-white text-gray-700 font-semibold py-3 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all flex items-center justify-center gap-3 group">
+                        <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-5 h-5" alt="Google">
+                        <span class="group-hover:text-black">Google Account</span>
+                    </button>
+                </form>
+
+                <p class="text-center text-sm text-gray-500 mt-8">
+                    Belum menjadi mitra Glupulse?
+                    <a href="/seller/register" class="font-bold text-brand-600 hover:text-brand-800 hover:underline">Daftar Sekarang</a>
+                </p>
+            </div>
+            
+            <div class="absolute bottom-4 left-0 w-full text-center text-xs text-gray-300 md:hidden">
+                &copy; 2025 Glupulse Inc.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // IMPORTANT: Change this to match your Go Backend URL
+        const API_BASE_URL = window.location.origin;
+        
+        // --- UI UTILS ---
+        function togglePassword() {
+            const passwordInput = document.getElementById('password');
+            const eyeIcon = document.getElementById('eyeIcon');
+            
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                eyeIcon.classList.remove('fa-eye');
+                eyeIcon.classList.add('fa-eye-slash');
+            } else {
+                passwordInput.type = 'password';
+                eyeIcon.classList.remove('fa-eye-slash');
+                eyeIcon.classList.add('fa-eye');
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let icon = 'fa-info-circle text-blue-500';
+            let borderClass = 'border-blue-500';
+            
+            if (type === 'success') {
+                icon = 'fa-check-circle text-green-500';
+                borderClass = 'border-green-500';
+            } else if (type === 'error') {
+                icon = 'fa-exclamation-circle text-red-500';
+                borderClass = 'border-red-500';
+            }
+
+            toast.className = `bg-white border-l-4 ${borderClass} shadow-xl rounded-lg p-4 flex items-center gap-3 transform translate-x-full transition-all duration-300 min-w-[300px] pointer-events-auto`;
+            toast.innerHTML = `
+                <i class="fas ${icon} text-xl"></i>
+                <div>
+                    <h4 class="font-bold text-gray-800 text-sm capitalize">${type}</h4>
+                    <p class="text-gray-600 text-xs">${message}</p>
+                </div>
+            `;
+
+            container.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.remove('translate-x-full'));
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-x-full');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // --- FORM LOGIC ---
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('loginButton');
+            const originalContent = btn.innerHTML;
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            if (!username || !password) {
+                showToast('Mohon lengkapi username dan password', 'error');
+                const form = document.getElementById('loginForm');
+                form.classList.add('animate-pulse'); 
+                setTimeout(() => form.classList.remove('animate-pulse'), 500);
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> Memproses...`;
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
+
+            try {
+                console.log(`Sending request to: ${API_BASE_URL}/login`); // Debug log
+
+                const response = await fetch(`${API_BASE_URL}/login`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                // Handle Non-JSON responses (Debug help)
+                const contentType = response.headers.get("content-type");
+                if (!contentType || !contentType.includes("application/json")) {
+                    const text = await response.text();
+                    console.error("Server Response (Not JSON):", text); // See console for the HTML error
+                    throw new Error(`Server Error: Endpoint not found or Server Crash (${response.status})`);
+                }
+
+                const data = await response.json();
+
+                if (response.status === 202) {
+                    showToast('Kode OTP dikirim ke email Anda', 'success');
+                    localStorage.setItem('user_id', data.user_id);
+                    localStorage.setItem('otp_expires_in', data.expires_in || 60);
+                    setTimeout(() => window.location.href = '/seller/verify-otp', 1000);
+                } else if (response.ok) {
+                    showToast('Login Berhasil! Mengalihkan...', 'success');
+                    setTimeout(() => window.location.href = '/seller/dashboard', 1000);
+                } else {
+                    throw new Error(data.error || 'Username atau Password salah');
+                }
+
+            } catch (error) {
+                console.error("Login Error:", error);
+                showToast(error.message, 'error');
+                
+                document.getElementById('username').classList.add('border-red-500');
+                document.getElementById('password').classList.add('border-red-500');
+                setTimeout(() => {
+                    document.getElementById('username').classList.remove('border-red-500');
+                    document.getElementById('password').classList.remove('border-red-500');
+                }, 2000);
+
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            }
+        });
+
+        document.getElementById('googleLogin').addEventListener('click', function() {
+            showToast('Mengalihkan ke Google...', 'info');
+            this.innerHTML = `<i class="fas fa-circle-notch fa-spin text-brand-600"></i> Menghubungkan...`;
+            setTimeout(() => {
+                window.location.href = `${API_BASE_URL}/auth/google`;
+            }, 800);
+        });
+    </script>
+</body>
+</html>

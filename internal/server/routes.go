@@ -6,12 +6,12 @@ import (
 	"io"
 	"net/http"
 	"text/template"
-	"time"
 
 	user "Glupulse_V0.2/internal/User"
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
-	"github.com/coder/websocket"
+	"Glupulse_V0.2/internal/seller"
+	"Glupulse_V0.2/internal/utility"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -42,29 +42,34 @@ func (s *Server) RegisterRoutes() http.Handler {
 		MaxAge:           300,
 	}))
 
+	e.Static("/static", "web/public")
+
 	renderer := &TemplateRenderer{
-		templates: template.Must(template.ParseGlob("web/*.html")),
+		templates: template.Must(template.ParseGlob("web/templates/*.html")),
 	}
 	e.Renderer = renderer
 
-	// --- Public Auth Routes (Traditional) ---
-	e.POST("/signup", auth.SignupHandler) // New route for traditional registration (mobile/web API)
-	e.POST("/login", auth.LoginHandler)   // POST route for traditional login (mobile/web API)
+	// Traditional Auth Routes
+	e.POST("/signup", auth.SignupHandler)
+	e.POST("/auth/seller/signup", auth.SellerSignupHandler)
+	e.POST("/login", auth.LoginHandler)
 	e.POST("/verify-otp", auth.VerifyOTPHandler)
+	e.POST("/auth/seller/verify-otp", auth.VerifySellerOTPHandler)
 	e.POST("/resend-otp", auth.ResendOTPHandler)
 	e.POST("/password/reset/request", auth.RequestPasswordResetHandler)
 	e.POST("/password/reset/complete", auth.ResetPasswordHandler)
+	e.GET("/auth/verify-email-change", user.VerifyEmailChangeHandler)
 
-	// Public routes (Web pages)
+	// Seller Web pages routes
 	e.GET("/health", s.healthHandler)
-	e.GET("/websocket", s.websocketHandler)
-	e.GET("/login", s.renderLoginHandler)       // Serves the login.html page
-	e.GET("/register", s.renderRegisterHandler) // Serves the register.html page
-	e.GET("/verify", s.OTPHandler)              // Serves the otp.html page
+	e.GET("/seller/login", s.renderLoginHandler)                    // Serves the login.html page
+	e.GET("/seller/register", s.renderRegisterHandler)              // Serves the register.html page
+	e.GET("/seller/verify-otp", s.RenderOTPHandler)                 // Serves the otp.html page
+	e.GET("/seller/forgot_password", s.RenderForgotPasswordHandler) // Serves the forgot_password.html page
 
-	// Web OAuth routes
+	// Seller Web OAuth routes
 	e.GET("/auth/:provider", auth.ProviderHandler)
-	e.GET("/auth/:provider/callback", auth.CallbackHandler)
+	e.GET("/auth/:provider/callback", auth.SellerWebGoogleAuthCallbackHandler)
 
 	// Mobile auth route - Android/iOS Google Sign-In
 	e.POST("/auth/mobile/google", auth.MobileGoogleAuthHandler)
@@ -72,20 +77,13 @@ func (s *Server) RegisterRoutes() http.Handler {
 	// Refresh token endpoint (both web and mobile)
 	e.POST("/auth/refresh", auth.RefreshHandler)
 
-	e.GET("/auth/verify-email-change", user.VerifyEmailChangeHandler)
-
 	e.Use(LoggerMiddleware)
 
 	// Protected routes
 	protected := e.Group("")
 	protected.Use(auth.JwtAuthMiddleware)
 
-	// Split protected welcome routes
-	protected.GET("/welcome/web", s.welcomeWebHandler)
-	protected.GET("/welcome/mobile", s.welcomeMobileHandler)
-	protected.GET("/logout", auth.LogoutHandler)
-
-	// User's functions Routes
+	// User's Account & Profile Functions Routes
 	protected.GET("/profile", user.GetUserProfileHandler)
 	protected.PUT("/profile", user.UpdateUserProfileHandler)
 	protected.PUT("/profile/password", user.UpdatePasswordHandler)
@@ -95,23 +93,28 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.POST("/auth/mobile/google/link", auth.LinkGoogleAccountHandler)
 	protected.POST("/auth/mobile/google/unlink", auth.UnlinkGoogleAccountHandler)
 	protected.GET("user/data", user.GetUserDataAllHandler)
+	protected.GET("/logout", auth.LogoutHandler)
 
-	//User's Addresses Management
+	//User's Addresses Management Functions Routes
 	protected.POST("/addresses", user.CreateAddressHandler)
 	protected.GET("/addresses", user.GetAddressesHandler)
 	protected.PUT("/addresses/:address_id", user.UpdateAddressHandler)
 	protected.DELETE("/addresses/:address_id", user.DeleteAddressHandler)
 	protected.POST("/addresses/:address_id/set-default", user.SetDefaultAddressHandler)
 
-	//Cart & Order Routes
+	//User Cart & Order Functions Routes
 	protected.GET("/cart", user.GetCartHandler)
 	protected.POST("/cart/add", user.AddItemToCartHandler)
 	protected.PUT("/cart/update", user.UpdateCartItemHandler)
 	protected.POST("/cart/remove", user.RemoveItemFromCartHandler) // Use POST to support a body
 	protected.POST("/checkout", user.CheckoutHandler)
 	protected.GET("/foods", user.ListAllFoodsHandler)
+	protected.GET("/food/categories", user.ListAllFoodCategoriesHandler)
+	protected.GET("/order/history", user.GetUserOrderHistoryHandler)
+	protected.GET("/order/active", user.TrackUserActiveOrdersHandler)
+	protected.POST("/orders/pay", user.SimulatePaymentHandler)
 
-	//Health Data Routes
+	//User Health Data Function Routes
 	protected.GET("/health/profile", user.GetHealthProfileHandler)
 	protected.PUT("/health/profile", user.UpsertHealthProfileHandler)
 	protected.POST("/health/hba1c", user.CreateHBA1CRecordHandler)
@@ -149,58 +152,46 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.PUT("/health/log/meal/:meallog_id", user.UpdateMealLogHandler)
 	protected.DELETE("/health/log/meal/:meallog_id", user.DeleteMealLogHandler)
 
-	//Recommendations
+	//User Recommendations Functions Routes
 	protected.POST("/recommendations", user.GetRecommendationsHandler)
 	protected.GET("/recommendations", user.GetRecommendationSessionsHandler)
 	protected.GET("/recommendation/:session_id", user.GetRecommendationSessionDetailHandler)
+	protected.POST("/recommendation/feedback/:session_id", user.SubmitSessionFeedbackHandler)
+	protected.POST("/recommendation/feedback/food/:session_id", user.SubmitFoodFeedbackHandler)
+	protected.POST("/recommendation/feedback/food/view/:session_id", user.MarkFoodViewedHandler)
+	protected.POST("/recommendation/feedback/food/purchased/:session_id", user.MarkFoodPurchasedHandler)
+	protected.POST("/recommendation/feedback/food/addtocart/:session_id", user.MarkFoodAddedToCartHandler)
+	protected.POST("/recommendation/feedback/activity/:session_id", user.SubmitActivityFeedbackHandler)
+	protected.POST("/recommendation/feedback/activity/view/:session_id", user.MarkActivityViewedHandler)
+	protected.POST("/recommendation/feedback/activity/completed/:session_id", user.MarkActivityCompletedHandler)
+
+	//Seller Protected Web Page
+	protected.GET("/seller/dashboard", s.RenderSellerDashboardHandler)
+
+	//Websocket for seller dashboard website client
+	protected.GET("/seller/ws", seller.DashboardSocketHandler)
+
+	//Seller Functions Routes
+	protected.GET("seller/menus", seller.ListSellerFoodsHandler)
+	protected.GET("seller/menu/:food_id", seller.GetFoodDetailHandler)
+	protected.POST("seller/menu", seller.CreateFoodHandler)
+	protected.PUT("seller/menu/:food_id", seller.UpdateFoodHandler)
+	protected.DELETE("seller/menu/:food_id", seller.DeleteFoodHandler)
+	protected.GET("/seller/profile", seller.GetSellerProfileByIDHandler)
+	protected.GET("/seller/profile/:seller_id", seller.GetPublicSellerProfileHandler)
+	protected.GET("/seller/orders/incoming", seller.GetIncomingOrdersHandler)
+	protected.GET("/seller/orders/active", seller.GetActiveOrdersHandler)
+	protected.GET("/seller/orders/history", seller.GetOrderHistoryHandler)
+	protected.PUT("/seller/orders/status/:order_id", seller.UpdateOrderStatusHandler)
+	protected.GET("/seller/stats", seller.GetSellerDashboardStatsHandler)
+	protected.GET("/seller/stats/chart", seller.GetSellerSalesChartHandler)
+	protected.PUT("/seller/profile", seller.UpdateSellerProfileHandler)
 
 	return e
 }
 
 func (s *Server) healthHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, s.db.Health())
-}
-
-func (s *Server) websocketHandler(c echo.Context) error {
-	w := c.Response().Writer
-	r := c.Request()
-	socket, err := websocket.Accept(w, r, nil)
-
-	if err != nil {
-		log.Info().Msgf("could not open websocket: %v", err)
-		_, _ = w.Write([]byte("could not open websocket"))
-		w.WriteHeader(http.StatusInternalServerError)
-		return nil
-	}
-
-	defer socket.Close(websocket.StatusGoingAway, "server closing websocket")
-
-	ctx := r.Context()
-	socketCtx := socket.CloseRead(ctx)
-
-	for {
-		payload := fmt.Sprintf("server timestamp: %d", time.Now().UnixNano())
-		err := socket.Write(socketCtx, websocket.MessageText, []byte(payload))
-		if err != nil {
-			break
-		}
-		time.Sleep(time.Second * 2)
-	}
-	return nil
-}
-
-// renderLoginHandler serves the public login.html page.
-func (s *Server) renderLoginHandler(c echo.Context) error {
-	return c.Render(http.StatusOK, "index.html", nil)
-}
-
-// renderRegisterHandler serves the public register.html page.
-func (s *Server) renderRegisterHandler(c echo.Context) error {
-	return c.Render(http.StatusOK, "register.html", nil)
-}
-
-func (s *Server) OTPHandler(c echo.Context) error {
-	return c.Render(http.StatusOK, "otp.html", nil)
 }
 
 // getUserDataFromContext extracts and combines user and Goth raw data from the context.
@@ -240,30 +231,6 @@ func getUserDataFromContext(c echo.Context) (map[string]interface{}, error) {
 	return response, nil
 }
 
-// welcomeWebHandler handles the web client landing page (renders HTML).
-func (s *Server) welcomeWebHandler(c echo.Context) error {
-	data, err := getUserDataFromContext(c)
-	if err != nil {
-		log.Error().Err(err).Msg("welcomeWebHandler")
-		return c.Redirect(http.StatusTemporaryRedirect, "/login")
-	}
-
-	// Render welcome.html template
-	return c.Render(http.StatusOK, "welcome.html", data)
-}
-
-// welcomeMobileHandler handles the mobile client JSON response.
-func (s *Server) welcomeMobileHandler(c echo.Context) error {
-	data, err := getUserDataFromContext(c)
-	if err != nil {
-		log.Error().Err(err).Msg("welcomeWebHandler")
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized or session expired"})
-	}
-
-	// Return the combined data as JSON for the mobile client
-	return c.JSON(http.StatusOK, data)
-}
-
 func LoggerMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		requestID := c.Request().Header.Get("X-Request-ID")
@@ -279,4 +246,61 @@ func LoggerMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 
 		return next(c)
 	}
+}
+
+/* ====================================================================
+                   		Seller Web Handler
+==================================================================== */
+
+// renderLoginHandler serves the public login.html page.
+func (s *Server) renderLoginHandler(c echo.Context) error {
+	return c.Render(http.StatusOK, "login.html", nil)
+}
+
+// renderRegisterHandler serves the public register.html page.
+func (s *Server) renderRegisterHandler(c echo.Context) error {
+	return c.Render(http.StatusOK, "register.html", nil)
+}
+
+func (s *Server) RenderOTPHandler(c echo.Context) error {
+	return c.Render(http.StatusOK, "otp.html", nil)
+}
+
+func (s *Server) RenderForgotPasswordHandler(c echo.Context) error {
+	return c.Render(http.StatusOK, "forgot_password.html", nil)
+}
+
+// RenderSellerDashboardHandler renders the seller dashboard
+func (s *Server) RenderSellerDashboardHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// 1. Get Base User Data (from Token/Context)
+	// This usually returns map[string]interface{} with user details
+	data, err := getUserDataFromContext(c)
+	if err != nil {
+		log.Error().Err(err).Msg("RenderSellerDashboardHandler: User data not found")
+		return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
+	}
+
+	// 2. Extract User ID to fetch Seller Profile
+	userID, err := utility.GetUserIDFromContext(c)
+	if err != nil {
+		return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
+	}
+
+	// 3. Fetch Seller Profile from DB
+	sellerProfile, err := seller.GetSellerProfile(ctx, userID)
+	if err != nil {
+		// CASE: User is logged in but has NO seller profile yet.
+		log.Info().Msgf("User %s tried to access dashboard but has no shop", userID)
+		return c.Redirect(http.StatusTemporaryRedirect, "/seller/register")
+	}
+
+	// 4. Inject Seller Data into the Template Payload
+	data["seller"] = sellerProfile
+	data["store_name"] = sellerProfile.StoreName
+	data["verification_status"] = sellerProfile.VerificationStatus
+
+	// 5. Render
+	return c.Render(http.StatusOK, "index.html", data)
 }

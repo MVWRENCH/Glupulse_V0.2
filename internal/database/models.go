@@ -360,6 +360,50 @@ func (ns NullSellerSellerStatus) Value() (driver.Value, error) {
 	return string(ns.SellerSellerStatus), nil
 }
 
+type SellerVerificationStatus string
+
+const (
+	SellerVerificationStatusPending   SellerVerificationStatus = "pending"
+	SellerVerificationStatusApproved  SellerVerificationStatus = "approved"
+	SellerVerificationStatusRejected  SellerVerificationStatus = "rejected"
+	SellerVerificationStatusSuspended SellerVerificationStatus = "suspended"
+)
+
+func (e *SellerVerificationStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = SellerVerificationStatus(s)
+	case string:
+		*e = SellerVerificationStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for SellerVerificationStatus: %T", src)
+	}
+	return nil
+}
+
+type NullSellerVerificationStatus struct {
+	SellerVerificationStatus SellerVerificationStatus `json:"seller_verification_status"`
+	Valid                    bool                     `json:"valid"` // Valid is true if SellerVerificationStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullSellerVerificationStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.SellerVerificationStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.SellerVerificationStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullSellerVerificationStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.SellerVerificationStatus), nil
+}
+
 type UserCartCartStatus string
 
 const (
@@ -407,11 +451,12 @@ func (ns NullUserCartCartStatus) Value() (driver.Value, error) {
 type UserOrderOrderStatus string
 
 const (
-	UserOrderOrderStatusProcessing UserOrderOrderStatus = "Processing"
-	UserOrderOrderStatusShipped    UserOrderOrderStatus = "Shipped"
-	UserOrderOrderStatusDelivered  UserOrderOrderStatus = "Delivered"
-	UserOrderOrderStatusRejected   UserOrderOrderStatus = "Rejected"
-	UserOrderOrderStatusCancelled  UserOrderOrderStatus = "Cancelled"
+	UserOrderOrderStatusProcessing     UserOrderOrderStatus = "Processing"
+	UserOrderOrderStatusShipped        UserOrderOrderStatus = "Shipped"
+	UserOrderOrderStatusDelivered      UserOrderOrderStatus = "Delivered"
+	UserOrderOrderStatusRejected       UserOrderOrderStatus = "Rejected"
+	UserOrderOrderStatusCancelled      UserOrderOrderStatus = "Cancelled"
+	UserOrderOrderStatusPendingPayment UserOrderOrderStatus = "Pending Payment"
 )
 
 func (e *UserOrderOrderStatus) Scan(src interface{}) error {
@@ -670,6 +715,7 @@ type Food struct {
 	MonounsaturatedFatGrams pgtype.Numeric     `json:"monounsaturated_fat_grams"`
 	PolyunsaturatedFatGrams pgtype.Numeric     `json:"polyunsaturated_fat_grams"`
 	CholesterolMg           pgtype.Numeric     `json:"cholesterol_mg"`
+	IsActive                pgtype.Bool        `json:"is_active"`
 }
 
 type FoodCategory struct {
@@ -777,14 +823,11 @@ type RecommendedActivity struct {
 	RecommendedIntensity       pgtype.Text        `json:"recommended_intensity"`
 	SafetyNotes                pgtype.Text        `json:"safety_notes"`
 	BestTimeOfDay              pgtype.Text        `json:"best_time_of_day"`
-	GlucoseManagementTip       pgtype.Text        `json:"glucose_management_tip"`
 	RecommendationRank         pgtype.Int4        `json:"recommendation_rank"`
-	ConfidenceScore            pgtype.Numeric     `json:"confidence_score"`
 	WasViewed                  pgtype.Bool        `json:"was_viewed"`
 	WasCompleted               pgtype.Bool        `json:"was_completed"`
 	ActualDurationMinutes      pgtype.Int4        `json:"actual_duration_minutes"`
 	UserRating                 pgtype.Int4        `json:"user_rating"`
-	Feedback                   pgtype.Text        `json:"feedback"`
 	FeedbackNotes              pgtype.Text        `json:"feedback_notes"`
 	GlucoseChangeAfterActivity pgtype.Int4        `json:"glucose_change_after_activity"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
@@ -801,13 +844,11 @@ type RecommendedFood struct {
 	SuggestedMealType       pgtype.Text        `json:"suggested_meal_type"`
 	SuggestedPortionSize    pgtype.Text        `json:"suggested_portion_size"`
 	RecommendationRank      pgtype.Int4        `json:"recommendation_rank"`
-	ConfidenceScore         pgtype.Numeric     `json:"confidence_score"`
 	WasViewed               pgtype.Bool        `json:"was_viewed"`
 	WasAddedToCart          pgtype.Bool        `json:"was_added_to_cart"`
 	WasPurchased            pgtype.Bool        `json:"was_purchased"`
 	WasLoggedAsMeal         pgtype.Bool        `json:"was_logged_as_meal"`
 	UserRating              pgtype.Int4        `json:"user_rating"`
-	Feedback                pgtype.Text        `json:"feedback"`
 	FeedbackNotes           pgtype.Text        `json:"feedback_notes"`
 	GlucoseSpikeAfterEating pgtype.Int4        `json:"glucose_spike_after_eating"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
@@ -827,7 +868,7 @@ type SellerProfile struct {
 	StoreName          string             `json:"store_name"`
 	StoreDescription   pgtype.Text        `json:"store_description"`
 	StorePhoneNumber   pgtype.Text        `json:"store_phone_number"`
-	IsOpenManually     bool               `json:"is_open_manually"`
+	IsOpen             bool               `json:"is_open"`
 	BusinessHours      []byte             `json:"business_hours"`
 	VerificationStatus string             `json:"verification_status"`
 	LogoUrl            pgtype.Text        `json:"logo_url"`
@@ -841,6 +882,17 @@ type SellerProfile struct {
 	Latitude           pgtype.Numeric     `json:"latitude"`
 	Longitude          pgtype.Numeric     `json:"longitude"`
 	GmapsLink          pgtype.Text        `json:"gmaps_link"`
+	StoreSlug          string             `json:"store_slug"`
+	StoreEmail         pgtype.Text        `json:"store_email"`
+	WebsiteUrl         pgtype.Text        `json:"website_url"`
+	SocialMediaLinks   []byte             `json:"social_media_links"`
+	IsActive           pgtype.Bool        `json:"is_active"`
+	CuisineType        []string           `json:"cuisine_type"`
+	PriceRange         pgtype.Int4        `json:"price_range"`
+	RejectionReason    pgtype.Text        `json:"rejection_reason"`
+	VerifiedAt         pgtype.Timestamptz `json:"verified_at"`
+	AverageRating      pgtype.Numeric     `json:"average_rating"`
+	ReviewCount        pgtype.Int4        `json:"review_count"`
 }
 
 // Unified user table supporting both traditional username/password and OAuth authentication
@@ -1145,6 +1197,8 @@ type UserOrder struct {
 	PaymentStatus       string             `json:"payment_status"`
 	PaymentMethod       pgtype.Text        `json:"payment_method"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	SellerNotes         pgtype.Text        `json:"seller_notes"`
 }
 
 type UserOrderItem struct {

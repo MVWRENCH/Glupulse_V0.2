@@ -1,0 +1,381 @@
+<div class="fade-in space-y-6">
+
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-800">Menu Makanan</h2>
+            <p class="text-sm text-gray-500">Kelola daftar menu, harga, dan stok harian.</p>
+        </div>
+        
+        <div class="flex flex-col sm:flex-row gap-3">
+            <div class="relative">
+                <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                <input type="text" onkeyup="handleGlobalSearch(this.value)" placeholder="Cari menu..." class="pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none w-full sm:w-64 transition shadow-sm">
+            </div>
+            
+            <button onclick="openProductModal()" class="bg-brand-600 hover:bg-brand-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition shadow-lg shadow-brand-500/20 active:transform active:scale-95">
+                <i class="fas fa-plus"></i> <span class="hidden sm:inline">Tambah Menu</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="productGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 min-h-[300px]">
+        </div>
+
+</div>
+
+<div id="productModal" class="fixed inset-0 z-50 hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+    <div id="modalBackdrop" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity opacity-0" onclick="closeProductModal()"></div>
+
+    <div class="fixed inset-0 z-10 overflow-y-auto">
+        <div class="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+            
+            <div id="modalPanel" class="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all sm:my-8 w-full max-w-6xl h-[90vh] flex flex-col opacity-0 scale-95">
+                
+                <div class="bg-white px-6 py-4 border-b border-gray-100 flex justify-between items-center flex-shrink-0 z-20">
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900" id="modalTitle">Tambah Menu Baru</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">Isi detail makanan dengan lengkap.</p>
+                    </div>
+                    <button type="button" onclick="closeProductModal()" class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-red-500 focus:outline-none transition">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+
+                <div class="hidden">
+                    <button id="tab-general" class="modal-tab-btn"></button>
+                    </div>
+
+                <form id="productForm" class="flex flex-1 overflow-hidden" onsubmit="event.preventDefault(); saveProductOverride();">
+                    <input type="hidden" id="foodId" name="food_id">
+                    <input type="hidden" id="photoUrl" name="photo_url"> <div id="modal-view-general" class="modal-tab-content active flex flex-col md:flex-row w-full h-full">
+                        
+                        <div class="w-full md:w-1/3 lg:w-1/4 bg-gray-50 p-6 border-r border-gray-200 overflow-y-auto custom-scroll">
+                            
+                            <div class="mb-6 group">
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-2">Foto Menu</label>
+                                <div class="relative w-full aspect-square bg-white border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-brand-500 hover:bg-brand-50 transition" onclick="document.getElementById('fileInput').click()">
+                                    <img id="previewImage" src="" class="absolute inset-0 w-full h-full object-cover hidden rounded-2xl">
+                                    <div id="uploadPlaceholder" class="text-center p-4">
+                                        <i class="fas fa-cloud-upload-alt text-3xl text-gray-300 mb-2"></i>
+                                        <p class="text-sm font-bold text-gray-600">Upload Foto</p>
+                                        <p class="text-[10px] text-gray-400 mt-1">JPG, PNG max 2MB</p>
+                                    </div>
+                                    <input type="file" id="fileInput" name="photo_file" class="hidden" accept="image/*" onchange="handleImageUpload(this)">
+                                </div>
+                            </div>
+
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-700 mb-1 uppercase">Nama Makanan <span class="text-red-500">*</span></label>
+                                    <input type="text" id="foodName" name="food_name" required class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-700 mb-1 uppercase">Kategori</label>
+                                    <input type="text" id="category" name="food_category" placeholder="Main, Breakfast..." class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                    <p class="text-[10px] text-gray-400 mt-1">Pisahkan dengan koma.</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-700 mb-1 uppercase">Tags</label>
+                                    <input type="text" id="tags" name="tags" placeholder="Pedas, Promo..." class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                    <p class="text-[10px] text-gray-400 mt-1">Pisahkan dengan koma.</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-700 mb-1 uppercase">Harga (IDR) <span class="text-red-500">*</span></label>
+                                    <input type="number" id="price" name="price" required class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                </div>
+
+                                <div class="bg-white p-3 rounded-xl border border-gray-200 flex justify-between items-center mt-2">
+                                    <span class="text-xs font-bold text-gray-700 uppercase">Status Available</span>
+                                    <input type="checkbox" id="isAvailable" name="is_available" class="w-5 h-5 text-brand-600 rounded" checked>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full md:w-2/3 lg:w-3/4 bg-white overflow-y-auto p-8 space-y-8 custom-scroll">
+                            
+                            <section>
+                                <h4 class="text-sm font-bold text-gray-800 uppercase mb-3 border-b pb-2">Deskripsi Lengkap</h4>
+                                <textarea id="description" name="description" rows="3" class="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 text-sm focus:bg-white outline-none placeholder-gray-400" placeholder="Jelaskan rasa, tekstur, dan keunggulan menu ini..."></textarea>
+                            </section>
+
+                            <section>
+                                <h4 class="text-sm font-bold text-gray-800 uppercase mb-3 border-b pb-2">Stok & Porsi</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                    <div class="bg-gray-50 p-3 rounded-xl border border-gray-100 col-span-2">
+                                        <label class="block text-xs font-bold text-gray-500 mb-2">Stok Harian</label>
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <input type="checkbox" id="unlimitedStock" onchange="toggleStockOverride(this)">
+                                            <label for="unlimitedStock" class="text-sm text-gray-700 select-none cursor-pointer">Tak Terbatas (-1)</label>
+                                        </div>
+                                        <input type="number" id="stockCount" name="stock_count" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Jumlah">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-500 mb-1">Quantity (Unit)</label>
+                                        <input type="number" step="0.01" id="quantity" name="quantity" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-500 mb-1">Takaran Saji (Teks)</label>
+                                        <input type="text" id="servingSize" name="serving_size" placeholder="1 Mangkok" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-500 mb-1">Berat Saji (Gram)</label>
+                                        <input type="number" step="0.01" id="servingSizeGrams" name="serving_size_grams" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="bg-blue-50 border border-blue-100 rounded-2xl p-6 relative">
+                                <div class="flex items-center gap-2 mb-4">
+                                    <i class="fas fa-heartbeat text-blue-600 text-xl"></i>
+                                    <h4 class="text-sm font-bold text-blue-800 uppercase">Penting untuk Diabetes</h4>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                    <div>
+                                        <label class="block text-xs font-bold text-blue-700 mb-1">Indeks Glikemik (GI)</label>
+                                        <input type="number" id="glycemicIndex" name="glycemic_index" class="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-blue-700 mb-1">Gula (g)</label>
+                                        <input type="number" step="0.01" id="sugar" name="sugar_grams" class="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="block text-xs font-bold text-blue-700 mb-1">Karbohidrat (g)</label>
+                                        <input type="number" step="0.01" id="carbs" name="carbs_grams" class="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section>
+                                <h4 class="text-sm font-bold text-gray-800 uppercase mb-3 border-b pb-2">Makronutrisi</h4>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div>
+                                        <label class="text-xs text-gray-500">Kalori (kcal)</label>
+                                        <input type="number" id="calories" name="calories" class="w-full border-b border-gray-200 py-1 text-center font-bold text-gray-800 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-500">Protein (g)</label>
+                                        <input type="number" step="0.01" id="protein" name="protein_grams" class="w-full border-b border-gray-200 py-1 text-center font-bold text-gray-800 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-500">Serat (g)</label>
+                                        <input type="number" step="0.01" id="fiber" name="fiber_grams" class="w-full border-b border-gray-200 py-1 text-center font-bold text-gray-800 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-xs text-gray-500">Sodium (mg)</label>
+                                        <input type="number" step="0.01" id="sodium" name="sodium_mg" class="w-full border-b border-gray-200 py-1 text-center font-bold text-gray-800 outline-none">
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="border rounded-xl p-4">
+                                <details class="group" open>
+                                    <summary class="flex items-center justify-between text-xs font-bold text-brand-600 cursor-pointer select-none">
+                                        <span>Detail Lemak & Kolesterol</span>
+                                        <i class="fas fa-chevron-down group-open:rotate-180 transition"></i>
+                                    </summary>
+                                    <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div class="col-span-1 md:col-span-3 grid grid-cols-2 gap-4 border-b pb-4 mb-2">
+                                            <div><label class="text-xs font-bold text-gray-700">Total Lemak (g)</label><input type="number" step="0.01" id="fat" name="fat_grams" class="w-full border px-2 py-1 rounded"></div>
+                                            <div><label class="text-xs font-bold text-gray-700">Kolesterol (mg)</label><input type="number" step="0.01" id="cholesterol" name="cholesterol_mg" class="w-full border px-2 py-1 rounded"></div>
+                                        </div>
+                                        
+                                        <div><label class="text-xs text-gray-500">Lemak Jenuh (g)</label><input type="number" step="0.01" id="saturatedFat" name="saturated_fat_grams" class="w-full border px-2 py-1 rounded bg-gray-50"></div>
+                                        <div><label class="text-xs text-gray-500">Tak Jenuh Tunggal (g)</label><input type="number" step="0.01" id="monoFat" name="monounsaturated_fat_grams" class="w-full border px-2 py-1 rounded bg-gray-50"></div>
+                                        <div><label class="text-xs text-gray-500">Tak Jenuh Ganda (g)</label><input type="number" step="0.01" id="polyFat" name="polyunsaturated_fat_grams" class="w-full border px-2 py-1 rounded bg-gray-50"></div>
+                                    </div>
+                                </details>
+                            </section>
+                            <div class="h-6"></div>
+                        </div>
+                    </div> </form>
+
+                <div class="bg-white border-t border-gray-100 px-6 py-4 flex justify-end gap-3 z-20">
+                    <button onclick="closeProductModal()" class="px-6 py-2.5 rounded-xl text-gray-500 font-bold hover:bg-gray-50 text-sm">Batal</button>
+                    <button id="saveBtn" onclick="saveProductOverride()" class="px-8 py-2.5 rounded-xl bg-brand-600 text-white font-bold hover:bg-brand-700 shadow-lg text-sm flex items-center gap-2">
+                        <i class="fas fa-save"></i> <span>Simpan Menu</span>
+                    </button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 1. Override Open Modal to handle resets properly
+    const originalOpen = window.openProductModal;
+    window.openProductModal = function() {
+        if(originalOpen) originalOpen(); // Let app.js do its basic show logic (if any)
+        
+        // --- APPLY FIXES ---
+        document.getElementById('productForm').reset();
+        document.getElementById('foodId').value = ''; 
+        
+        // Reset Image
+        document.getElementById('previewImage').src = '';
+        document.getElementById('previewImage').classList.add('hidden');
+        document.getElementById('uploadPlaceholder').classList.remove('hidden');
+
+        // Reset Stock UI
+        const stockInput = document.getElementById('stockCount');
+        const unlimitedCheck = document.getElementById('unlimitedStock');
+        unlimitedCheck.checked = false;
+        stockInput.disabled = false;
+        stockInput.classList.remove('bg-gray-100');
+        stockInput.value = "";
+        
+        document.getElementById('modalTitle').innerText = 'Tambah Menu Baru';
+    };
+
+    // 2. Logic for Stock Checkbox
+    window.toggleStockOverride = function(checkbox) {
+        const stockInput = document.getElementById('stockCount');
+        if (checkbox.checked) {
+            stockInput.value = '';
+            stockInput.disabled = true;
+            stockInput.placeholder = 'Unlimited (-1)';
+            stockInput.classList.add('bg-gray-100');
+        } else {
+            stockInput.disabled = false;
+            stockInput.placeholder = 'Jumlah';
+            stockInput.classList.remove('bg-gray-100');
+        }
+    };
+
+    // 3. Override Edit Product to Populate New Fields & Arrays
+    window.editProduct = async function(id) {
+        try {
+            // Re-use app.js fetch logic manually since we need to parse arrays differently
+            const res = await fetch(`${API_BASE_URL}/seller/menu/${id}`);
+            const item = await res.json();
+            
+            window.openProductModal(); // Resets form first
+            
+            document.getElementById('modalTitle').innerText = "Edit Menu";
+            document.getElementById('foodId').value = item.food_id;
+            
+            // Populate Basic Fields
+            document.getElementById('foodName').value = item.food_name;
+            document.getElementById('price').value = item.price;
+            document.getElementById('description').value = item.description || '';
+            document.getElementById('isAvailable').checked = item.is_available !== false;
+            
+            // Populate Image
+            if(item.photo_url) {
+                document.getElementById('previewImage').src = item.photo_url;
+                document.getElementById('previewImage').classList.remove('hidden');
+                document.getElementById('uploadPlaceholder').classList.add('hidden');
+                document.getElementById('photoUrl').value = item.photo_url;
+            }
+
+            // --- FIX: ARRAY SUPPORT (Category & Tags) ---
+            if(item.food_category && Array.isArray(item.food_category)) {
+                document.getElementById('category').value = item.food_category.join(', ');
+            }
+            if(item.tags && Array.isArray(item.tags)) {
+                document.getElementById('tags').value = item.tags.join(', ');
+            }
+
+            // --- FIX: STOCK LOGIC ---
+            if(item.stock_count === -1) {
+                document.getElementById('unlimitedStock').checked = true;
+                toggleStockOverride(document.getElementById('unlimitedStock'));
+            } else {
+                document.getElementById('stockCount').value = item.stock_count;
+            }
+
+            // Populate Nutrition & Details
+            const map = {
+                'quantity': 'quantity', 'serving_size': 'servingSize', 'serving_size_grams': 'servingSizeGrams',
+                'calories': 'calories', 'sugar_grams': 'sugar', 'glycemic_index': 'glycemicIndex',
+                'carbs_grams': 'carbs', 'protein_grams': 'protein', 'fat_grams': 'fat', 
+                'sodium_mg': 'sodium', 'cholesterol_mg': 'cholesterol',
+                'saturated_fat_grams': 'saturatedFat', 'monounsaturated_fat_grams': 'monoFat', 'polyunsaturated_fat_grams': 'polyFat'
+            };
+
+            for (const [apiKey, elementId] of Object.entries(map)) {
+                if(item[apiKey] !== undefined) document.getElementById(elementId).value = item[apiKey];
+            }
+
+        } catch(e) { console.error("Edit Error", e); }
+    };
+
+    // 4. Override Save Logic to Handle Arrays & Schema
+    window.saveProductOverride = async function() {
+        const btn = document.getElementById('saveBtn');
+        const id = document.getElementById('foodId').value;
+        const method = id ? 'PUT' : 'POST';
+        const endpoint = id ? `${API_BASE_URL}/seller/menu/${id}` : `${API_BASE_URL}/seller/menu`;
+
+        const name = document.getElementById('foodName').value;
+        const price = parseFloat(document.getElementById('price').value);
+
+        if(!name || isNaN(price)) { alert("Nama dan Harga wajib diisi"); return; }
+
+        btn.disabled = true;
+        btn.innerHTML = 'Menyimpan...';
+
+        // Stock Logic
+        let finalStock = parseInt(document.getElementById('stockCount').value);
+        if(document.getElementById('unlimitedStock').checked) finalStock = -1;
+        if(isNaN(finalStock) && !document.getElementById('unlimitedStock').checked) finalStock = 0;
+
+        // --- FIX: Split Comma Separated Strings into Arrays ---
+        const catString = document.getElementById('category').value;
+        const tagString = document.getElementById('tags').value;
+        const catArray = catString.split(',').map(s => s.trim()).filter(s => s !== "");
+        const tagArray = tagString.split(',').map(s => s.trim()).filter(s => s !== "");
+
+        const payload = {
+            food_name: name,
+            description: document.getElementById('description').value,
+            price: price,
+            currency: "IDR",
+            photo_url: document.getElementById('photoUrl').value, 
+            thumbnail_url: document.getElementById('photoUrl').value,
+            is_available: document.getElementById('isAvailable').checked,
+            stock_count: finalStock,
+            
+            // Arrays
+            food_category: catArray, 
+            tags: tagArray,
+
+            // Details
+            quantity: parseFloat(document.getElementById('quantity').value) || 0,
+            serving_size: document.getElementById('servingSize').value,
+            serving_size_grams: parseFloat(document.getElementById('servingSizeGrams').value) || 0,
+            calories: parseInt(document.getElementById('calories').value) || 0,
+            carbs_grams: parseFloat(document.getElementById('carbs').value) || 0,
+            protein_grams: parseFloat(document.getElementById('protein').value) || 0,
+            fat_grams: parseFloat(document.getElementById('fat').value) || 0,
+            sugar_grams: parseFloat(document.getElementById('sugar').value) || 0,
+            sodium_mg: parseFloat(document.getElementById('sodium').value) || 0,
+            glycemic_index: parseInt(document.getElementById('glycemicIndex').value) || 0,
+            cholesterol_mg: parseFloat(document.getElementById('cholesterol').value) || 0,
+            saturated_fat_grams: parseFloat(document.getElementById('saturatedFat').value) || 0,
+            monounsaturated_fat_grams: parseFloat(document.getElementById('monoFat').value) || 0,
+            polyunsaturated_fat_grams: parseFloat(document.getElementById('polyFat').value) || 0
+        };
+
+        try {
+            const res = await fetch(endpoint, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            if(res.ok) {
+                closeProductModal();
+                fetchProducts(); // Calls app.js function to refresh grid
+                alert("Berhasil menyimpan!");
+            } else {
+                const txt = await res.text();
+                alert("Gagal: " + txt);
+            }
+        } catch(e) { alert("Error koneksi"); }
+        finally { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save"></i> Simpan Menu'; }
+    };
+</script>

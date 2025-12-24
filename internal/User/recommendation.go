@@ -413,8 +413,8 @@ func GetRecommendationSessionDetailHandler(c echo.Context) error {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "Access denied"})
 	}
 
-	var foods []database.GetRecommendedFoodsInSessionRow
-	var activities []database.GetRecommendedActivitiesInSessionRow
+	foods := []database.GetRecommendedFoodsInSessionRow{}
+	activities := []database.GetRecommendedActivitiesInSessionRow{}
 
 	// 5. Fetch recommended foods & activities with details in parallel
 	g, grpCtx := errgroup.WithContext(ctx)
@@ -431,8 +431,9 @@ func GetRecommendationSessionDetailHandler(c echo.Context) error {
 		return e
 	})
 
-	_ = g.Wait() // Ignore errors, return empty lists if fail
-
+	if err := g.Wait(); err != nil {
+		log.Warn().Err(err).Msg("One or more parallel queries failed, returning partial data")
+	}
 	// 7. Build response
 	response := map[string]interface{}{
 		"session": SessionHistoryItem{
@@ -874,7 +875,6 @@ func mapRecommendedFoods(dbRows []database.GetRecommendedFoodsInSessionRow) []ma
 			"was_added_to_cart":          row.WasAddedToCart.Bool,
 			"was_purchased":              row.WasPurchased.Bool,
 			"user_rating":                row.UserRating.Int32,
-			"feedback":                   row.Feedback.String,
 			"glucose_spike_after_eating": row.GlucoseSpikeAfterEating.Int32,
 		}
 		result = append(result, item)
@@ -902,14 +902,12 @@ func mapRecommendedActivities(dbRows []database.GetRecommendedActivitiesInSessio
 			"recommended_intensity":        row.RecommendedIntensity.String,
 			"safety_notes":                 row.SafetyNotes.String,
 			"best_time_of_day":             row.BestTimeOfDay.String,
-			"glucose_management_tip":       row.GlucoseManagementTip.String,
 			"recommendation_rank":          row.RecommendationRank.Int32,
 			// Engagement tracking
 			"was_viewed":                    row.WasViewed.Bool,
 			"was_completed":                 row.WasCompleted.Bool,
 			"actual_duration_minutes":       row.ActualDurationMinutes.Int32,
 			"user_rating":                   row.UserRating.Int32,
-			"feedback":                      row.Feedback.String,
 			"glucose_change_after_activity": row.GlucoseChangeAfterActivity.Int32,
 			"completed_at":                  row.CompletedAt.Time,
 		}

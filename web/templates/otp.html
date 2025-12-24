@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verifikasi OTP - Glupulse Seller</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Plus Jakarta Sans"', 'sans-serif'] },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff', 100: '#e0f2fe', 500: '#0ea5e9', 600: '#0284c7', 900: '#0c4a6e',
+                        }
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                        'shake': 'shake 0.5s cubic-bezier(.36,.07,.19,.97) both',
+                        'fade-in-up': 'fadeInUp 0.5s ease-out forwards',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-10px)' },
+                        },
+                        shake: {
+                            '10%, 90%': { transform: 'translate3d(-1px, 0, 0)' },
+                            '20%, 80%': { transform: 'translate3d(2px, 0, 0)' },
+                            '30%, 50%, 70%': { transform: 'translate3d(-4px, 0, 0)' },
+                            '40%, 60%': { transform: 'translate3d(4px, 0, 0)' }
+                        },
+                        fadeInUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Hide spin buttons */
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+        
+        .otp-input:focus { transform: scale(1.05); }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-brand-50 to-brand-100 min-h-screen flex items-center justify-center p-4 overflow-hidden relative">
+
+    <div class="absolute top-[-10%] left-[-10%] w-96 h-96 bg-brand-500/10 rounded-full blur-3xl animate-float"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-blue-600/10 rounded-full blur-3xl animate-float" style="animation-delay: 2s;"></div>
+
+    <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-3 pointer-events-none"></div>
+
+    <div class="w-full max-w-md bg-white p-8 md:p-10 rounded-3xl shadow-2xl border border-white/50 backdrop-blur-sm relative z-10 animate-fade-in-up">
+        
+        <div class="text-center mb-8">
+            <div class="w-20 h-20 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-4 relative group">
+                <div class="absolute inset-0 bg-brand-200 rounded-full opacity-0 group-hover:opacity-100 animate-ping duration-1000"></div>
+                <i class="fas fa-shield-alt text-3xl text-brand-600 relative z-10"></i>
+            </div>
+            <h1 class="text-2xl font-extrabold text-gray-800">Verifikasi Keamanan</h1>
+            <p class="text-gray-500 text-sm mt-2 leading-relaxed">
+                Kami telah mengirimkan kode 6 digit ke email <br>
+                <span id="user-email-display" class="font-bold text-brand-600">email Anda</span>
+            </p>
+        </div>
+
+        <form id="otpForm" class="space-y-8">
+            <div class="flex justify-between gap-2" id="otp-container">
+                <input type="number" maxlength="1" class="otp-input w-12 h-14 border-2 border-gray-200 rounded-xl text-center text-2xl font-bold text-gray-700 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 outline-none transition-all duration-200 shadow-sm" autofocus>
+                <input type="number" maxlength="1" class="otp-input w-12 h-14 border-2 border-gray-200 rounded-xl text-center text-2xl font-bold text-gray-700 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 outline-none transition-all duration-200 shadow-sm">
+                <input type="number" maxlength="1" class="otp-input w-12 h-14 border-2 border-gray-200 rounded-xl text-center text-2xl font-bold text-gray-700 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 outline-none transition-all duration-200 shadow-sm">
+                <input type="number" maxlength="1" class="otp-input w-12 h-14 border-2 border-gray-200 rounded-xl text-center text-2xl font-bold text-gray-700 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 outline-none transition-all duration-200 shadow-sm">
+                <input type="number" maxlength="1" class="otp-input w-12 h-14 border-2 border-gray-200 rounded-xl text-center text-2xl font-bold text-gray-700 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 outline-none transition-all duration-200 shadow-sm">
+                <input type="number" maxlength="1" class="otp-input w-12 h-14 border-2 border-gray-200 rounded-xl text-center text-2xl font-bold text-gray-700 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 outline-none transition-all duration-200 shadow-sm">
+            </div>
+            
+            <input type="hidden" id="otp_code" name="otp_code">
+
+            <button type="submit" id="verifyButton"
+                    class="w-full bg-brand-600 text-white font-bold py-3.5 rounded-xl hover:bg-brand-700 shadow-lg hover:shadow-brand-500/30 transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed">
+                <span>Verifikasi Akun</span>
+                <i class="fas fa-arrow-right group-hover:translate-x-1 transition-transform"></i>
+            </button>
+        </form>
+
+        <div class="mt-8 text-center space-y-3">
+            <div class="flex items-center justify-center gap-2 text-sm text-gray-500">
+                <i class="far fa-clock"></i>
+                <span id="timer">01:00</span>
+            </div>
+            
+            <button id="resendButton" disabled
+                    class="text-sm font-bold text-brand-600 hover:text-brand-800 transition-colors disabled:text-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto">
+                <i class="fas fa-redo-alt text-xs"></i> Kirim Ulang Kode
+            </button>
+        </div>
+
+<div class="mt-6 text-center border-t border-gray-100 pt-4">
+            <button onclick="logout()" class="text-xs text-gray-400 hover:text-gray-600 transition-colors">
+                Bukan Anda? <span class="underline">Keluar</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const VERIFY_ENDPOINT = '/auth/seller/verify-otp';
+        const RESEND_ENDPOINT = '/resend-otp'; // Updated to match standard path
+        const WELCOME_URL = '/seller/dashboard';
+        const LOGIN_URL = '/seller/login';
+
+        // --- STATE ---
+        let userId = localStorage.getItem('user_id');       // Exists during Login
+        let pendingId = localStorage.getItem('pending_id'); // Exists during Signup
+        
+        // We use targetId just to check if *any* session exists
+        let targetId = pendingId || userId; 
+        
+        let userEmail = localStorage.getItem('email_sent') || 'email Anda';
+        let initialExpiry = parseInt(localStorage.getItem('otp_expires_in') || 60);
+        let countdownInterval;
+
+        // --- UI UTILS ---
+        document.getElementById('user-email-display').textContent = userEmail;
+
+        function showToast(message, type = 'error') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let colorClass = type === 'success' ? 'border-green-500' : (type === 'info' ? 'border-blue-500' : 'border-red-500');
+            let iconClass = type === 'success' ? 'fa-check-circle text-green-500' : (type === 'info' ? 'fa-info-circle text-blue-500' : 'fa-exclamation-circle text-red-500');
+
+            toast.className = `bg-white border-l-4 ${colorClass} shadow-xl rounded-lg p-4 flex items-center gap-3 transform translate-x-full transition-all duration-300 pointer-events-auto min-w-[300px]`;
+            toast.innerHTML = `<i class="fas ${iconClass} text-xl"></i><div><p class="text-gray-800 text-sm font-semibold capitalize">${type}</p><p class="text-gray-500 text-xs">${message}</p></div>`;
+            
+            container.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.remove('translate-x-full'));
+            setTimeout(() => { 
+                toast.classList.add('translate-x-full'); 
+                setTimeout(() => toast.remove(), 300); 
+            }, 3000);
+        }
+
+        // --- INPUT HANDLING ---
+        const inputs = document.querySelectorAll('.otp-input');
+        inputs.forEach((input, index) => {
+            input.addEventListener('input', (e) => {
+                if (e.target.value.length > 1) e.target.value = e.target.value.slice(0, 1);
+                if (e.target.value.length === 1 && index < inputs.length - 1) inputs[index + 1].focus();
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && !e.target.value && index > 0) inputs[index - 1].focus();
+            });
+            input.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const data = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                data.split('').forEach((char, i) => { if (inputs[i]) inputs[i].value = char; });
+                inputs[Math.min(data.length, 5)].focus();
+            });
+        });
+
+        // --- TIMER LOGIC ---
+        function startTimer(duration) {
+            let timer = duration;
+            const resendBtn = document.getElementById('resendButton');
+            const display = document.getElementById('timer');
+            
+            resendBtn.disabled = true;
+            resendBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            clearInterval(countdownInterval);
+            updateDisplay(timer, display);
+
+            countdownInterval = setInterval(() => {
+                timer--;
+                updateDisplay(timer, display);
+                if (timer < 0) {
+                    clearInterval(countdownInterval);
+                    display.textContent = "Kode Kedaluwarsa";
+                    display.classList.add('text-red-500');
+                    resendBtn.disabled = false;
+                    resendBtn.classList.remove('opacity-50', 'cursor-not-allowed', 'text-gray-400');
+                }
+            }, 1000);
+        }
+
+        function updateDisplay(timer, display) {
+            let minutes = parseInt(timer / 60, 10);
+            let seconds = parseInt(timer % 60, 10);
+            minutes = minutes < 10 ? "0" + minutes : minutes;
+            seconds = seconds < 10 ? "0" + seconds : seconds;
+            display.textContent = `${minutes}:${seconds}`;
+        }
+
+        // --- LOGOUT / CLEAR ---
+        function logout() {
+            localStorage.clear();
+            document.cookie.split(";").forEach(function(c) { 
+                document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
+            });
+            window.location.href = LOGIN_URL;
+        }
+
+        // --- HANDLERS ---
+        document.getElementById('otpForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            let otpCode = '';
+            inputs.forEach(input => otpCode += input.value);
+
+            if (otpCode.length !== 6) {
+                showToast('Masukkan 6 digit kode OTP', 'error');
+                return;
+            }
+
+            if (!targetId) {
+                showToast('Sesi tidak valid. Harap login ulang.', 'error');
+                setTimeout(logout, 2000);
+                return;
+            }
+
+            const btn = document.getElementById('verifyButton');
+            const originalContent = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> Memverifikasi...`;
+
+            try {
+                // --- FIX APPLIED HERE: CONDITIONAL PAYLOAD ---
+                // Only send pending_id if it exists (Signup). 
+                // Only send user_id if it exists (Login).
+                // Do not send both as the same value.
+                const payload = { otp_code: otpCode };
+                
+                if (pendingId) {
+                    payload.pending_id = pendingId;
+                } else if (userId) {
+                    payload.user_id = userId;
+                }
+
+                const response = await fetch(VERIFY_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showToast('Verifikasi Berhasil!', 'success');
+                    localStorage.removeItem('user_id');
+                    localStorage.removeItem('pending_id');
+                    localStorage.removeItem('otp_expires_in');
+                    localStorage.removeItem('email_sent');
+                    
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url || WELCOME_URL;
+                    }, 1000);
+                } else {
+                    throw new Error(data.error || 'Kode OTP Salah');
+                }
+
+            } catch (error) {
+                showToast(error.message, 'error');
+                document.getElementById('otp-container').classList.add('animate-shake');
+                setTimeout(() => document.getElementById('otp-container').classList.remove('animate-shake'), 500);
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+        });
+
+        document.getElementById('resendButton').addEventListener('click', async function() {
+            if (!targetId) return;
+            
+            const btn = this;
+            const originalContent = btn.innerHTML;
+            btn.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> Mengirim...`;
+            
+            try {
+                // --- FIX APPLIED HERE ALSO ---
+                const payload = {};
+                if (pendingId) payload.pending_id = pendingId;
+                else if (userId) payload.user_id = userId;
+
+                const response = await fetch(RESEND_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showToast('Kode baru dikirim!', 'success');
+                    const newExpiry = data.expires_in || 60;
+                    startTimer(newExpiry);
+                    document.getElementById('timer').classList.remove('text-red-500');
+                    
+                    inputs.forEach(i => i.value = ''); 
+                    inputs[0].focus();
+                } else {
+                    throw new Error(data.error || 'Gagal mengirim ulang');
+                }
+            } catch (error) {
+                showToast(error.message, 'error');
+            } finally {
+                btn.innerHTML = originalContent;
+            }
+        });
+
+        // --- INIT ---
+        if (!targetId) {
+            showToast('Data sesi hilang. Mengalihkan...', 'error');
+            setTimeout(logout, 2000);
+        } else {
+            startTimer(initialExpiry);
+        }
+    </script>
+</body>
+</html>

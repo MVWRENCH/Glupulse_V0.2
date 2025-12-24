@@ -13,11 +13,10 @@ INSERT INTO users (
     user_dob,
     user_gender,
     user_accounttype,
-    created_at,
     is_email_verified,
     email_verified_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 ) RETURNING *;
 
 -- name: GetUserByUsername :one
@@ -71,9 +70,11 @@ INSERT INTO users (
     user_last_login_at,
     user_email_auth,
     user_username,
-    user_password
+    user_password,
+    is_email_verified,
+    email_verified_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12
 )
 ON CONFLICT (user_provider, user_provider_user_id) 
 DO UPDATE SET 
@@ -82,7 +83,9 @@ DO UPDATE SET
     user_name_auth = EXCLUDED.user_name_auth,
     user_avatar_url = EXCLUDED.user_avatar_url,
     user_raw_data = EXCLUDED.user_raw_data,
-    user_last_login_at = EXCLUDED.user_last_login_at
+    user_last_login_at = EXCLUDED.user_last_login_at,
+    is_email_verified = true,
+    email_verified_at = COALESCE(users.email_verified_at, EXCLUDED.email_verified_at)
 RETURNING *;
 
 -- name: UpdateUserGoogleLink :exec
@@ -290,6 +293,11 @@ WHERE expires_at < NOW() - INTERVAL '7 days';
 DELETE FROM users_refresh_tokens
 WHERE revoked_at < NOW() - INTERVAL '30 days';
 
+-- name: AssignUserRole :exec
+INSERT INTO user_roles (user_id, role_id)
+SELECT $1, role_id FROM roles WHERE role_name = $2
+ON CONFLICT (user_id, role_id) DO NOTHING;;
+
 /* ====================================================================
                    Addresses Management Queries
 ==================================================================== */
@@ -494,10 +502,6 @@ WHERE order_id = $1;
 SELECT * FROM foods
 WHERE food_id = $1;
 
--- name: AssignUserRole :exec
-INSERT INTO user_roles (user_id, role_id)
-SELECT $1, role_id FROM roles WHERE role_name = $2;
-
 -- name: GetSellerProfile :one
 SELECT * FROM seller_profiles
 WHERE seller_id = $1;
@@ -506,9 +510,76 @@ WHERE seller_id = $1;
 -- Retrieves a list of all food items currently marked as available
 SELECT *
 FROM foods
-WHERE is_available = true
+WHERE is_available = true AND is_active = true
 ORDER BY food_name;
 
+-- name: ListFoodCategories :many
+SELECT category_id, category_code, display_name, description 
+FROM food_categories 
+ORDER BY display_name ASC;
+
+-- name: GetUserOrderHistory :many
+SELECT 
+    o.order_id,
+    o.total_price,
+    o.status,
+    o.payment_status,
+    o.created_at,
+    s.store_name,
+    s.store_slug,
+    s.logo_url,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN seller_profiles s ON o.seller_id = s.seller_id
+WHERE o.user_id = $1 
+  AND o.status IN ('completed', 'cancelled', 'rejected') 
+ORDER BY o.created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: GetUserActiveOrders :many
+SELECT 
+    o.order_id,
+    o.total_price,
+    o.status,
+    o.payment_status,
+    o.created_at,
+    o.delivery_address_json,
+    s.store_name,
+    s.store_phone_number,
+    s.latitude as seller_lat,
+    s.longitude as seller_long,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN seller_profiles s ON o.seller_id = s.seller_id
+WHERE o.user_id = $1 
+  AND o.status IN ('Pending Payment', 'confirmed', 'processing', 'shipping', 'ready_for_pickup')
+ORDER BY o.created_at DESC;
+
+-- name: SimulateUserPayment :one
+UPDATE user_orders
+SET 
+    status = 'Waiting for Confirmation', 
+    payment_status = 'Paid'
+WHERE order_id = $1 
+  AND user_id = $2 
+  AND status = 'Pending Payment' -- Safety check
+RETURNING order_id, status, payment_status;
 
 /* ====================================================================
                    Health Profile Queries
@@ -1193,10 +1264,9 @@ INSERT INTO recommended_foods (
     nutrition_highlight,
     suggested_meal_type,
     suggested_portion_size,
-    recommendation_rank,
-    confidence_score
+    recommendation_rank
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8
 );
 
 -- name: CreateRecommendedActivity :exec
@@ -1210,11 +1280,9 @@ INSERT INTO recommended_activities (
     recommended_intensity,
     safety_notes,
     best_time_of_day,
-    glucose_management_tip,
-    recommendation_rank,
-    confidence_score
+    recommendation_rank
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 );
 
 -- name: ListRecommendedFoods :many
@@ -1234,6 +1302,10 @@ Secondary: High fiber (better for glucose control)
 */
 SELECT * FROM foods
 WHERE is_available = true
+    AND (
+        sqlc.narg('excluded_food_ids')::uuid[] IS NULL 
+        OR NOT (food_id = ANY(sqlc.narg('excluded_food_ids')::uuid[]))
+    )
     AND (
         sqlc.narg('food_category')::TEXT[] IS NULL 
         OR food_category::TEXT[] && sqlc.narg('food_category')::TEXT[]
@@ -1280,25 +1352,7 @@ WHERE session_id = $1;
 -- name: GetRecommendedFoodsInSession :many
 SELECT 
     rf.*,
-    f.food_name,
-    f.seller_id,
-    f.description,
-    f.price,
-    f.currency,
-    f.photo_url,
-    f.thumbnail_url,
-    f.is_available,
-    f.tags,
-    f.serving_size,
-    f.calories,
-    f.carbs_grams,
-    f.fiber_grams,
-    f.protein_grams,
-    f.fat_grams,
-    f.sugar_grams,
-    f.sodium_mg,
-    f.glycemic_index,
-    f.glycemic_load
+    f.*
 FROM recommended_foods rf
 JOIN foods f ON rf.food_id = f.food_id
 WHERE rf.session_id = $1
@@ -1307,76 +1361,18 @@ ORDER BY rf.recommendation_rank ASC;
 -- name: GetRecommendedActivitiesInSession :many
 SELECT 
     ra.*,
-    a.activity_code,
-    a.activity_name,
-    a.description,
-    a.image_url,
-    a.met_value,
-    a.measurement_unit
+    a.*
 FROM recommended_activities ra
 JOIN activities a ON ra.activity_id = a.id
 WHERE ra.session_id = $1
 ORDER BY ra.recommendation_rank ASC;
 
--- name: GetUserRecommendationHistory :many
+-- name: GetUserDemographics :one
 SELECT 
-    rs.session_id,
-    rs.created_at,
-    rs.analysis_summary,
-    rs.meal_type,
-    rs.requested_types,
-    rs.overall_feedback,
-    COUNT(DISTINCT rf.food_id) as foods_count,
-    COUNT(DISTINCT ra.activity_id) as activities_count
-FROM recommendation_sessions rs
-LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
-LEFT JOIN recommended_activities ra ON rs.session_id = ra.session_id
-WHERE rs.user_id = $1
-GROUP BY rs.session_id
-ORDER BY rs.created_at DESC
-LIMIT sqlc.arg(limit_count)::INTEGER;
-
--- name: MarkFoodAddedToCart :exec
-UPDATE recommended_foods
-SET was_added_to_cart = true,
-    last_interaction_at = NOW()
-WHERE session_id = $1 AND food_id = $2;
-
--- name: MarkFoodPurchased :exec
-UPDATE recommended_foods
-SET was_purchased = true,
-    last_interaction_at = NOW()
-WHERE session_id = $1 AND food_id = $2;
-
--- name: MarkActivityCompleted :exec
-UPDATE recommended_activities
-SET was_completed = true,
-    completed_at = NOW(),
-    actual_duration_minutes = $3,
-    last_interaction_at = NOW()
-WHERE session_id = $1 AND activity_id = $2;
-
--- name: AddFoodFeedback :exec
-UPDATE recommended_foods
-SET user_rating = $3,
-    feedback = $4,
-    feedback_notes = $5,
-    glucose_spike_after_eating = $6
-WHERE session_id = $1 AND food_id = $2;
-
--- name: AddActivityFeedback :exec
-UPDATE recommended_activities
-SET user_rating = $3,
-    feedback = $4,
-    feedback_notes = $5,
-    glucose_change_after_activity = $6
-WHERE session_id = $1 AND activity_id = $2;
-
--- name: AddSessionFeedback :exec
-UPDATE recommendation_sessions
-SET overall_feedback = $2,
-    feedback_notes = $3
-WHERE session_id = $1;
+    CAST(EXTRACT(YEAR FROM AGE(CURRENT_DATE, user_DOB)) AS INTEGER) as age,
+    user_gender
+FROM users
+WHERE user_id = $1;
 
 -- name: GetLatestGlucoseReading :one
 SELECT * FROM user_glucose_readings
@@ -1390,55 +1386,67 @@ WHERE user_id = $1
 ORDER BY test_date DESC
 LIMIT 1;
 
--- name: GetRecommendationEffectiveness :many
-SELECT * FROM recommendation_effectiveness
-WHERE user_id = $1
-    AND recommendation_date >= sqlc.arg(start_date)::DATE
-ORDER BY recommendation_date DESC;
-
--- name: GetTopRatedFoods :many
-SELECT 
-    f.food_id,
-    f.food_name,
-    f.photo_url,
-    COUNT(rf.recommendation_food_id) as times_recommended,
-    AVG(rf.user_rating) as avg_rating,
-    COUNT(rf.recommendation_food_id) FILTER (WHERE rf.was_purchased = true) as purchase_count
-FROM foods f
-JOIN recommended_foods rf ON f.food_id = rf.food_id
+-- 1. Get IDs of foods recommended in the last few sessions
+-- name: GetRecentRecommendedFoodIDs :many
+SELECT rf.food_id
+FROM recommended_foods rf
 JOIN recommendation_sessions rs ON rf.session_id = rs.session_id
 WHERE rs.user_id = $1
-    AND rf.user_rating IS NOT NULL
-GROUP BY f.food_id
-HAVING COUNT(rf.user_rating) >= 3
-ORDER BY AVG(rf.user_rating) DESC, COUNT(rf.was_purchased) DESC
-LIMIT 10;
-
--- name: GetTopRatedActivities :many
-SELECT 
-    a.id,
-    a.activity_name,
-    a.image_url,
-    COUNT(ra.recommendation_activity_id) as times_recommended,
-    AVG(ra.user_rating) as avg_rating,
-    COUNT(ra.recommendation_activity_id) FILTER (WHERE ra.was_completed = true) as completion_count
-FROM activities a
-JOIN recommended_activities ra ON a.id = ra.activity_id
-JOIN recommendation_sessions rs ON ra.session_id = rs.session_id
-WHERE rs.user_id = $1
-    AND ra.user_rating IS NOT NULL
-GROUP BY a.id
-HAVING COUNT(ra.user_rating) >= 3
-ORDER BY AVG(ra.user_rating) DESC, COUNT(ra.was_completed) DESC
-LIMIT 10;
+ORDER BY rs.created_at DESC
+LIMIT 20;
 
 
--- name: GetUserDemographics :one
-SELECT 
-    CAST(EXTRACT(YEAR FROM AGE(CURRENT_DATE, user_DOB)) AS INTEGER) as age,
-    user_gender
-FROM users
-WHERE user_id = $1;
+/* ====================================================================
+                     Engangement & Tracking Queries
+==================================================================== */
+
+-- name: AddSessionFeedback :exec
+UPDATE recommendation_sessions
+SET overall_feedback = $2,
+    feedback_notes = $3
+WHERE session_id = $1;
+
+-- name: AddFoodFeedback :exec
+UPDATE recommended_foods
+SET user_rating = $3,
+    feedback_notes = $4,
+    glucose_spike_after_eating = $5
+WHERE session_id = $1 AND food_id = $2;
+
+-- name: MarkFoodViewed :exec
+UPDATE recommended_foods
+SET was_viewed = true
+WHERE session_id = $1 AND food_id = $2;
+
+-- name: MarkFoodAddedToCart :exec
+UPDATE recommended_foods
+SET was_added_to_cart = true
+WHERE session_id = $1 AND food_id = $2;
+
+-- name: MarkFoodPurchased :exec
+UPDATE recommended_foods
+SET was_purchased = true
+WHERE session_id = $1 AND food_id = $2;
+
+-- name: AddActivityFeedback :exec
+UPDATE recommended_activities
+SET user_rating = $3,
+    feedback_notes = $4,
+    glucose_change_after_activity = $5
+WHERE session_id = $1 AND activity_id = $2;
+
+-- name: MarkActivityCompleted :exec
+UPDATE recommended_activities
+SET was_completed = true,
+    completed_at = NOW(),
+    actual_duration_minutes = $3
+WHERE session_id = $1 AND activity_id = $2;
+
+-- name: MarkActivityViewed :exec
+UPDATE recommended_activities
+SET was_viewed = true
+WHERE session_id = $1 AND activity_id = $2;
+
 
 -- =================================================================================
 -- RECOMMENDATION SESSION HISTORY QUERIES
@@ -1503,6 +1511,367 @@ SELECT
     AVG(glucose_change_after_activity) FILTER (WHERE glucose_change_after_activity IS NOT NULL) as avg_glucose_change
 FROM recommended_activities
 WHERE session_id = $1;
+
+
+/* ====================================================================
+                            Seller Queries
+==================================================================== */
+-- name: CreateSellerProfile :one
+INSERT INTO seller_profiles (
+    seller_id,
+    user_id,
+    store_name,
+    store_slug,
+    store_description,
+    store_phone_number,
+    store_email,
+    address_line1,
+    address_line2,
+    district,
+    city,
+    province,
+    postal_code,
+    latitude,
+    longitude,
+    gmaps_link,
+    business_hours,
+    cuisine_type,
+    price_range,
+    verification_status,
+    is_active,
+    is_open
+) VALUES (
+    $1, -- seller_id
+    $2, -- user_id
+    $3, -- store_name
+    $4, -- store_slug
+    $5, -- store_description
+    $6, -- store_phone_number
+    $7, -- store_email
+    $8, -- address_line1
+    $9, -- address_line2
+    $10, -- district
+    $11, -- city
+    $12, -- province
+    $13, -- postal_code
+    $14, -- latitude
+    $15, -- longitude
+    $16, -- gmaps_link
+    $17, -- business_hours (JSONB)
+    $18, -- cuisine_type (Array)
+    $19, -- price_range
+    'pending'::seller_verification_status, -- Always start as pending
+    true, -- is_active (system level)
+    false -- is_open (shop closed until setup complete)
+)
+RETURNING *;
+
+-- name: CheckIfUserHasShop :one
+SELECT EXISTS(SELECT 1 FROM seller_profiles WHERE user_id = $1);
+
+-- name: CheckSellerSlugExists :one
+SELECT EXISTS(SELECT 1 FROM seller_profiles WHERE store_slug = $1);
+
+-- name: GetSellerIDByUserID :one
+SELECT seller_id FROM seller_profiles WHERE user_id = $1;
+
+-- name: GetSellerProfileByUserID :one
+SELECT * FROM seller_profiles WHERE user_id = $1;
+
+-- name: GetSellerByID :one
+SELECT 
+    s.*,
+    u.user_firstname,
+    u.user_lastname,
+    u.user_email
+FROM seller_profiles s
+JOIN users u ON s.user_id = u.user_id
+WHERE s.seller_id = $1;
+
+-- name: CreateFood :one
+INSERT INTO foods (
+    seller_id,
+    food_name,
+    description,
+    price,
+    currency,
+    photo_url,
+    thumbnail_url,
+    is_available,
+    stock_count,
+    tags,
+    serving_size,
+    serving_size_grams,
+    quantity,
+    calories,
+    carbs_grams,
+    fiber_grams,
+    protein_grams,
+    fat_grams,
+    sugar_grams,
+    sodium_mg,
+    glycemic_index,
+    glycemic_load,
+    food_category,
+    saturated_fat_grams,
+    monounsaturated_fat_grams,
+    polyunsaturated_fat_grams,
+    cholesterol_mg
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+)
+RETURNING *;
+
+-- name: GetFoodByID :one
+SELECT * FROM foods WHERE food_id = $1;
+
+-- name: ListFoodsBySeller :many
+SELECT * FROM foods 
+WHERE seller_id = $1 AND is_active = true
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: UpdateFood :one
+UPDATE foods
+SET 
+    food_name = COALESCE(sqlc.narg('food_name'), food_name),
+    description = COALESCE(sqlc.narg('description'), description),
+    price = COALESCE(sqlc.narg('price'), price),
+    currency = COALESCE(sqlc.narg('currency'), currency),
+    photo_url = COALESCE(sqlc.narg('photo_url'), photo_url),
+    thumbnail_url = COALESCE(sqlc.narg('thumbnail_url'), thumbnail_url),
+    is_available = COALESCE(sqlc.narg('is_available'), is_available),
+    stock_count = COALESCE(sqlc.narg('stock_count'), stock_count),
+    tags = COALESCE(sqlc.narg('tags'), tags),
+    serving_size = COALESCE(sqlc.narg('serving_size'), serving_size),
+    serving_size_grams = COALESCE(sqlc.narg('serving_size_grams'), serving_size_grams),
+    quantity = COALESCE(sqlc.narg('quantity'), quantity),
+    calories = COALESCE(sqlc.narg('calories'), calories),
+    carbs_grams = COALESCE(sqlc.narg('carbs_grams'), carbs_grams),
+    fiber_grams = COALESCE(sqlc.narg('fiber_grams'), fiber_grams),
+    protein_grams = COALESCE(sqlc.narg('protein_grams'), protein_grams),
+    fat_grams = COALESCE(sqlc.narg('fat_grams'), fat_grams),
+    sugar_grams = COALESCE(sqlc.narg('sugar_grams'), sugar_grams),
+    sodium_mg = COALESCE(sqlc.narg('sodium_mg'), sodium_mg),
+    glycemic_index = COALESCE(sqlc.narg('glycemic_index'), glycemic_index),
+    glycemic_load = COALESCE(sqlc.narg('glycemic_load'), glycemic_load),
+    food_category = COALESCE(sqlc.narg('food_category'), food_category),
+    saturated_fat_grams = COALESCE(sqlc.narg('saturated_fat_grams'), saturated_fat_grams),
+    monounsaturated_fat_grams = COALESCE(sqlc.narg('monounsaturated_fat_grams'), monounsaturated_fat_grams),
+    polyunsaturated_fat_grams = COALESCE(sqlc.narg('polyunsaturated_fat_grams'), polyunsaturated_fat_grams),
+    cholesterol_mg = COALESCE(sqlc.narg('cholesterol_mg'), cholesterol_mg)
+WHERE food_id = sqlc.arg('food_id') AND seller_id = sqlc.arg('seller_id')
+RETURNING *;
+
+-- name: DeleteFood :exec
+UPDATE foods
+SET is_active = false
+WHERE food_id = $1 AND seller_id = $2;
+
+-- name: GetSellerIncomingOrders :many
+SELECT 
+    o.order_id,
+    o.user_id,
+    o.total_price,
+    o.status,
+    o.created_at,
+    o.delivery_address_json,
+    u.user_firstname,
+    u.user_lastname,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN users u ON o.user_id = u.user_id
+WHERE o.seller_id = $1 
+  AND o.status = 'Waiting for Confirmation'
+ORDER BY o.created_at ASC;
+
+-- name: GetSellerActiveOrders :many
+SELECT 
+    o.order_id,
+    o.user_id,
+    o.total_price,
+    o.status,
+    o.created_at,
+    o.delivery_address_json,
+    u.user_firstname,
+    u.user_lastname,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN users u ON o.user_id = u.user_id
+WHERE o.seller_id = $1 
+  AND o.status IN ('Preparing', 'Ready to Pick Up', 'On Delivery')
+ORDER BY o.created_at ASC;
+
+-- name: GetSellerOrderHistory :many
+SELECT 
+    o.order_id,
+    o.total_price,
+    o.status,
+    o.created_at,
+    u.user_firstname,
+    u.user_lastname,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN users u ON o.user_id = u.user_id
+WHERE o.seller_id = $1 
+  AND o.status IN ('Completed', 'Cancelled', 'Rejected')
+ORDER BY o.created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: UpdateOrderStatus :exec
+UPDATE user_orders 
+SET 
+    status = sqlc.arg('status'),
+    seller_notes = COALESCE(sqlc.narg('seller_notes'), seller_notes)
+WHERE order_id = sqlc.arg('order_id') AND seller_id = sqlc.arg('seller_id');
+
+-- name: GetSellerSummaryStats :one
+SELECT 
+    COALESCE(SUM(total_price), 0)::numeric(10,2) AS total_revenue,
+    COUNT(*) AS total_orders,
+    COALESCE(AVG(total_price), 0)::numeric(10,2) AS average_order_value
+FROM user_orders
+WHERE seller_id = $1 
+  AND status = 'Completed'
+  AND created_at BETWEEN $2 AND $3;
+
+-- name: GetSellerDailySales :many
+SELECT 
+    TO_CHAR(created_at, 'YYYY-MM-DD') AS sale_date,
+    COUNT(*) AS daily_orders,
+    COALESCE(SUM(total_price), 0)::numeric(10,2) AS daily_revenue
+FROM user_orders
+WHERE seller_id = $1 
+  AND status = 'Completed'
+  AND created_at BETWEEN $2 AND $3
+GROUP BY sale_date
+ORDER BY sale_date ASC;
+
+-- name: GetSellerTopItems :many
+SELECT 
+    i.food_name_snapshot,
+    SUM(i.quantity)::bigint AS total_sold,
+    SUM(i.quantity * i.price_at_purchase)::numeric(10,2) AS total_revenue
+FROM user_order_items i
+JOIN user_orders o ON i.order_id = o.order_id
+WHERE o.seller_id = $1 
+  AND o.status = 'Completed'
+  AND o.created_at BETWEEN $2 AND $3
+GROUP BY i.food_name_snapshot
+ORDER BY total_sold DESC
+LIMIT 5;
+
+-- name: UpdateSellerProfile :one
+UPDATE seller_profiles
+SET 
+    store_name = COALESCE(sqlc.narg('store_name'), store_name),
+    store_description = COALESCE(sqlc.narg('store_description'), store_description),
+    store_phone_number = COALESCE(sqlc.narg('store_phone_number'), store_phone_number),
+    business_hours = COALESCE(sqlc.narg('business_hours'), business_hours),
+    is_open = COALESCE(sqlc.narg('is_open'), is_open),
+    is_active = COALESCE(sqlc.narg('is_active'), is_active),
+    
+    -- Address
+    address_line1 = COALESCE(sqlc.narg('address_line1'), address_line1),
+    address_line2 = COALESCE(sqlc.narg('address_line2'), address_line2),
+    district = COALESCE(sqlc.narg('district'), district),
+    city = COALESCE(sqlc.narg('city'), city),
+    province = COALESCE(sqlc.narg('province'), province),
+    postal_code = COALESCE(sqlc.narg('postal_code'), postal_code),
+    latitude = COALESCE(sqlc.narg('latitude'), latitude),
+    longitude = COALESCE(sqlc.narg('longitude'), longitude),
+    
+    -- Details
+    store_email = COALESCE(sqlc.narg('store_email'), store_email),
+    cuisine_type = COALESCE(sqlc.narg('cuisine_type'), cuisine_type),
+    price_range = COALESCE(sqlc.narg('price_range'), price_range),
+    
+    -- Images (URLs)
+    logo_url = COALESCE(sqlc.narg('logo_url'), logo_url),
+    banner_url = COALESCE(sqlc.narg('banner_url'), banner_url),
+    
+    updated_at = NOW()
+WHERE seller_id = sqlc.arg('seller_id')
+RETURNING *;
+
+/* ====================================================================
+                           Unused Queries
+==================================================================== */
+-- name: GetUserActiveRefreshTokens :many
+SELECT * FROM users_refresh_tokens
+WHERE user_id = $1 
+  AND revoked_at IS NULL 
+  AND expires_at > CURRENT_TIMESTAMP
+ORDER BY created_at DESC;
+
+-- name: UpdateRefreshTokenReplacement :exec
+UPDATE users_refresh_tokens
+SET replaced_by_token_id = $2
+WHERE id = $1;
+
+-- name: GetAuthLogsByUserID :many
+SELECT * FROM logs_auth
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: GetAuthLogsByCategory :many
+SELECT * FROM logs_auth
+WHERE log_category = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: GetAuthLogsByDateRange :many
+SELECT * FROM logs_auth
+WHERE created_at BETWEEN $1 AND $2
+ORDER BY created_at DESC
+LIMIT $3 OFFSET $4;
+
+-- name: GetFailedLoginAttempts :many
+SELECT * FROM logs_auth
+WHERE log_category = 'login'
+  AND log_action = 'login_failed'
+  AND created_at > $1
+ORDER BY created_at DESC;
+
+-- name: GetRecentAuthActivity :many
+SELECT * FROM logs_auth
+WHERE user_id = $1
+  AND created_at > $2
+ORDER BY created_at DESC
+LIMIT $3;
+
+-- name: DeleteOldAuthLogs :exec
+DELETE FROM logs_auth
+WHERE created_at < $1;
+
+-- name: VerifyOTPAtomic :one
+SELECT * FROM verify_otp_atomic($1, $2);
+
 
 -- name: ExpireRecommendationSession :exec
 UPDATE recommendation_sessions
@@ -1589,56 +1958,62 @@ WHERE rs.user_id = $1
 ORDER BY rs.created_at DESC
 LIMIT 50;
 
-/* ====================================================================
-                           Unused Queries
-==================================================================== */
--- name: GetUserActiveRefreshTokens :many
-SELECT * FROM users_refresh_tokens
-WHERE user_id = $1 
-  AND revoked_at IS NULL 
-  AND expires_at > CURRENT_TIMESTAMP
-ORDER BY created_at DESC;
-
--- name: UpdateRefreshTokenReplacement :exec
-UPDATE users_refresh_tokens
-SET replaced_by_token_id = $2
-WHERE id = $1;
-
--- name: GetAuthLogsByUserID :many
-SELECT * FROM logs_auth
+-- name: GetRecommendationEffectiveness :many
+SELECT * FROM recommendation_effectiveness
 WHERE user_id = $1
-ORDER BY created_at DESC
-LIMIT $2 OFFSET $3;
+    AND recommendation_date >= sqlc.arg(start_date)::DATE
+ORDER BY recommendation_date DESC;
 
--- name: GetAuthLogsByCategory :many
-SELECT * FROM logs_auth
-WHERE log_category = $1
-ORDER BY created_at DESC
-LIMIT $2 OFFSET $3;
+-- name: GetTopRatedFoods :many
+SELECT 
+    f.food_id,
+    f.food_name,
+    f.photo_url,
+    COUNT(rf.recommendation_food_id) as times_recommended,
+    AVG(rf.user_rating) as avg_rating,
+    COUNT(rf.recommendation_food_id) FILTER (WHERE rf.was_purchased = true) as purchase_count
+FROM foods f
+JOIN recommended_foods rf ON f.food_id = rf.food_id
+JOIN recommendation_sessions rs ON rf.session_id = rs.session_id
+WHERE rs.user_id = $1
+    AND rf.user_rating IS NOT NULL
+GROUP BY f.food_id
+HAVING COUNT(rf.user_rating) >= 3
+ORDER BY AVG(rf.user_rating) DESC, COUNT(rf.was_purchased) DESC
+LIMIT 10;
 
--- name: GetAuthLogsByDateRange :many
-SELECT * FROM logs_auth
-WHERE created_at BETWEEN $1 AND $2
-ORDER BY created_at DESC
-LIMIT $3 OFFSET $4;
+-- name: GetTopRatedActivities :many
+SELECT 
+    a.id,
+    a.activity_name,
+    a.image_url,
+    COUNT(ra.recommendation_activity_id) as times_recommended,
+    AVG(ra.user_rating) as avg_rating,
+    COUNT(ra.recommendation_activity_id) FILTER (WHERE ra.was_completed = true) as completion_count
+FROM activities a
+JOIN recommended_activities ra ON a.id = ra.activity_id
+JOIN recommendation_sessions rs ON ra.session_id = rs.session_id
+WHERE rs.user_id = $1
+    AND ra.user_rating IS NOT NULL
+GROUP BY a.id
+HAVING COUNT(ra.user_rating) >= 3
+ORDER BY AVG(ra.user_rating) DESC, COUNT(ra.was_completed) DESC
+LIMIT 10;
 
--- name: GetFailedLoginAttempts :many
-SELECT * FROM logs_auth
-WHERE log_category = 'login'
-  AND log_action = 'login_failed'
-  AND created_at > $1
-ORDER BY created_at DESC;
-
--- name: GetRecentAuthActivity :many
-SELECT * FROM logs_auth
-WHERE user_id = $1
-  AND created_at > $2
-ORDER BY created_at DESC
-LIMIT $3;
-
--- name: DeleteOldAuthLogs :exec
-DELETE FROM logs_auth
-WHERE created_at < $1;
-
--- name: VerifyOTPAtomic :one
-SELECT * FROM verify_otp_atomic($1, $2);
+-- name: GetUserRecommendationHistory :many
+SELECT 
+    rs.session_id,
+    rs.created_at,
+    rs.analysis_summary,
+    rs.meal_type,
+    rs.requested_types,
+    rs.overall_feedback,
+    COUNT(DISTINCT rf.food_id) as foods_count,
+    COUNT(DISTINCT ra.activity_id) as activities_count
+FROM recommendation_sessions rs
+LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
+LEFT JOIN recommended_activities ra ON rs.session_id = ra.session_id
+WHERE rs.user_id = $1
+GROUP BY rs.session_id
+ORDER BY rs.created_at DESC
+LIMIT sqlc.arg(limit_count)::INTEGER;

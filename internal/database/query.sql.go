@@ -15,9 +15,8 @@ import (
 const addActivityFeedback = `-- name: AddActivityFeedback :exec
 UPDATE recommended_activities
 SET user_rating = $3,
-    feedback = $4,
-    feedback_notes = $5,
-    glucose_change_after_activity = $6
+    feedback_notes = $4,
+    glucose_change_after_activity = $5
 WHERE session_id = $1 AND activity_id = $2
 `
 
@@ -25,7 +24,6 @@ type AddActivityFeedbackParams struct {
 	SessionID                  pgtype.UUID `json:"session_id"`
 	ActivityID                 int32       `json:"activity_id"`
 	UserRating                 pgtype.Int4 `json:"user_rating"`
-	Feedback                   pgtype.Text `json:"feedback"`
 	FeedbackNotes              pgtype.Text `json:"feedback_notes"`
 	GlucoseChangeAfterActivity pgtype.Int4 `json:"glucose_change_after_activity"`
 }
@@ -35,7 +33,6 @@ func (q *Queries) AddActivityFeedback(ctx context.Context, arg AddActivityFeedba
 		arg.SessionID,
 		arg.ActivityID,
 		arg.UserRating,
-		arg.Feedback,
 		arg.FeedbackNotes,
 		arg.GlucoseChangeAfterActivity,
 	)
@@ -45,9 +42,8 @@ func (q *Queries) AddActivityFeedback(ctx context.Context, arg AddActivityFeedba
 const addFoodFeedback = `-- name: AddFoodFeedback :exec
 UPDATE recommended_foods
 SET user_rating = $3,
-    feedback = $4,
-    feedback_notes = $5,
-    glucose_spike_after_eating = $6
+    feedback_notes = $4,
+    glucose_spike_after_eating = $5
 WHERE session_id = $1 AND food_id = $2
 `
 
@@ -55,7 +51,6 @@ type AddFoodFeedbackParams struct {
 	SessionID               pgtype.UUID `json:"session_id"`
 	FoodID                  pgtype.UUID `json:"food_id"`
 	UserRating              pgtype.Int4 `json:"user_rating"`
-	Feedback                pgtype.Text `json:"feedback"`
 	FeedbackNotes           pgtype.Text `json:"feedback_notes"`
 	GlucoseSpikeAfterEating pgtype.Int4 `json:"glucose_spike_after_eating"`
 }
@@ -65,7 +60,6 @@ func (q *Queries) AddFoodFeedback(ctx context.Context, arg AddFoodFeedbackParams
 		arg.SessionID,
 		arg.FoodID,
 		arg.UserRating,
-		arg.Feedback,
 		arg.FeedbackNotes,
 		arg.GlucoseSpikeAfterEating,
 	)
@@ -73,6 +67,10 @@ func (q *Queries) AddFoodFeedback(ctx context.Context, arg AddFoodFeedbackParams
 }
 
 const addSessionFeedback = `-- name: AddSessionFeedback :exec
+/* ====================================================================
+                     Engangement & Tracking Queries
+==================================================================== */
+
 UPDATE recommendation_sessions
 SET overall_feedback = $2,
     feedback_notes = $3
@@ -93,6 +91,7 @@ func (q *Queries) AddSessionFeedback(ctx context.Context, arg AddSessionFeedback
 const assignUserRole = `-- name: AssignUserRole :exec
 INSERT INTO user_roles (user_id, role_id)
 SELECT $1, role_id FROM roles WHERE role_name = $2
+ON CONFLICT (user_id, role_id) DO NOTHING
 `
 
 type AssignUserRoleParams struct {
@@ -132,6 +131,28 @@ SELECT EXISTS(
 
 func (q *Queries) CheckEmailExists(ctx context.Context, userEmail pgtype.Text) (bool, error) {
 	row := q.db.QueryRow(ctx, checkEmailExists, userEmail)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const checkIfUserHasShop = `-- name: CheckIfUserHasShop :one
+SELECT EXISTS(SELECT 1 FROM seller_profiles WHERE user_id = $1)
+`
+
+func (q *Queries) CheckIfUserHasShop(ctx context.Context, userID string) (bool, error) {
+	row := q.db.QueryRow(ctx, checkIfUserHasShop, userID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const checkSellerSlugExists = `-- name: CheckSellerSlugExists :one
+SELECT EXISTS(SELECT 1 FROM seller_profiles WHERE store_slug = $1)
+`
+
+func (q *Queries) CheckSellerSlugExists(ctx context.Context, storeSlug string) (bool, error) {
+	row := q.db.QueryRow(ctx, checkSellerSlugExists, storeSlug)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -400,6 +421,138 @@ func (q *Queries) CreateEmailChangeRequest(ctx context.Context, arg CreateEmailC
 		&i.VerificationToken,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createFood = `-- name: CreateFood :one
+INSERT INTO foods (
+    seller_id,
+    food_name,
+    description,
+    price,
+    currency,
+    photo_url,
+    thumbnail_url,
+    is_available,
+    stock_count,
+    tags,
+    serving_size,
+    serving_size_grams,
+    quantity,
+    calories,
+    carbs_grams,
+    fiber_grams,
+    protein_grams,
+    fat_grams,
+    sugar_grams,
+    sodium_mg,
+    glycemic_index,
+    glycemic_load,
+    food_category,
+    saturated_fat_grams,
+    monounsaturated_fat_grams,
+    polyunsaturated_fat_grams,
+    cholesterol_mg
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+)
+RETURNING food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg, is_active
+`
+
+type CreateFoodParams struct {
+	SellerID                pgtype.UUID    `json:"seller_id"`
+	FoodName                string         `json:"food_name"`
+	Description             pgtype.Text    `json:"description"`
+	Price                   pgtype.Numeric `json:"price"`
+	Currency                string         `json:"currency"`
+	PhotoUrl                pgtype.Text    `json:"photo_url"`
+	ThumbnailUrl            pgtype.Text    `json:"thumbnail_url"`
+	IsAvailable             pgtype.Bool    `json:"is_available"`
+	StockCount              pgtype.Int4    `json:"stock_count"`
+	Tags                    []string       `json:"tags"`
+	ServingSize             pgtype.Text    `json:"serving_size"`
+	ServingSizeGrams        pgtype.Numeric `json:"serving_size_grams"`
+	Quantity                pgtype.Numeric `json:"quantity"`
+	Calories                pgtype.Int4    `json:"calories"`
+	CarbsGrams              pgtype.Numeric `json:"carbs_grams"`
+	FiberGrams              pgtype.Numeric `json:"fiber_grams"`
+	ProteinGrams            pgtype.Numeric `json:"protein_grams"`
+	FatGrams                pgtype.Numeric `json:"fat_grams"`
+	SugarGrams              pgtype.Numeric `json:"sugar_grams"`
+	SodiumMg                pgtype.Numeric `json:"sodium_mg"`
+	GlycemicIndex           pgtype.Int4    `json:"glycemic_index"`
+	GlycemicLoad            pgtype.Numeric `json:"glycemic_load"`
+	FoodCategory            []string       `json:"food_category"`
+	SaturatedFatGrams       pgtype.Numeric `json:"saturated_fat_grams"`
+	MonounsaturatedFatGrams pgtype.Numeric `json:"monounsaturated_fat_grams"`
+	PolyunsaturatedFatGrams pgtype.Numeric `json:"polyunsaturated_fat_grams"`
+	CholesterolMg           pgtype.Numeric `json:"cholesterol_mg"`
+}
+
+func (q *Queries) CreateFood(ctx context.Context, arg CreateFoodParams) (Food, error) {
+	row := q.db.QueryRow(ctx, createFood,
+		arg.SellerID,
+		arg.FoodName,
+		arg.Description,
+		arg.Price,
+		arg.Currency,
+		arg.PhotoUrl,
+		arg.ThumbnailUrl,
+		arg.IsAvailable,
+		arg.StockCount,
+		arg.Tags,
+		arg.ServingSize,
+		arg.ServingSizeGrams,
+		arg.Quantity,
+		arg.Calories,
+		arg.CarbsGrams,
+		arg.FiberGrams,
+		arg.ProteinGrams,
+		arg.FatGrams,
+		arg.SugarGrams,
+		arg.SodiumMg,
+		arg.GlycemicIndex,
+		arg.GlycemicLoad,
+		arg.FoodCategory,
+		arg.SaturatedFatGrams,
+		arg.MonounsaturatedFatGrams,
+		arg.PolyunsaturatedFatGrams,
+		arg.CholesterolMg,
+	)
+	var i Food
+	err := row.Scan(
+		&i.FoodID,
+		&i.SellerID,
+		&i.FoodName,
+		&i.Description,
+		&i.Price,
+		&i.Currency,
+		&i.PhotoUrl,
+		&i.ThumbnailUrl,
+		&i.IsAvailable,
+		&i.StockCount,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ServingSize,
+		&i.ServingSizeGrams,
+		&i.Quantity,
+		&i.Calories,
+		&i.CarbsGrams,
+		&i.FiberGrams,
+		&i.ProteinGrams,
+		&i.FatGrams,
+		&i.SugarGrams,
+		&i.SodiumMg,
+		&i.GlycemicIndex,
+		&i.GlycemicLoad,
+		&i.FoodCategory,
+		&i.SaturatedFatGrams,
+		&i.MonounsaturatedFatGrams,
+		&i.PolyunsaturatedFatGrams,
+		&i.CholesterolMg,
+		&i.IsActive,
 	)
 	return i, err
 }
@@ -908,7 +1061,7 @@ INSERT INTO user_orders (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7
 )
-RETURNING order_id, user_id, seller_id, total_price, status, delivery_address_json, payment_status, payment_method, created_at
+RETURNING order_id, user_id, seller_id, total_price, status, delivery_address_json, payment_status, payment_method, created_at, updated_at, seller_notes
 `
 
 type CreateOrderParams struct {
@@ -942,6 +1095,8 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (UserO
 		&i.PaymentStatus,
 		&i.PaymentMethod,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SellerNotes,
 	)
 	return i, err
 }
@@ -1101,26 +1256,22 @@ INSERT INTO recommended_activities (
     recommended_intensity,
     safety_notes,
     best_time_of_day,
-    glucose_management_tip,
-    recommendation_rank,
-    confidence_score
+    recommendation_rank
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 )
 `
 
 type CreateRecommendedActivityParams struct {
-	RecommendationActivityID   pgtype.UUID    `json:"recommendation_activity_id"`
-	SessionID                  pgtype.UUID    `json:"session_id"`
-	ActivityID                 int32          `json:"activity_id"`
-	Reason                     string         `json:"reason"`
-	RecommendedDurationMinutes int32          `json:"recommended_duration_minutes"`
-	RecommendedIntensity       pgtype.Text    `json:"recommended_intensity"`
-	SafetyNotes                pgtype.Text    `json:"safety_notes"`
-	BestTimeOfDay              pgtype.Text    `json:"best_time_of_day"`
-	GlucoseManagementTip       pgtype.Text    `json:"glucose_management_tip"`
-	RecommendationRank         pgtype.Int4    `json:"recommendation_rank"`
-	ConfidenceScore            pgtype.Numeric `json:"confidence_score"`
+	RecommendationActivityID   pgtype.UUID `json:"recommendation_activity_id"`
+	SessionID                  pgtype.UUID `json:"session_id"`
+	ActivityID                 int32       `json:"activity_id"`
+	Reason                     string      `json:"reason"`
+	RecommendedDurationMinutes int32       `json:"recommended_duration_minutes"`
+	RecommendedIntensity       pgtype.Text `json:"recommended_intensity"`
+	SafetyNotes                pgtype.Text `json:"safety_notes"`
+	BestTimeOfDay              pgtype.Text `json:"best_time_of_day"`
+	RecommendationRank         pgtype.Int4 `json:"recommendation_rank"`
 }
 
 // After AI picks activities, this stores each recommendation with reasoning. Called in processActivityRecommendations func in recommendation.go
@@ -1134,9 +1285,7 @@ func (q *Queries) CreateRecommendedActivity(ctx context.Context, arg CreateRecom
 		arg.RecommendedIntensity,
 		arg.SafetyNotes,
 		arg.BestTimeOfDay,
-		arg.GlucoseManagementTip,
 		arg.RecommendationRank,
-		arg.ConfidenceScore,
 	)
 	return err
 }
@@ -1150,23 +1299,21 @@ INSERT INTO recommended_foods (
     nutrition_highlight,
     suggested_meal_type,
     suggested_portion_size,
-    recommendation_rank,
-    confidence_score
+    recommendation_rank
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 `
 
 type CreateRecommendedFoodParams struct {
-	RecommendationFoodID pgtype.UUID    `json:"recommendation_food_id"`
-	SessionID            pgtype.UUID    `json:"session_id"`
-	FoodID               pgtype.UUID    `json:"food_id"`
-	Reason               string         `json:"reason"`
-	NutritionHighlight   pgtype.Text    `json:"nutrition_highlight"`
-	SuggestedMealType    pgtype.Text    `json:"suggested_meal_type"`
-	SuggestedPortionSize pgtype.Text    `json:"suggested_portion_size"`
-	RecommendationRank   pgtype.Int4    `json:"recommendation_rank"`
-	ConfidenceScore      pgtype.Numeric `json:"confidence_score"`
+	RecommendationFoodID pgtype.UUID `json:"recommendation_food_id"`
+	SessionID            pgtype.UUID `json:"session_id"`
+	FoodID               pgtype.UUID `json:"food_id"`
+	Reason               string      `json:"reason"`
+	NutritionHighlight   pgtype.Text `json:"nutrition_highlight"`
+	SuggestedMealType    pgtype.Text `json:"suggested_meal_type"`
+	SuggestedPortionSize pgtype.Text `json:"suggested_portion_size"`
+	RecommendationRank   pgtype.Int4 `json:"recommendation_rank"`
 }
 
 // After AI picks foods, this stores each recommendation with reasoning. Called in processFoodRecommendations func in recommendation.go
@@ -1180,7 +1327,6 @@ func (q *Queries) CreateRecommendedFood(ctx context.Context, arg CreateRecommend
 		arg.SuggestedMealType,
 		arg.SuggestedPortionSize,
 		arg.RecommendationRank,
-		arg.ConfidenceScore,
 	)
 	return err
 }
@@ -1225,6 +1371,142 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 		&i.CreatedAt,
 		&i.RevokedAt,
 		&i.ReplacedByTokenID,
+	)
+	return i, err
+}
+
+const createSellerProfile = `-- name: CreateSellerProfile :one
+/* ====================================================================
+                            Seller Queries
+==================================================================== */
+INSERT INTO seller_profiles (
+    seller_id,
+    user_id,
+    store_name,
+    store_slug,
+    store_description,
+    store_phone_number,
+    store_email,
+    address_line1,
+    address_line2,
+    district,
+    city,
+    province,
+    postal_code,
+    latitude,
+    longitude,
+    gmaps_link,
+    business_hours,
+    cuisine_type,
+    price_range,
+    verification_status,
+    is_active,
+    is_open
+) VALUES (
+    $1, -- seller_id
+    $2, -- user_id
+    $3, -- store_name
+    $4, -- store_slug
+    $5, -- store_description
+    $6, -- store_phone_number
+    $7, -- store_email
+    $8, -- address_line1
+    $9, -- address_line2
+    $10, -- district
+    $11, -- city
+    $12, -- province
+    $13, -- postal_code
+    $14, -- latitude
+    $15, -- longitude
+    $16, -- gmaps_link
+    $17, -- business_hours (JSONB)
+    $18, -- cuisine_type (Array)
+    $19, -- price_range
+    'pending'::seller_verification_status, -- Always start as pending
+    true, -- is_active (system level)
+    false -- is_open (shop closed until setup complete)
+)
+RETURNING seller_id, user_id, created_at, updated_at, store_name, store_description, store_phone_number, is_open, business_hours, verification_status, logo_url, banner_url, address_line1, address_line2, district, city, province, postal_code, latitude, longitude, gmaps_link, store_slug, store_email, website_url, social_media_links, is_active, cuisine_type, price_range, rejection_reason, verified_at, average_rating, review_count
+`
+
+type CreateSellerProfileParams struct {
+	SellerID         pgtype.UUID    `json:"seller_id"`
+	UserID           string         `json:"user_id"`
+	StoreName        string         `json:"store_name"`
+	StoreSlug        string         `json:"store_slug"`
+	StoreDescription pgtype.Text    `json:"store_description"`
+	StorePhoneNumber pgtype.Text    `json:"store_phone_number"`
+	StoreEmail       pgtype.Text    `json:"store_email"`
+	AddressLine1     pgtype.Text    `json:"address_line1"`
+	AddressLine2     pgtype.Text    `json:"address_line2"`
+	District         pgtype.Text    `json:"district"`
+	City             pgtype.Text    `json:"city"`
+	Province         pgtype.Text    `json:"province"`
+	PostalCode       pgtype.Text    `json:"postal_code"`
+	Latitude         pgtype.Numeric `json:"latitude"`
+	Longitude        pgtype.Numeric `json:"longitude"`
+	GmapsLink        pgtype.Text    `json:"gmaps_link"`
+	BusinessHours    []byte         `json:"business_hours"`
+	CuisineType      []string       `json:"cuisine_type"`
+	PriceRange       pgtype.Int4    `json:"price_range"`
+}
+
+func (q *Queries) CreateSellerProfile(ctx context.Context, arg CreateSellerProfileParams) (SellerProfile, error) {
+	row := q.db.QueryRow(ctx, createSellerProfile,
+		arg.SellerID,
+		arg.UserID,
+		arg.StoreName,
+		arg.StoreSlug,
+		arg.StoreDescription,
+		arg.StorePhoneNumber,
+		arg.StoreEmail,
+		arg.AddressLine1,
+		arg.AddressLine2,
+		arg.District,
+		arg.City,
+		arg.Province,
+		arg.PostalCode,
+		arg.Latitude,
+		arg.Longitude,
+		arg.GmapsLink,
+		arg.BusinessHours,
+		arg.CuisineType,
+		arg.PriceRange,
+	)
+	var i SellerProfile
+	err := row.Scan(
+		&i.SellerID,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StoreName,
+		&i.StoreDescription,
+		&i.StorePhoneNumber,
+		&i.IsOpen,
+		&i.BusinessHours,
+		&i.VerificationStatus,
+		&i.LogoUrl,
+		&i.BannerUrl,
+		&i.AddressLine1,
+		&i.AddressLine2,
+		&i.District,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.Latitude,
+		&i.Longitude,
+		&i.GmapsLink,
+		&i.StoreSlug,
+		&i.StoreEmail,
+		&i.WebsiteUrl,
+		&i.SocialMediaLinks,
+		&i.IsActive,
+		&i.CuisineType,
+		&i.PriceRange,
+		&i.RejectionReason,
+		&i.VerifiedAt,
+		&i.AverageRating,
+		&i.ReviewCount,
 	)
 	return i, err
 }
@@ -1327,11 +1609,10 @@ INSERT INTO users (
     user_dob,
     user_gender,
     user_accounttype,
-    created_at,
     is_email_verified,
     email_verified_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 ) RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
@@ -1345,7 +1626,6 @@ type CreateUserParams struct {
 	UserDob         pgtype.Date         `json:"user_dob"`
 	UserGender      NullUsersUserGender `json:"user_gender"`
 	UserAccounttype pgtype.Int2         `json:"user_accounttype"`
-	CreatedAt       pgtype.Timestamptz  `json:"created_at"`
 	IsEmailVerified pgtype.Bool         `json:"is_email_verified"`
 	EmailVerifiedAt pgtype.Timestamptz  `json:"email_verified_at"`
 }
@@ -1362,7 +1642,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.UserDob,
 		arg.UserGender,
 		arg.UserAccounttype,
-		arg.CreatedAt,
 		arg.IsEmailVerified,
 		arg.EmailVerifiedAt,
 	)
@@ -1565,6 +1844,22 @@ WHERE expires_at < NOW()
 
 func (q *Queries) DeleteExpiredPendingRegistrations(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredPendingRegistrations)
+	return err
+}
+
+const deleteFood = `-- name: DeleteFood :exec
+UPDATE foods
+SET is_active = false
+WHERE food_id = $1 AND seller_id = $2
+`
+
+type DeleteFoodParams struct {
+	FoodID   pgtype.UUID `json:"food_id"`
+	SellerID pgtype.UUID `json:"seller_id"`
+}
+
+func (q *Queries) DeleteFood(ctx context.Context, arg DeleteFoodParams) error {
+	_, err := q.db.Exec(ctx, deleteFood, arg.FoodID, arg.SellerID)
 	return err
 }
 
@@ -2211,7 +2506,7 @@ func (q *Queries) GetFailedLoginAttempts(ctx context.Context, createdAt pgtype.T
 }
 
 const getFood = `-- name: GetFood :one
-SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg FROM foods
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg, is_active FROM foods
 WHERE food_id = $1
 `
 
@@ -2249,6 +2544,50 @@ func (q *Queries) GetFood(ctx context.Context, foodID pgtype.UUID) (Food, error)
 		&i.MonounsaturatedFatGrams,
 		&i.PolyunsaturatedFatGrams,
 		&i.CholesterolMg,
+		&i.IsActive,
+	)
+	return i, err
+}
+
+const getFoodByID = `-- name: GetFoodByID :one
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg, is_active FROM foods WHERE food_id = $1
+`
+
+func (q *Queries) GetFoodByID(ctx context.Context, foodID pgtype.UUID) (Food, error) {
+	row := q.db.QueryRow(ctx, getFoodByID, foodID)
+	var i Food
+	err := row.Scan(
+		&i.FoodID,
+		&i.SellerID,
+		&i.FoodName,
+		&i.Description,
+		&i.Price,
+		&i.Currency,
+		&i.PhotoUrl,
+		&i.ThumbnailUrl,
+		&i.IsAvailable,
+		&i.StockCount,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ServingSize,
+		&i.ServingSizeGrams,
+		&i.Quantity,
+		&i.Calories,
+		&i.CarbsGrams,
+		&i.FiberGrams,
+		&i.ProteinGrams,
+		&i.FatGrams,
+		&i.SugarGrams,
+		&i.SodiumMg,
+		&i.GlycemicIndex,
+		&i.GlycemicLoad,
+		&i.FoodCategory,
+		&i.SaturatedFatGrams,
+		&i.MonounsaturatedFatGrams,
+		&i.PolyunsaturatedFatGrams,
+		&i.CholesterolMg,
+		&i.IsActive,
 	)
 	return i, err
 }
@@ -2892,7 +3231,7 @@ func (q *Queries) GetOTPCodeWithCooldown(ctx context.Context, entityID pgtype.UU
 }
 
 const getOrderDetails = `-- name: GetOrderDetails :one
-SELECT order_id, user_id, seller_id, total_price, status, delivery_address_json, payment_status, payment_method, created_at FROM user_orders
+SELECT order_id, user_id, seller_id, total_price, status, delivery_address_json, payment_status, payment_method, created_at, updated_at, seller_notes FROM user_orders
 WHERE order_id = $1 AND user_id = $2
 `
 
@@ -2915,6 +3254,8 @@ func (q *Queries) GetOrderDetails(ctx context.Context, arg GetOrderDetailsParams
 		&i.PaymentStatus,
 		&i.PaymentMethod,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SellerNotes,
 	)
 	return i, err
 }
@@ -3060,6 +3401,36 @@ func (q *Queries) GetRecentAuthActivity(ctx context.Context, arg GetRecentAuthAc
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecentRecommendedFoodIDs = `-- name: GetRecentRecommendedFoodIDs :many
+SELECT rf.food_id
+FROM recommended_foods rf
+JOIN recommendation_sessions rs ON rf.session_id = rs.session_id
+WHERE rs.user_id = $1
+ORDER BY rs.created_at DESC
+LIMIT 20
+`
+
+// 1. Get IDs of foods recommended in the last few sessions
+func (q *Queries) GetRecentRecommendedFoodIDs(ctx context.Context, userID string) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, getRecentRecommendedFoodIDs, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var food_id pgtype.UUID
+		if err := rows.Scan(&food_id); err != nil {
+			return nil, err
+		}
+		items = append(items, food_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -3325,13 +3696,8 @@ func (q *Queries) GetRecommendationSessionsCount(ctx context.Context, arg GetRec
 
 const getRecommendedActivitiesInSession = `-- name: GetRecommendedActivitiesInSession :many
 SELECT 
-    ra.recommendation_activity_id, ra.session_id, ra.activity_id, ra.reason, ra.recommended_duration_minutes, ra.recommended_intensity, ra.safety_notes, ra.best_time_of_day, ra.glucose_management_tip, ra.recommendation_rank, ra.confidence_score, ra.was_viewed, ra.was_completed, ra.actual_duration_minutes, ra.user_rating, ra.feedback, ra.feedback_notes, ra.glucose_change_after_activity, ra.created_at, ra.completed_at, ra.last_interaction_at,
-    a.activity_code,
-    a.activity_name,
-    a.description,
-    a.image_url,
-    a.met_value,
-    a.measurement_unit
+    ra.recommendation_activity_id, ra.session_id, ra.activity_id, ra.reason, ra.recommended_duration_minutes, ra.recommended_intensity, ra.safety_notes, ra.best_time_of_day, ra.recommendation_rank, ra.was_viewed, ra.was_completed, ra.actual_duration_minutes, ra.user_rating, ra.feedback_notes, ra.glucose_change_after_activity, ra.created_at, ra.completed_at, ra.last_interaction_at,
+    a.id, a.activity_code, a.activity_name, a.description, a.image_url, a.met_value, a.measurement_unit, a.recommended_min_value
 FROM recommended_activities ra
 JOIN activities a ON ra.activity_id = a.id
 WHERE ra.session_id = $1
@@ -3347,25 +3713,24 @@ type GetRecommendedActivitiesInSessionRow struct {
 	RecommendedIntensity       pgtype.Text        `json:"recommended_intensity"`
 	SafetyNotes                pgtype.Text        `json:"safety_notes"`
 	BestTimeOfDay              pgtype.Text        `json:"best_time_of_day"`
-	GlucoseManagementTip       pgtype.Text        `json:"glucose_management_tip"`
 	RecommendationRank         pgtype.Int4        `json:"recommendation_rank"`
-	ConfidenceScore            pgtype.Numeric     `json:"confidence_score"`
 	WasViewed                  pgtype.Bool        `json:"was_viewed"`
 	WasCompleted               pgtype.Bool        `json:"was_completed"`
 	ActualDurationMinutes      pgtype.Int4        `json:"actual_duration_minutes"`
 	UserRating                 pgtype.Int4        `json:"user_rating"`
-	Feedback                   pgtype.Text        `json:"feedback"`
 	FeedbackNotes              pgtype.Text        `json:"feedback_notes"`
 	GlucoseChangeAfterActivity pgtype.Int4        `json:"glucose_change_after_activity"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
 	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
 	LastInteractionAt          pgtype.Timestamptz `json:"last_interaction_at"`
+	ID                         int32              `json:"id"`
 	ActivityCode               pgtype.Text        `json:"activity_code"`
 	ActivityName               string             `json:"activity_name"`
 	Description                pgtype.Text        `json:"description"`
 	ImageUrl                   pgtype.Text        `json:"image_url"`
 	MetValue                   pgtype.Numeric     `json:"met_value"`
 	MeasurementUnit            pgtype.Text        `json:"measurement_unit"`
+	RecommendedMinValue        pgtype.Numeric     `json:"recommended_min_value"`
 }
 
 func (q *Queries) GetRecommendedActivitiesInSession(ctx context.Context, sessionID pgtype.UUID) ([]GetRecommendedActivitiesInSessionRow, error) {
@@ -3386,25 +3751,24 @@ func (q *Queries) GetRecommendedActivitiesInSession(ctx context.Context, session
 			&i.RecommendedIntensity,
 			&i.SafetyNotes,
 			&i.BestTimeOfDay,
-			&i.GlucoseManagementTip,
 			&i.RecommendationRank,
-			&i.ConfidenceScore,
 			&i.WasViewed,
 			&i.WasCompleted,
 			&i.ActualDurationMinutes,
 			&i.UserRating,
-			&i.Feedback,
 			&i.FeedbackNotes,
 			&i.GlucoseChangeAfterActivity,
 			&i.CreatedAt,
 			&i.CompletedAt,
 			&i.LastInteractionAt,
+			&i.ID,
 			&i.ActivityCode,
 			&i.ActivityName,
 			&i.Description,
 			&i.ImageUrl,
 			&i.MetValue,
 			&i.MeasurementUnit,
+			&i.RecommendedMinValue,
 		); err != nil {
 			return nil, err
 		}
@@ -3418,26 +3782,8 @@ func (q *Queries) GetRecommendedActivitiesInSession(ctx context.Context, session
 
 const getRecommendedFoodsInSession = `-- name: GetRecommendedFoodsInSession :many
 SELECT 
-    rf.recommendation_food_id, rf.session_id, rf.food_id, rf.reason, rf.nutrition_highlight, rf.suggested_meal_type, rf.suggested_portion_size, rf.recommendation_rank, rf.confidence_score, rf.was_viewed, rf.was_added_to_cart, rf.was_purchased, rf.was_logged_as_meal, rf.user_rating, rf.feedback, rf.feedback_notes, rf.glucose_spike_after_eating, rf.created_at, rf.last_interaction_at,
-    f.food_name,
-    f.seller_id,
-    f.description,
-    f.price,
-    f.currency,
-    f.photo_url,
-    f.thumbnail_url,
-    f.is_available,
-    f.tags,
-    f.serving_size,
-    f.calories,
-    f.carbs_grams,
-    f.fiber_grams,
-    f.protein_grams,
-    f.fat_grams,
-    f.sugar_grams,
-    f.sodium_mg,
-    f.glycemic_index,
-    f.glycemic_load
+    rf.recommendation_food_id, rf.session_id, rf.food_id, rf.reason, rf.nutrition_highlight, rf.suggested_meal_type, rf.suggested_portion_size, rf.recommendation_rank, rf.was_viewed, rf.was_added_to_cart, rf.was_purchased, rf.was_logged_as_meal, rf.user_rating, rf.feedback_notes, rf.glucose_spike_after_eating, rf.created_at, rf.last_interaction_at,
+    f.food_id, f.seller_id, f.food_name, f.description, f.price, f.currency, f.photo_url, f.thumbnail_url, f.is_available, f.stock_count, f.tags, f.created_at, f.updated_at, f.serving_size, f.serving_size_grams, f.quantity, f.calories, f.carbs_grams, f.fiber_grams, f.protein_grams, f.fat_grams, f.sugar_grams, f.sodium_mg, f.glycemic_index, f.glycemic_load, f.food_category, f.saturated_fat_grams, f.monounsaturated_fat_grams, f.polyunsaturated_fat_grams, f.cholesterol_mg, f.is_active
 FROM recommended_foods rf
 JOIN foods f ON rf.food_id = f.food_id
 WHERE rf.session_id = $1
@@ -3453,27 +3799,31 @@ type GetRecommendedFoodsInSessionRow struct {
 	SuggestedMealType       pgtype.Text        `json:"suggested_meal_type"`
 	SuggestedPortionSize    pgtype.Text        `json:"suggested_portion_size"`
 	RecommendationRank      pgtype.Int4        `json:"recommendation_rank"`
-	ConfidenceScore         pgtype.Numeric     `json:"confidence_score"`
 	WasViewed               pgtype.Bool        `json:"was_viewed"`
 	WasAddedToCart          pgtype.Bool        `json:"was_added_to_cart"`
 	WasPurchased            pgtype.Bool        `json:"was_purchased"`
 	WasLoggedAsMeal         pgtype.Bool        `json:"was_logged_as_meal"`
 	UserRating              pgtype.Int4        `json:"user_rating"`
-	Feedback                pgtype.Text        `json:"feedback"`
 	FeedbackNotes           pgtype.Text        `json:"feedback_notes"`
 	GlucoseSpikeAfterEating pgtype.Int4        `json:"glucose_spike_after_eating"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	LastInteractionAt       pgtype.Timestamptz `json:"last_interaction_at"`
-	FoodName                string             `json:"food_name"`
+	FoodID_2                pgtype.UUID        `json:"food_id_2"`
 	SellerID                pgtype.UUID        `json:"seller_id"`
+	FoodName                string             `json:"food_name"`
 	Description             pgtype.Text        `json:"description"`
 	Price                   pgtype.Numeric     `json:"price"`
 	Currency                string             `json:"currency"`
 	PhotoUrl                pgtype.Text        `json:"photo_url"`
 	ThumbnailUrl            pgtype.Text        `json:"thumbnail_url"`
 	IsAvailable             pgtype.Bool        `json:"is_available"`
+	StockCount              pgtype.Int4        `json:"stock_count"`
 	Tags                    []string           `json:"tags"`
+	CreatedAt_2             pgtype.Timestamptz `json:"created_at_2"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	ServingSize             pgtype.Text        `json:"serving_size"`
+	ServingSizeGrams        pgtype.Numeric     `json:"serving_size_grams"`
+	Quantity                pgtype.Numeric     `json:"quantity"`
 	Calories                pgtype.Int4        `json:"calories"`
 	CarbsGrams              pgtype.Numeric     `json:"carbs_grams"`
 	FiberGrams              pgtype.Numeric     `json:"fiber_grams"`
@@ -3483,6 +3833,12 @@ type GetRecommendedFoodsInSessionRow struct {
 	SodiumMg                pgtype.Numeric     `json:"sodium_mg"`
 	GlycemicIndex           pgtype.Int4        `json:"glycemic_index"`
 	GlycemicLoad            pgtype.Numeric     `json:"glycemic_load"`
+	FoodCategory            []string           `json:"food_category"`
+	SaturatedFatGrams       pgtype.Numeric     `json:"saturated_fat_grams"`
+	MonounsaturatedFatGrams pgtype.Numeric     `json:"monounsaturated_fat_grams"`
+	PolyunsaturatedFatGrams pgtype.Numeric     `json:"polyunsaturated_fat_grams"`
+	CholesterolMg           pgtype.Numeric     `json:"cholesterol_mg"`
+	IsActive                pgtype.Bool        `json:"is_active"`
 }
 
 func (q *Queries) GetRecommendedFoodsInSession(ctx context.Context, sessionID pgtype.UUID) ([]GetRecommendedFoodsInSessionRow, error) {
@@ -3503,27 +3859,31 @@ func (q *Queries) GetRecommendedFoodsInSession(ctx context.Context, sessionID pg
 			&i.SuggestedMealType,
 			&i.SuggestedPortionSize,
 			&i.RecommendationRank,
-			&i.ConfidenceScore,
 			&i.WasViewed,
 			&i.WasAddedToCart,
 			&i.WasPurchased,
 			&i.WasLoggedAsMeal,
 			&i.UserRating,
-			&i.Feedback,
 			&i.FeedbackNotes,
 			&i.GlucoseSpikeAfterEating,
 			&i.CreatedAt,
 			&i.LastInteractionAt,
-			&i.FoodName,
+			&i.FoodID_2,
 			&i.SellerID,
+			&i.FoodName,
 			&i.Description,
 			&i.Price,
 			&i.Currency,
 			&i.PhotoUrl,
 			&i.ThumbnailUrl,
 			&i.IsAvailable,
+			&i.StockCount,
 			&i.Tags,
+			&i.CreatedAt_2,
+			&i.UpdatedAt,
 			&i.ServingSize,
+			&i.ServingSizeGrams,
+			&i.Quantity,
 			&i.Calories,
 			&i.CarbsGrams,
 			&i.FiberGrams,
@@ -3533,6 +3893,12 @@ func (q *Queries) GetRecommendedFoodsInSession(ctx context.Context, sessionID pg
 			&i.SodiumMg,
 			&i.GlycemicIndex,
 			&i.GlycemicLoad,
+			&i.FoodCategory,
+			&i.SaturatedFatGrams,
+			&i.MonounsaturatedFatGrams,
+			&i.PolyunsaturatedFatGrams,
+			&i.CholesterolMg,
+			&i.IsActive,
 		); err != nil {
 			return nil, err
 		}
@@ -3566,8 +3932,361 @@ func (q *Queries) GetRefreshTokenByHash(ctx context.Context, tokenHash string) (
 	return i, err
 }
 
+const getSellerActiveOrders = `-- name: GetSellerActiveOrders :many
+SELECT 
+    o.order_id,
+    o.user_id,
+    o.total_price,
+    o.status,
+    o.created_at,
+    o.delivery_address_json,
+    u.user_firstname,
+    u.user_lastname,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN users u ON o.user_id = u.user_id
+WHERE o.seller_id = $1 
+  AND o.status IN ('Preparing', 'Ready to Pick Up', 'On Delivery')
+ORDER BY o.created_at ASC
+`
+
+type GetSellerActiveOrdersRow struct {
+	OrderID             pgtype.UUID        `json:"order_id"`
+	UserID              string             `json:"user_id"`
+	TotalPrice          pgtype.Numeric     `json:"total_price"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	DeliveryAddressJson []byte             `json:"delivery_address_json"`
+	UserFirstname       pgtype.Text        `json:"user_firstname"`
+	UserLastname        pgtype.Text        `json:"user_lastname"`
+	Items               []byte             `json:"items"`
+}
+
+func (q *Queries) GetSellerActiveOrders(ctx context.Context, sellerID pgtype.UUID) ([]GetSellerActiveOrdersRow, error) {
+	rows, err := q.db.Query(ctx, getSellerActiveOrders, sellerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSellerActiveOrdersRow
+	for rows.Next() {
+		var i GetSellerActiveOrdersRow
+		if err := rows.Scan(
+			&i.OrderID,
+			&i.UserID,
+			&i.TotalPrice,
+			&i.Status,
+			&i.CreatedAt,
+			&i.DeliveryAddressJson,
+			&i.UserFirstname,
+			&i.UserLastname,
+			&i.Items,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getSellerByID = `-- name: GetSellerByID :one
+SELECT 
+    s.seller_id, s.user_id, s.created_at, s.updated_at, s.store_name, s.store_description, s.store_phone_number, s.is_open, s.business_hours, s.verification_status, s.logo_url, s.banner_url, s.address_line1, s.address_line2, s.district, s.city, s.province, s.postal_code, s.latitude, s.longitude, s.gmaps_link, s.store_slug, s.store_email, s.website_url, s.social_media_links, s.is_active, s.cuisine_type, s.price_range, s.rejection_reason, s.verified_at, s.average_rating, s.review_count,
+    u.user_firstname,
+    u.user_lastname,
+    u.user_email
+FROM seller_profiles s
+JOIN users u ON s.user_id = u.user_id
+WHERE s.seller_id = $1
+`
+
+type GetSellerByIDRow struct {
+	SellerID           pgtype.UUID        `json:"seller_id"`
+	UserID             string             `json:"user_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	StoreName          string             `json:"store_name"`
+	StoreDescription   pgtype.Text        `json:"store_description"`
+	StorePhoneNumber   pgtype.Text        `json:"store_phone_number"`
+	IsOpen             bool               `json:"is_open"`
+	BusinessHours      []byte             `json:"business_hours"`
+	VerificationStatus string             `json:"verification_status"`
+	LogoUrl            pgtype.Text        `json:"logo_url"`
+	BannerUrl          pgtype.Text        `json:"banner_url"`
+	AddressLine1       pgtype.Text        `json:"address_line1"`
+	AddressLine2       pgtype.Text        `json:"address_line2"`
+	District           pgtype.Text        `json:"district"`
+	City               pgtype.Text        `json:"city"`
+	Province           pgtype.Text        `json:"province"`
+	PostalCode         pgtype.Text        `json:"postal_code"`
+	Latitude           pgtype.Numeric     `json:"latitude"`
+	Longitude          pgtype.Numeric     `json:"longitude"`
+	GmapsLink          pgtype.Text        `json:"gmaps_link"`
+	StoreSlug          string             `json:"store_slug"`
+	StoreEmail         pgtype.Text        `json:"store_email"`
+	WebsiteUrl         pgtype.Text        `json:"website_url"`
+	SocialMediaLinks   []byte             `json:"social_media_links"`
+	IsActive           pgtype.Bool        `json:"is_active"`
+	CuisineType        []string           `json:"cuisine_type"`
+	PriceRange         pgtype.Int4        `json:"price_range"`
+	RejectionReason    pgtype.Text        `json:"rejection_reason"`
+	VerifiedAt         pgtype.Timestamptz `json:"verified_at"`
+	AverageRating      pgtype.Numeric     `json:"average_rating"`
+	ReviewCount        pgtype.Int4        `json:"review_count"`
+	UserFirstname      pgtype.Text        `json:"user_firstname"`
+	UserLastname       pgtype.Text        `json:"user_lastname"`
+	UserEmail          pgtype.Text        `json:"user_email"`
+}
+
+func (q *Queries) GetSellerByID(ctx context.Context, sellerID pgtype.UUID) (GetSellerByIDRow, error) {
+	row := q.db.QueryRow(ctx, getSellerByID, sellerID)
+	var i GetSellerByIDRow
+	err := row.Scan(
+		&i.SellerID,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StoreName,
+		&i.StoreDescription,
+		&i.StorePhoneNumber,
+		&i.IsOpen,
+		&i.BusinessHours,
+		&i.VerificationStatus,
+		&i.LogoUrl,
+		&i.BannerUrl,
+		&i.AddressLine1,
+		&i.AddressLine2,
+		&i.District,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.Latitude,
+		&i.Longitude,
+		&i.GmapsLink,
+		&i.StoreSlug,
+		&i.StoreEmail,
+		&i.WebsiteUrl,
+		&i.SocialMediaLinks,
+		&i.IsActive,
+		&i.CuisineType,
+		&i.PriceRange,
+		&i.RejectionReason,
+		&i.VerifiedAt,
+		&i.AverageRating,
+		&i.ReviewCount,
+		&i.UserFirstname,
+		&i.UserLastname,
+		&i.UserEmail,
+	)
+	return i, err
+}
+
+const getSellerDailySales = `-- name: GetSellerDailySales :many
+SELECT 
+    TO_CHAR(created_at, 'YYYY-MM-DD') AS sale_date,
+    COUNT(*) AS daily_orders,
+    COALESCE(SUM(total_price), 0)::numeric(10,2) AS daily_revenue
+FROM user_orders
+WHERE seller_id = $1 
+  AND status = 'Completed'
+  AND created_at BETWEEN $2 AND $3
+GROUP BY sale_date
+ORDER BY sale_date ASC
+`
+
+type GetSellerDailySalesParams struct {
+	SellerID    pgtype.UUID        `json:"seller_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+}
+
+type GetSellerDailySalesRow struct {
+	SaleDate     string         `json:"sale_date"`
+	DailyOrders  int64          `json:"daily_orders"`
+	DailyRevenue pgtype.Numeric `json:"daily_revenue"`
+}
+
+func (q *Queries) GetSellerDailySales(ctx context.Context, arg GetSellerDailySalesParams) ([]GetSellerDailySalesRow, error) {
+	rows, err := q.db.Query(ctx, getSellerDailySales, arg.SellerID, arg.CreatedAt, arg.CreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSellerDailySalesRow
+	for rows.Next() {
+		var i GetSellerDailySalesRow
+		if err := rows.Scan(&i.SaleDate, &i.DailyOrders, &i.DailyRevenue); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getSellerIDByUserID = `-- name: GetSellerIDByUserID :one
+SELECT seller_id FROM seller_profiles WHERE user_id = $1
+`
+
+func (q *Queries) GetSellerIDByUserID(ctx context.Context, userID string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getSellerIDByUserID, userID)
+	var seller_id pgtype.UUID
+	err := row.Scan(&seller_id)
+	return seller_id, err
+}
+
+const getSellerIncomingOrders = `-- name: GetSellerIncomingOrders :many
+SELECT 
+    o.order_id,
+    o.user_id,
+    o.total_price,
+    o.status,
+    o.created_at,
+    o.delivery_address_json,
+    u.user_firstname,
+    u.user_lastname,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN users u ON o.user_id = u.user_id
+WHERE o.seller_id = $1 
+  AND o.status = 'Waiting for Confirmation'
+ORDER BY o.created_at ASC
+`
+
+type GetSellerIncomingOrdersRow struct {
+	OrderID             pgtype.UUID        `json:"order_id"`
+	UserID              string             `json:"user_id"`
+	TotalPrice          pgtype.Numeric     `json:"total_price"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	DeliveryAddressJson []byte             `json:"delivery_address_json"`
+	UserFirstname       pgtype.Text        `json:"user_firstname"`
+	UserLastname        pgtype.Text        `json:"user_lastname"`
+	Items               []byte             `json:"items"`
+}
+
+func (q *Queries) GetSellerIncomingOrders(ctx context.Context, sellerID pgtype.UUID) ([]GetSellerIncomingOrdersRow, error) {
+	rows, err := q.db.Query(ctx, getSellerIncomingOrders, sellerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSellerIncomingOrdersRow
+	for rows.Next() {
+		var i GetSellerIncomingOrdersRow
+		if err := rows.Scan(
+			&i.OrderID,
+			&i.UserID,
+			&i.TotalPrice,
+			&i.Status,
+			&i.CreatedAt,
+			&i.DeliveryAddressJson,
+			&i.UserFirstname,
+			&i.UserLastname,
+			&i.Items,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getSellerOrderHistory = `-- name: GetSellerOrderHistory :many
+SELECT 
+    o.order_id,
+    o.total_price,
+    o.status,
+    o.created_at,
+    u.user_firstname,
+    u.user_lastname,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN users u ON o.user_id = u.user_id
+WHERE o.seller_id = $1 
+  AND o.status IN ('Completed', 'Cancelled', 'Rejected')
+ORDER BY o.created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type GetSellerOrderHistoryParams struct {
+	SellerID pgtype.UUID `json:"seller_id"`
+	Limit    int32       `json:"limit"`
+	Offset   int32       `json:"offset"`
+}
+
+type GetSellerOrderHistoryRow struct {
+	OrderID       pgtype.UUID        `json:"order_id"`
+	TotalPrice    pgtype.Numeric     `json:"total_price"`
+	Status        string             `json:"status"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UserFirstname pgtype.Text        `json:"user_firstname"`
+	UserLastname  pgtype.Text        `json:"user_lastname"`
+	Items         []byte             `json:"items"`
+}
+
+func (q *Queries) GetSellerOrderHistory(ctx context.Context, arg GetSellerOrderHistoryParams) ([]GetSellerOrderHistoryRow, error) {
+	rows, err := q.db.Query(ctx, getSellerOrderHistory, arg.SellerID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSellerOrderHistoryRow
+	for rows.Next() {
+		var i GetSellerOrderHistoryRow
+		if err := rows.Scan(
+			&i.OrderID,
+			&i.TotalPrice,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UserFirstname,
+			&i.UserLastname,
+			&i.Items,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSellerProfile = `-- name: GetSellerProfile :one
-SELECT seller_id, user_id, created_at, updated_at, store_name, store_description, store_phone_number, is_open_manually, business_hours, verification_status, logo_url, banner_url, address_line1, address_line2, district, city, province, postal_code, latitude, longitude, gmaps_link FROM seller_profiles
+SELECT seller_id, user_id, created_at, updated_at, store_name, store_description, store_phone_number, is_open, business_hours, verification_status, logo_url, banner_url, address_line1, address_line2, district, city, province, postal_code, latitude, longitude, gmaps_link, store_slug, store_email, website_url, social_media_links, is_active, cuisine_type, price_range, rejection_reason, verified_at, average_rating, review_count FROM seller_profiles
 WHERE seller_id = $1
 `
 
@@ -3582,7 +4301,7 @@ func (q *Queries) GetSellerProfile(ctx context.Context, sellerID pgtype.UUID) (S
 		&i.StoreName,
 		&i.StoreDescription,
 		&i.StorePhoneNumber,
-		&i.IsOpenManually,
+		&i.IsOpen,
 		&i.BusinessHours,
 		&i.VerificationStatus,
 		&i.LogoUrl,
@@ -3596,8 +4315,140 @@ func (q *Queries) GetSellerProfile(ctx context.Context, sellerID pgtype.UUID) (S
 		&i.Latitude,
 		&i.Longitude,
 		&i.GmapsLink,
+		&i.StoreSlug,
+		&i.StoreEmail,
+		&i.WebsiteUrl,
+		&i.SocialMediaLinks,
+		&i.IsActive,
+		&i.CuisineType,
+		&i.PriceRange,
+		&i.RejectionReason,
+		&i.VerifiedAt,
+		&i.AverageRating,
+		&i.ReviewCount,
 	)
 	return i, err
+}
+
+const getSellerProfileByUserID = `-- name: GetSellerProfileByUserID :one
+SELECT seller_id, user_id, created_at, updated_at, store_name, store_description, store_phone_number, is_open, business_hours, verification_status, logo_url, banner_url, address_line1, address_line2, district, city, province, postal_code, latitude, longitude, gmaps_link, store_slug, store_email, website_url, social_media_links, is_active, cuisine_type, price_range, rejection_reason, verified_at, average_rating, review_count FROM seller_profiles WHERE user_id = $1
+`
+
+func (q *Queries) GetSellerProfileByUserID(ctx context.Context, userID string) (SellerProfile, error) {
+	row := q.db.QueryRow(ctx, getSellerProfileByUserID, userID)
+	var i SellerProfile
+	err := row.Scan(
+		&i.SellerID,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StoreName,
+		&i.StoreDescription,
+		&i.StorePhoneNumber,
+		&i.IsOpen,
+		&i.BusinessHours,
+		&i.VerificationStatus,
+		&i.LogoUrl,
+		&i.BannerUrl,
+		&i.AddressLine1,
+		&i.AddressLine2,
+		&i.District,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.Latitude,
+		&i.Longitude,
+		&i.GmapsLink,
+		&i.StoreSlug,
+		&i.StoreEmail,
+		&i.WebsiteUrl,
+		&i.SocialMediaLinks,
+		&i.IsActive,
+		&i.CuisineType,
+		&i.PriceRange,
+		&i.RejectionReason,
+		&i.VerifiedAt,
+		&i.AverageRating,
+		&i.ReviewCount,
+	)
+	return i, err
+}
+
+const getSellerSummaryStats = `-- name: GetSellerSummaryStats :one
+SELECT 
+    COALESCE(SUM(total_price), 0)::numeric(10,2) AS total_revenue,
+    COUNT(*) AS total_orders,
+    COALESCE(AVG(total_price), 0)::numeric(10,2) AS average_order_value
+FROM user_orders
+WHERE seller_id = $1 
+  AND status = 'Completed'
+  AND created_at BETWEEN $2 AND $3
+`
+
+type GetSellerSummaryStatsParams struct {
+	SellerID    pgtype.UUID        `json:"seller_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+}
+
+type GetSellerSummaryStatsRow struct {
+	TotalRevenue      pgtype.Numeric `json:"total_revenue"`
+	TotalOrders       int64          `json:"total_orders"`
+	AverageOrderValue pgtype.Numeric `json:"average_order_value"`
+}
+
+func (q *Queries) GetSellerSummaryStats(ctx context.Context, arg GetSellerSummaryStatsParams) (GetSellerSummaryStatsRow, error) {
+	row := q.db.QueryRow(ctx, getSellerSummaryStats, arg.SellerID, arg.CreatedAt, arg.CreatedAt_2)
+	var i GetSellerSummaryStatsRow
+	err := row.Scan(&i.TotalRevenue, &i.TotalOrders, &i.AverageOrderValue)
+	return i, err
+}
+
+const getSellerTopItems = `-- name: GetSellerTopItems :many
+SELECT 
+    i.food_name_snapshot,
+    SUM(i.quantity)::bigint AS total_sold,
+    SUM(i.quantity * i.price_at_purchase)::numeric(10,2) AS total_revenue
+FROM user_order_items i
+JOIN user_orders o ON i.order_id = o.order_id
+WHERE o.seller_id = $1 
+  AND o.status = 'Completed'
+  AND o.created_at BETWEEN $2 AND $3
+GROUP BY i.food_name_snapshot
+ORDER BY total_sold DESC
+LIMIT 5
+`
+
+type GetSellerTopItemsParams struct {
+	SellerID    pgtype.UUID        `json:"seller_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+}
+
+type GetSellerTopItemsRow struct {
+	FoodNameSnapshot string         `json:"food_name_snapshot"`
+	TotalSold        int64          `json:"total_sold"`
+	TotalRevenue     pgtype.Numeric `json:"total_revenue"`
+}
+
+func (q *Queries) GetSellerTopItems(ctx context.Context, arg GetSellerTopItemsParams) ([]GetSellerTopItemsRow, error) {
+	rows, err := q.db.Query(ctx, getSellerTopItems, arg.SellerID, arg.CreatedAt, arg.CreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSellerTopItemsRow
+	for rows.Next() {
+		var i GetSellerTopItemsRow
+		if err := rows.Scan(&i.FoodNameSnapshot, &i.TotalSold, &i.TotalRevenue); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getSessionActivityMetrics = `-- name: GetSessionActivityMetrics :one
@@ -3954,6 +4805,80 @@ func (q *Queries) GetTopRatedFoods(ctx context.Context, userID string) ([]GetTop
 			&i.TimesRecommended,
 			&i.AvgRating,
 			&i.PurchaseCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUserActiveOrders = `-- name: GetUserActiveOrders :many
+SELECT 
+    o.order_id,
+    o.total_price,
+    o.status,
+    o.payment_status,
+    o.created_at,
+    o.delivery_address_json,
+    s.store_name,
+    s.store_phone_number,
+    s.latitude as seller_lat,
+    s.longitude as seller_long,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN seller_profiles s ON o.seller_id = s.seller_id
+WHERE o.user_id = $1 
+  AND o.status IN ('Pending Payment', 'confirmed', 'processing', 'shipping', 'ready_for_pickup')
+ORDER BY o.created_at DESC
+`
+
+type GetUserActiveOrdersRow struct {
+	OrderID             pgtype.UUID        `json:"order_id"`
+	TotalPrice          pgtype.Numeric     `json:"total_price"`
+	Status              string             `json:"status"`
+	PaymentStatus       string             `json:"payment_status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	DeliveryAddressJson []byte             `json:"delivery_address_json"`
+	StoreName           string             `json:"store_name"`
+	StorePhoneNumber    pgtype.Text        `json:"store_phone_number"`
+	SellerLat           pgtype.Numeric     `json:"seller_lat"`
+	SellerLong          pgtype.Numeric     `json:"seller_long"`
+	Items               []byte             `json:"items"`
+}
+
+func (q *Queries) GetUserActiveOrders(ctx context.Context, userID string) ([]GetUserActiveOrdersRow, error) {
+	rows, err := q.db.Query(ctx, getUserActiveOrders, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUserActiveOrdersRow
+	for rows.Next() {
+		var i GetUserActiveOrdersRow
+		if err := rows.Scan(
+			&i.OrderID,
+			&i.TotalPrice,
+			&i.Status,
+			&i.PaymentStatus,
+			&i.CreatedAt,
+			&i.DeliveryAddressJson,
+			&i.StoreName,
+			&i.StorePhoneNumber,
+			&i.SellerLat,
+			&i.SellerLong,
+			&i.Items,
 		); err != nil {
 			return nil, err
 		}
@@ -4389,8 +5314,83 @@ func (q *Queries) GetUserMedications(ctx context.Context, userID pgtype.Text) ([
 	return items, nil
 }
 
+const getUserOrderHistory = `-- name: GetUserOrderHistory :many
+SELECT 
+    o.order_id,
+    o.total_price,
+    o.status,
+    o.payment_status,
+    o.created_at,
+    s.store_name,
+    s.store_slug,
+    s.logo_url,
+    (
+        SELECT json_agg(json_build_object(
+            'food_name', i.food_name_snapshot,
+            'quantity', i.quantity,
+            'price', i.price_at_purchase
+        ))
+        FROM user_order_items i
+        WHERE i.order_id = o.order_id
+    ) AS items
+FROM user_orders o
+JOIN seller_profiles s ON o.seller_id = s.seller_id
+WHERE o.user_id = $1 
+  AND o.status IN ('completed', 'cancelled', 'rejected') 
+ORDER BY o.created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type GetUserOrderHistoryParams struct {
+	UserID string `json:"user_id"`
+	Limit  int32  `json:"limit"`
+	Offset int32  `json:"offset"`
+}
+
+type GetUserOrderHistoryRow struct {
+	OrderID       pgtype.UUID        `json:"order_id"`
+	TotalPrice    pgtype.Numeric     `json:"total_price"`
+	Status        string             `json:"status"`
+	PaymentStatus string             `json:"payment_status"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	StoreName     string             `json:"store_name"`
+	StoreSlug     string             `json:"store_slug"`
+	LogoUrl       pgtype.Text        `json:"logo_url"`
+	Items         []byte             `json:"items"`
+}
+
+func (q *Queries) GetUserOrderHistory(ctx context.Context, arg GetUserOrderHistoryParams) ([]GetUserOrderHistoryRow, error) {
+	rows, err := q.db.Query(ctx, getUserOrderHistory, arg.UserID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUserOrderHistoryRow
+	for rows.Next() {
+		var i GetUserOrderHistoryRow
+		if err := rows.Scan(
+			&i.OrderID,
+			&i.TotalPrice,
+			&i.Status,
+			&i.PaymentStatus,
+			&i.CreatedAt,
+			&i.StoreName,
+			&i.StoreSlug,
+			&i.LogoUrl,
+			&i.Items,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserOrders = `-- name: GetUserOrders :many
-SELECT order_id, user_id, seller_id, total_price, status, delivery_address_json, payment_status, payment_method, created_at FROM user_orders
+SELECT order_id, user_id, seller_id, total_price, status, delivery_address_json, payment_status, payment_method, created_at, updated_at, seller_notes FROM user_orders
 WHERE user_id = $1
 ORDER BY created_at DESC
 `
@@ -4414,6 +5414,8 @@ func (q *Queries) GetUserOrders(ctx context.Context, userID string) ([]UserOrder
 			&i.PaymentStatus,
 			&i.PaymentMethod,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SellerNotes,
 		); err != nil {
 			return nil, err
 		}
@@ -4550,9 +5552,9 @@ func (q *Queries) IfAddressIsDefault(ctx context.Context, addressID pgtype.UUID)
 }
 
 const listAllAvailableFoods = `-- name: ListAllAvailableFoods :many
-SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg, is_active
 FROM foods
-WHERE is_available = true
+WHERE is_available = true AND is_active = true
 ORDER BY food_name
 `
 
@@ -4597,6 +5599,103 @@ func (q *Queries) ListAllAvailableFoods(ctx context.Context) ([]Food, error) {
 			&i.MonounsaturatedFatGrams,
 			&i.PolyunsaturatedFatGrams,
 			&i.CholesterolMg,
+			&i.IsActive,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFoodCategories = `-- name: ListFoodCategories :many
+SELECT category_id, category_code, display_name, description 
+FROM food_categories 
+ORDER BY display_name ASC
+`
+
+func (q *Queries) ListFoodCategories(ctx context.Context) ([]FoodCategory, error) {
+	rows, err := q.db.Query(ctx, listFoodCategories)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FoodCategory
+	for rows.Next() {
+		var i FoodCategory
+		if err := rows.Scan(
+			&i.CategoryID,
+			&i.CategoryCode,
+			&i.DisplayName,
+			&i.Description,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFoodsBySeller = `-- name: ListFoodsBySeller :many
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg, is_active FROM foods 
+WHERE seller_id = $1 AND is_active = true
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListFoodsBySellerParams struct {
+	SellerID pgtype.UUID `json:"seller_id"`
+	Limit    int32       `json:"limit"`
+	Offset   int32       `json:"offset"`
+}
+
+func (q *Queries) ListFoodsBySeller(ctx context.Context, arg ListFoodsBySellerParams) ([]Food, error) {
+	rows, err := q.db.Query(ctx, listFoodsBySeller, arg.SellerID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Food
+	for rows.Next() {
+		var i Food
+		if err := rows.Scan(
+			&i.FoodID,
+			&i.SellerID,
+			&i.FoodName,
+			&i.Description,
+			&i.Price,
+			&i.Currency,
+			&i.PhotoUrl,
+			&i.ThumbnailUrl,
+			&i.IsAvailable,
+			&i.StockCount,
+			&i.Tags,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ServingSize,
+			&i.ServingSizeGrams,
+			&i.Quantity,
+			&i.Calories,
+			&i.CarbsGrams,
+			&i.FiberGrams,
+			&i.ProteinGrams,
+			&i.FatGrams,
+			&i.SugarGrams,
+			&i.SodiumMg,
+			&i.GlycemicIndex,
+			&i.GlycemicLoad,
+			&i.FoodCategory,
+			&i.SaturatedFatGrams,
+			&i.MonounsaturatedFatGrams,
+			&i.PolyunsaturatedFatGrams,
+			&i.CholesterolMg,
+			&i.IsActive,
 		); err != nil {
 			return nil, err
 		}
@@ -4670,19 +5769,23 @@ Ordering:
 Primary: Low glycemic load first (safer for blood sugar)
 Secondary: High fiber (better for glucose control)
 */
-SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg FROM foods
+SELECT food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg, is_active FROM foods
 WHERE is_available = true
     AND (
-        $1::TEXT[] IS NULL 
-        OR food_category::TEXT[] && $1::TEXT[]
+        $1::uuid[] IS NULL 
+        OR NOT (food_id = ANY($1::uuid[]))
     )
     AND (
-        $2::NUMERIC IS NULL 
-        OR glycemic_load <= $2
+        $2::TEXT[] IS NULL 
+        OR food_category::TEXT[] && $2::TEXT[]
     )
     AND (
         $3::NUMERIC IS NULL 
-        OR carbs_grams <= $3
+        OR glycemic_load <= $3
+    )
+    AND (
+        $4::NUMERIC IS NULL 
+        OR carbs_grams <= $4
     )
 ORDER BY 
     CASE 
@@ -4691,10 +5794,11 @@ ORDER BY
     END ASC,
     fiber_grams DESC,
     protein_grams DESC
-LIMIT $4::INTEGER
+LIMIT $5::INTEGER
 `
 
 type ListRecommendedFoodsParams struct {
+	ExcludedFoodIds []pgtype.UUID  `json:"excluded_food_ids"`
 	FoodCategory    []string       `json:"food_category"`
 	MaxGlycemicLoad pgtype.Numeric `json:"max_glycemic_load"`
 	MaxCarbs        pgtype.Numeric `json:"max_carbs"`
@@ -4704,6 +5808,7 @@ type ListRecommendedFoodsParams struct {
 // Fetches foods from database based on user's filters BEFORE sending to AI.
 func (q *Queries) ListRecommendedFoods(ctx context.Context, arg ListRecommendedFoodsParams) ([]Food, error) {
 	rows, err := q.db.Query(ctx, listRecommendedFoods,
+		arg.ExcludedFoodIds,
 		arg.FoodCategory,
 		arg.MaxGlycemicLoad,
 		arg.MaxCarbs,
@@ -4747,6 +5852,7 @@ func (q *Queries) ListRecommendedFoods(ctx context.Context, arg ListRecommendedF
 			&i.MonounsaturatedFatGrams,
 			&i.PolyunsaturatedFatGrams,
 			&i.CholesterolMg,
+			&i.IsActive,
 		); err != nil {
 			return nil, err
 		}
@@ -4762,8 +5868,7 @@ const markActivityCompleted = `-- name: MarkActivityCompleted :exec
 UPDATE recommended_activities
 SET was_completed = true,
     completed_at = NOW(),
-    actual_duration_minutes = $3,
-    last_interaction_at = NOW()
+    actual_duration_minutes = $3
 WHERE session_id = $1 AND activity_id = $2
 `
 
@@ -4778,10 +5883,25 @@ func (q *Queries) MarkActivityCompleted(ctx context.Context, arg MarkActivityCom
 	return err
 }
 
+const markActivityViewed = `-- name: MarkActivityViewed :exec
+UPDATE recommended_activities
+SET was_viewed = true
+WHERE session_id = $1 AND activity_id = $2
+`
+
+type MarkActivityViewedParams struct {
+	SessionID  pgtype.UUID `json:"session_id"`
+	ActivityID int32       `json:"activity_id"`
+}
+
+func (q *Queries) MarkActivityViewed(ctx context.Context, arg MarkActivityViewedParams) error {
+	_, err := q.db.Exec(ctx, markActivityViewed, arg.SessionID, arg.ActivityID)
+	return err
+}
+
 const markFoodAddedToCart = `-- name: MarkFoodAddedToCart :exec
 UPDATE recommended_foods
-SET was_added_to_cart = true,
-    last_interaction_at = NOW()
+SET was_added_to_cart = true
 WHERE session_id = $1 AND food_id = $2
 `
 
@@ -4797,8 +5917,7 @@ func (q *Queries) MarkFoodAddedToCart(ctx context.Context, arg MarkFoodAddedToCa
 
 const markFoodPurchased = `-- name: MarkFoodPurchased :exec
 UPDATE recommended_foods
-SET was_purchased = true,
-    last_interaction_at = NOW()
+SET was_purchased = true
 WHERE session_id = $1 AND food_id = $2
 `
 
@@ -4809,6 +5928,22 @@ type MarkFoodPurchasedParams struct {
 
 func (q *Queries) MarkFoodPurchased(ctx context.Context, arg MarkFoodPurchasedParams) error {
 	_, err := q.db.Exec(ctx, markFoodPurchased, arg.SessionID, arg.FoodID)
+	return err
+}
+
+const markFoodViewed = `-- name: MarkFoodViewed :exec
+UPDATE recommended_foods
+SET was_viewed = true
+WHERE session_id = $1 AND food_id = $2
+`
+
+type MarkFoodViewedParams struct {
+	SessionID pgtype.UUID `json:"session_id"`
+	FoodID    pgtype.UUID `json:"food_id"`
+}
+
+func (q *Queries) MarkFoodViewed(ctx context.Context, arg MarkFoodViewedParams) error {
+	_, err := q.db.Exec(ctx, markFoodViewed, arg.SessionID, arg.FoodID)
 	return err
 }
 
@@ -4959,6 +6094,35 @@ func (q *Queries) SetDefaultAddress(ctx context.Context, arg SetDefaultAddressPa
 	return i, err
 }
 
+const simulateUserPayment = `-- name: SimulateUserPayment :one
+UPDATE user_orders
+SET 
+    status = 'Waiting for Confirmation', 
+    payment_status = 'Paid'
+WHERE order_id = $1 
+  AND user_id = $2 
+  AND status = 'Pending Payment' -- Safety check
+RETURNING order_id, status, payment_status
+`
+
+type SimulateUserPaymentParams struct {
+	OrderID pgtype.UUID `json:"order_id"`
+	UserID  string      `json:"user_id"`
+}
+
+type SimulateUserPaymentRow struct {
+	OrderID       pgtype.UUID `json:"order_id"`
+	Status        string      `json:"status"`
+	PaymentStatus string      `json:"payment_status"`
+}
+
+func (q *Queries) SimulateUserPayment(ctx context.Context, arg SimulateUserPaymentParams) (SimulateUserPaymentRow, error) {
+	row := q.db.QueryRow(ctx, simulateUserPayment, arg.OrderID, arg.UserID)
+	var i SimulateUserPaymentRow
+	err := row.Scan(&i.OrderID, &i.Status, &i.PaymentStatus)
+	return i, err
+}
+
 const unlinkGoogleAccount = `-- name: UnlinkGoogleAccount :exec
 UPDATE users
 SET 
@@ -5090,6 +6254,138 @@ func (q *Queries) UpdateCartItemQuantity(ctx context.Context, arg UpdateCartItem
 		&i.CartID,
 		&i.FoodID,
 		&i.Quantity,
+	)
+	return i, err
+}
+
+const updateFood = `-- name: UpdateFood :one
+UPDATE foods
+SET 
+    food_name = COALESCE($1, food_name),
+    description = COALESCE($2, description),
+    price = COALESCE($3, price),
+    currency = COALESCE($4, currency),
+    photo_url = COALESCE($5, photo_url),
+    thumbnail_url = COALESCE($6, thumbnail_url),
+    is_available = COALESCE($7, is_available),
+    stock_count = COALESCE($8, stock_count),
+    tags = COALESCE($9, tags),
+    serving_size = COALESCE($10, serving_size),
+    serving_size_grams = COALESCE($11, serving_size_grams),
+    quantity = COALESCE($12, quantity),
+    calories = COALESCE($13, calories),
+    carbs_grams = COALESCE($14, carbs_grams),
+    fiber_grams = COALESCE($15, fiber_grams),
+    protein_grams = COALESCE($16, protein_grams),
+    fat_grams = COALESCE($17, fat_grams),
+    sugar_grams = COALESCE($18, sugar_grams),
+    sodium_mg = COALESCE($19, sodium_mg),
+    glycemic_index = COALESCE($20, glycemic_index),
+    glycemic_load = COALESCE($21, glycemic_load),
+    food_category = COALESCE($22, food_category),
+    saturated_fat_grams = COALESCE($23, saturated_fat_grams),
+    monounsaturated_fat_grams = COALESCE($24, monounsaturated_fat_grams),
+    polyunsaturated_fat_grams = COALESCE($25, polyunsaturated_fat_grams),
+    cholesterol_mg = COALESCE($26, cholesterol_mg)
+WHERE food_id = $27 AND seller_id = $28
+RETURNING food_id, seller_id, food_name, description, price, currency, photo_url, thumbnail_url, is_available, stock_count, tags, created_at, updated_at, serving_size, serving_size_grams, quantity, calories, carbs_grams, fiber_grams, protein_grams, fat_grams, sugar_grams, sodium_mg, glycemic_index, glycemic_load, food_category, saturated_fat_grams, monounsaturated_fat_grams, polyunsaturated_fat_grams, cholesterol_mg, is_active
+`
+
+type UpdateFoodParams struct {
+	FoodName                pgtype.Text    `json:"food_name"`
+	Description             pgtype.Text    `json:"description"`
+	Price                   pgtype.Numeric `json:"price"`
+	Currency                pgtype.Text    `json:"currency"`
+	PhotoUrl                pgtype.Text    `json:"photo_url"`
+	ThumbnailUrl            pgtype.Text    `json:"thumbnail_url"`
+	IsAvailable             pgtype.Bool    `json:"is_available"`
+	StockCount              pgtype.Int4    `json:"stock_count"`
+	Tags                    []string       `json:"tags"`
+	ServingSize             pgtype.Text    `json:"serving_size"`
+	ServingSizeGrams        pgtype.Numeric `json:"serving_size_grams"`
+	Quantity                pgtype.Numeric `json:"quantity"`
+	Calories                pgtype.Int4    `json:"calories"`
+	CarbsGrams              pgtype.Numeric `json:"carbs_grams"`
+	FiberGrams              pgtype.Numeric `json:"fiber_grams"`
+	ProteinGrams            pgtype.Numeric `json:"protein_grams"`
+	FatGrams                pgtype.Numeric `json:"fat_grams"`
+	SugarGrams              pgtype.Numeric `json:"sugar_grams"`
+	SodiumMg                pgtype.Numeric `json:"sodium_mg"`
+	GlycemicIndex           pgtype.Int4    `json:"glycemic_index"`
+	GlycemicLoad            pgtype.Numeric `json:"glycemic_load"`
+	FoodCategory            []string       `json:"food_category"`
+	SaturatedFatGrams       pgtype.Numeric `json:"saturated_fat_grams"`
+	MonounsaturatedFatGrams pgtype.Numeric `json:"monounsaturated_fat_grams"`
+	PolyunsaturatedFatGrams pgtype.Numeric `json:"polyunsaturated_fat_grams"`
+	CholesterolMg           pgtype.Numeric `json:"cholesterol_mg"`
+	FoodID                  pgtype.UUID    `json:"food_id"`
+	SellerID                pgtype.UUID    `json:"seller_id"`
+}
+
+func (q *Queries) UpdateFood(ctx context.Context, arg UpdateFoodParams) (Food, error) {
+	row := q.db.QueryRow(ctx, updateFood,
+		arg.FoodName,
+		arg.Description,
+		arg.Price,
+		arg.Currency,
+		arg.PhotoUrl,
+		arg.ThumbnailUrl,
+		arg.IsAvailable,
+		arg.StockCount,
+		arg.Tags,
+		arg.ServingSize,
+		arg.ServingSizeGrams,
+		arg.Quantity,
+		arg.Calories,
+		arg.CarbsGrams,
+		arg.FiberGrams,
+		arg.ProteinGrams,
+		arg.FatGrams,
+		arg.SugarGrams,
+		arg.SodiumMg,
+		arg.GlycemicIndex,
+		arg.GlycemicLoad,
+		arg.FoodCategory,
+		arg.SaturatedFatGrams,
+		arg.MonounsaturatedFatGrams,
+		arg.PolyunsaturatedFatGrams,
+		arg.CholesterolMg,
+		arg.FoodID,
+		arg.SellerID,
+	)
+	var i Food
+	err := row.Scan(
+		&i.FoodID,
+		&i.SellerID,
+		&i.FoodName,
+		&i.Description,
+		&i.Price,
+		&i.Currency,
+		&i.PhotoUrl,
+		&i.ThumbnailUrl,
+		&i.IsAvailable,
+		&i.StockCount,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ServingSize,
+		&i.ServingSizeGrams,
+		&i.Quantity,
+		&i.Calories,
+		&i.CarbsGrams,
+		&i.FiberGrams,
+		&i.ProteinGrams,
+		&i.FatGrams,
+		&i.SugarGrams,
+		&i.SodiumMg,
+		&i.GlycemicIndex,
+		&i.GlycemicLoad,
+		&i.FoodCategory,
+		&i.SaturatedFatGrams,
+		&i.MonounsaturatedFatGrams,
+		&i.PolyunsaturatedFatGrams,
+		&i.CholesterolMg,
+		&i.IsActive,
 	)
 	return i, err
 }
@@ -5448,6 +6744,31 @@ func (q *Queries) UpdateOTPAttempts(ctx context.Context, otpID pgtype.UUID) erro
 	return err
 }
 
+const updateOrderStatus = `-- name: UpdateOrderStatus :exec
+UPDATE user_orders 
+SET 
+    status = $1,
+    seller_notes = COALESCE($2, seller_notes)
+WHERE order_id = $3 AND seller_id = $4
+`
+
+type UpdateOrderStatusParams struct {
+	Status      string      `json:"status"`
+	SellerNotes pgtype.Text `json:"seller_notes"`
+	OrderID     pgtype.UUID `json:"order_id"`
+	SellerID    pgtype.UUID `json:"seller_id"`
+}
+
+func (q *Queries) UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) error {
+	_, err := q.db.Exec(ctx, updateOrderStatus,
+		arg.Status,
+		arg.SellerNotes,
+		arg.OrderID,
+		arg.SellerID,
+	)
+	return err
+}
+
 const updateRefreshTokenReplacement = `-- name: UpdateRefreshTokenReplacement :exec
 UPDATE users_refresh_tokens
 SET replaced_by_token_id = $2
@@ -5462,6 +6783,124 @@ type UpdateRefreshTokenReplacementParams struct {
 func (q *Queries) UpdateRefreshTokenReplacement(ctx context.Context, arg UpdateRefreshTokenReplacementParams) error {
 	_, err := q.db.Exec(ctx, updateRefreshTokenReplacement, arg.ID, arg.ReplacedByTokenID)
 	return err
+}
+
+const updateSellerProfile = `-- name: UpdateSellerProfile :one
+UPDATE seller_profiles
+SET 
+    store_name = COALESCE($1, store_name),
+    store_description = COALESCE($2, store_description),
+    store_phone_number = COALESCE($3, store_phone_number),
+    business_hours = COALESCE($4, business_hours),
+    is_open = COALESCE($5, is_open),
+    is_active = COALESCE($6, is_active),
+    
+    -- Address
+    address_line1 = COALESCE($7, address_line1),
+    address_line2 = COALESCE($8, address_line2),
+    district = COALESCE($9, district),
+    city = COALESCE($10, city),
+    province = COALESCE($11, province),
+    postal_code = COALESCE($12, postal_code),
+    latitude = COALESCE($13, latitude),
+    longitude = COALESCE($14, longitude),
+    
+    -- Details
+    store_email = COALESCE($15, store_email),
+    cuisine_type = COALESCE($16, cuisine_type),
+    price_range = COALESCE($17, price_range),
+    
+    -- Images (URLs)
+    logo_url = COALESCE($18, logo_url),
+    banner_url = COALESCE($19, banner_url),
+    
+    updated_at = NOW()
+WHERE seller_id = $20
+RETURNING seller_id, user_id, created_at, updated_at, store_name, store_description, store_phone_number, is_open, business_hours, verification_status, logo_url, banner_url, address_line1, address_line2, district, city, province, postal_code, latitude, longitude, gmaps_link, store_slug, store_email, website_url, social_media_links, is_active, cuisine_type, price_range, rejection_reason, verified_at, average_rating, review_count
+`
+
+type UpdateSellerProfileParams struct {
+	StoreName        pgtype.Text    `json:"store_name"`
+	StoreDescription pgtype.Text    `json:"store_description"`
+	StorePhoneNumber pgtype.Text    `json:"store_phone_number"`
+	BusinessHours    []byte         `json:"business_hours"`
+	IsOpen           pgtype.Bool    `json:"is_open"`
+	IsActive         pgtype.Bool    `json:"is_active"`
+	AddressLine1     pgtype.Text    `json:"address_line1"`
+	AddressLine2     pgtype.Text    `json:"address_line2"`
+	District         pgtype.Text    `json:"district"`
+	City             pgtype.Text    `json:"city"`
+	Province         pgtype.Text    `json:"province"`
+	PostalCode       pgtype.Text    `json:"postal_code"`
+	Latitude         pgtype.Numeric `json:"latitude"`
+	Longitude        pgtype.Numeric `json:"longitude"`
+	StoreEmail       pgtype.Text    `json:"store_email"`
+	CuisineType      []string       `json:"cuisine_type"`
+	PriceRange       pgtype.Int4    `json:"price_range"`
+	LogoUrl          pgtype.Text    `json:"logo_url"`
+	BannerUrl        pgtype.Text    `json:"banner_url"`
+	SellerID         pgtype.UUID    `json:"seller_id"`
+}
+
+func (q *Queries) UpdateSellerProfile(ctx context.Context, arg UpdateSellerProfileParams) (SellerProfile, error) {
+	row := q.db.QueryRow(ctx, updateSellerProfile,
+		arg.StoreName,
+		arg.StoreDescription,
+		arg.StorePhoneNumber,
+		arg.BusinessHours,
+		arg.IsOpen,
+		arg.IsActive,
+		arg.AddressLine1,
+		arg.AddressLine2,
+		arg.District,
+		arg.City,
+		arg.Province,
+		arg.PostalCode,
+		arg.Latitude,
+		arg.Longitude,
+		arg.StoreEmail,
+		arg.CuisineType,
+		arg.PriceRange,
+		arg.LogoUrl,
+		arg.BannerUrl,
+		arg.SellerID,
+	)
+	var i SellerProfile
+	err := row.Scan(
+		&i.SellerID,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StoreName,
+		&i.StoreDescription,
+		&i.StorePhoneNumber,
+		&i.IsOpen,
+		&i.BusinessHours,
+		&i.VerificationStatus,
+		&i.LogoUrl,
+		&i.BannerUrl,
+		&i.AddressLine1,
+		&i.AddressLine2,
+		&i.District,
+		&i.City,
+		&i.Province,
+		&i.PostalCode,
+		&i.Latitude,
+		&i.Longitude,
+		&i.GmapsLink,
+		&i.StoreSlug,
+		&i.StoreEmail,
+		&i.WebsiteUrl,
+		&i.SocialMediaLinks,
+		&i.IsActive,
+		&i.CuisineType,
+		&i.PriceRange,
+		&i.RejectionReason,
+		&i.VerifiedAt,
+		&i.AverageRating,
+		&i.ReviewCount,
+	)
+	return i, err
 }
 
 const updateSleepLog = `-- name: UpdateSleepLog :one
@@ -5867,9 +7306,11 @@ INSERT INTO users (
     user_last_login_at,
     user_email_auth,
     user_username,
-    user_password
+    user_password,
+    is_email_verified,
+    email_verified_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12
 )
 ON CONFLICT (user_provider, user_provider_user_id) 
 DO UPDATE SET 
@@ -5878,7 +7319,9 @@ DO UPDATE SET
     user_name_auth = EXCLUDED.user_name_auth,
     user_avatar_url = EXCLUDED.user_avatar_url,
     user_raw_data = EXCLUDED.user_raw_data,
-    user_last_login_at = EXCLUDED.user_last_login_at
+    user_last_login_at = EXCLUDED.user_last_login_at,
+    is_email_verified = true,
+    email_verified_at = COALESCE(users.email_verified_at, EXCLUDED.email_verified_at)
 RETURNING user_id, user_username, user_password, user_firstname, user_lastname, user_email, user_dob, user_gender, user_accounttype, user_name_auth, user_avatar_url, user_provider, user_provider_user_id, user_raw_data, created_at, updated_at, user_last_login_at, user_email_auth, is_email_verified, email_verified_at
 `
 
@@ -5894,6 +7337,7 @@ type UpsertOAuthUserParams struct {
 	UserEmailAuth      pgtype.Text        `json:"user_email_auth"`
 	UserUsername       pgtype.Text        `json:"user_username"`
 	UserPassword       pgtype.Text        `json:"user_password"`
+	EmailVerifiedAt    pgtype.Timestamptz `json:"email_verified_at"`
 }
 
 // OAuth Integration - Upsert user with OAuth data
@@ -5910,6 +7354,7 @@ func (q *Queries) UpsertOAuthUser(ctx context.Context, arg UpsertOAuthUserParams
 		arg.UserEmailAuth,
 		arg.UserUsername,
 		arg.UserPassword,
+		arg.EmailVerifiedAt,
 	)
 	var i User
 	err := row.Scan(

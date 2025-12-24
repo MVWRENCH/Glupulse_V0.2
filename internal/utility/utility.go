@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -274,6 +275,13 @@ func StringToText(s string) pgtype.Text {
 	}
 }
 
+func TextToString(t pgtype.Text) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.String
+}
+
 func ParseIntParam(param string, defaultValue int) int {
 	if param == "" {
 		return defaultValue
@@ -286,4 +294,77 @@ func ParseIntParam(param string, defaultValue int) int {
 	}
 
 	return val
+}
+
+var nonAlphanumericRegex = regexp.MustCompile(`[^a-z0-9]+`)
+
+// GenerateStoreSlug creates a SEO-friendly slug: "My Store Name" -> "my-store-name-ax9z"
+func GenerateStoreSlug(storeName string) string {
+	// 1. Lowercase
+	slug := strings.ToLower(strings.TrimSpace(storeName))
+
+	// 2. Replace non-alphanumeric with hyphens
+	slug = nonAlphanumericRegex.ReplaceAllString(slug, "-")
+
+	// 3. Trim hyphens from ends
+	slug = strings.Trim(slug, "-")
+
+	// 4. Append random suffix (4 chars) to guarantee uniqueness in DB
+	suffix := GenerateRandomString(4)
+
+	return slug + "-" + suffix
+}
+
+func GenerateRandomString(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	for i := range b {
+		// Use crypto/rand for secure selection
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		if err != nil {
+			// Fallback to 0 if entropy fails (rare) or handle error
+			b[i] = letters[0]
+		} else {
+			b[i] = letters[num.Int64()]
+		}
+	}
+	return string(b)
+}
+
+func InterfaceToStringSlice(v interface{}) []string {
+	if v == nil {
+		return []string{}
+	}
+	// If it's already []string
+	if s, ok := v.([]string); ok {
+		return s
+	}
+	// If it's []interface{} (from JSON unmarshal)
+	if list, ok := v.([]interface{}); ok {
+		result := make([]string, len(list))
+		for i, item := range list {
+			if str, ok := item.(string); ok {
+				result[i] = str
+			}
+		}
+		return result
+	}
+	return []string{}
+}
+
+func SafeFloatToNumeric(f *float64) pgtype.Numeric {
+	if f == nil {
+		return pgtype.Numeric{Valid: false} // Sends NULL to DB (No Limit)
+	}
+	return FloatToNumeric(*f)
+}
+
+func StringToTextNullable(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{Valid: false}
+	}
+	return pgtype.Text{
+		String: *s,
+		Valid:  true,
+	}
 }

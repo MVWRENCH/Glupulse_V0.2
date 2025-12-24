@@ -50,12 +50,20 @@ func GetHealthRecommendations(ctx context.Context, q *database.Queries, req Requ
 	if contains(req.RequestedTypes, "food") {
 		log.Info().Msg("Fetching filtered foods from database...")
 
+		// Fetch recently recommended food IDs to exclude
+		recentFoodIDs, err := q.GetRecentRecommendedFoodIDs(ctx, req.UserID)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to fetch recent recommendations, proceeding without exclusion")
+			recentFoodIDs = []pgtype.UUID{}
+		}
+
 		// Build filter parameters
 		filterParams := database.ListRecommendedFoodsParams{
 			FoodCategory:    req.FoodCategory,
-			MaxGlycemicLoad: utility.FloatToNumeric(*req.MaxGlycemicLoad),
-			MaxCarbs:        utility.FloatToNumeric(*req.MaxCarbs),
-			LimitCount:      50, // Get top 50 matches
+			MaxGlycemicLoad: utility.SafeFloatToNumeric(req.MaxGlycemicLoad),
+    		MaxCarbs:        utility.SafeFloatToNumeric(req.MaxCarbs),
+			LimitCount:      100, // Get top 100 matches
+			ExcludedFoodIds: recentFoodIDs,
 		}
 
 		rows, err := q.ListRecommendedFoods(ctx, filterParams)
@@ -78,7 +86,7 @@ func GetHealthRecommendations(ctx context.Context, q *database.Queries, req Requ
 					Currency:      row.Currency,
 				})
 			}
-			log.Info().Msgf("Found %d foods matching filters", len(dbFoods))
+			log.Info().Msgf("Found %d foods (excluding %d recent items)", len(dbFoods), len(recentFoodIDs))
 		}
 	}
 

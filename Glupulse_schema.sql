@@ -168,6 +168,20 @@ CREATE TYPE public.seller_seller_status AS ENUM (
 ALTER TYPE public.seller_seller_status OWNER TO postgres;
 
 --
+-- Name: seller_verification_status; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.seller_verification_status AS ENUM (
+    'pending',
+    'approved',
+    'rejected',
+    'suspended'
+);
+
+
+ALTER TYPE public.seller_verification_status OWNER TO postgres;
+
+--
 -- Name: user_cart_cart_status; Type: TYPE; Schema: public; Owner: postgres
 --
 
@@ -190,7 +204,8 @@ CREATE TYPE public.user_order_order_status AS ENUM (
     'Shipped',
     'Delivered',
     'Rejected',
-    'Cancelled'
+    'Cancelled',
+    'Pending Payment'
 );
 
 
@@ -471,6 +486,22 @@ $$;
 
 
 ALTER FUNCTION public.update_address_updated_at() OWNER TO postgres;
+
+--
+-- Name: update_last_interaction_at_column(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.update_last_interaction_at_column() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.last_interaction_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.update_last_interaction_at_column() OWNER TO postgres;
 
 --
 -- Name: update_seller_profiles_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -770,7 +801,8 @@ CREATE TABLE public.foods (
     saturated_fat_grams numeric(6,2),
     monounsaturated_fat_grams numeric(6,2),
     polyunsaturated_fat_grams numeric(6,2),
-    cholesterol_mg numeric(6,2)
+    cholesterol_mg numeric(6,2),
+    is_active boolean
 );
 
 
@@ -953,22 +985,17 @@ CREATE TABLE public.recommended_activities (
     recommended_intensity character varying(20),
     safety_notes text,
     best_time_of_day character varying(20),
-    glucose_management_tip text,
     recommendation_rank integer,
-    confidence_score numeric(4,3),
     was_viewed boolean DEFAULT false,
     was_completed boolean DEFAULT false,
     actual_duration_minutes integer,
     user_rating integer,
-    feedback character varying(20),
     feedback_notes text,
     glucose_change_after_activity integer,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
-    last_interaction_at timestamp with time zone,
+    last_interaction_at timestamp with time zone DEFAULT now(),
     CONSTRAINT recommended_activities_best_time_of_day_check CHECK (((best_time_of_day)::text = ANY ((ARRAY['morning'::character varying, 'afternoon'::character varying, 'evening'::character varying, 'any'::character varying])::text[]))),
-    CONSTRAINT recommended_activities_confidence_score_check CHECK (((confidence_score >= (0)::numeric) AND (confidence_score <= (1)::numeric))),
-    CONSTRAINT recommended_activities_feedback_check CHECK (((feedback)::text = ANY ((ARRAY['enjoyed_it'::character varying, 'felt_great'::character varying, 'neutral'::character varying, 'too_hard'::character varying, 'caused_hypo'::character varying])::text[]))),
     CONSTRAINT recommended_activities_recommended_duration_minutes_check CHECK ((recommended_duration_minutes > 0)),
     CONSTRAINT recommended_activities_recommended_intensity_check CHECK (((recommended_intensity)::text = ANY ((ARRAY['light'::character varying, 'moderate'::character varying, 'vigorous'::character varying])::text[]))),
     CONSTRAINT recommended_activities_user_rating_check CHECK (((user_rating >= 1) AND (user_rating <= 5)))
@@ -990,19 +1017,15 @@ CREATE TABLE public.recommended_foods (
     suggested_meal_type character varying(50),
     suggested_portion_size character varying(100),
     recommendation_rank integer,
-    confidence_score numeric(4,3),
     was_viewed boolean DEFAULT false,
     was_added_to_cart boolean DEFAULT false,
     was_purchased boolean DEFAULT false,
     was_logged_as_meal boolean DEFAULT false,
     user_rating integer,
-    feedback character varying(20),
     feedback_notes text,
     glucose_spike_after_eating integer,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_interaction_at timestamp with time zone,
-    CONSTRAINT recommended_foods_confidence_score_check CHECK (((confidence_score >= (0)::numeric) AND (confidence_score <= (1)::numeric))),
-    CONSTRAINT recommended_foods_feedback_check CHECK (((feedback)::text = ANY ((ARRAY['loved_it'::character varying, 'liked_it'::character varying, 'neutral'::character varying, 'disliked_it'::character varying, 'caused_spike'::character varying])::text[]))),
+    last_interaction_at timestamp with time zone DEFAULT now(),
     CONSTRAINT recommended_foods_user_rating_check CHECK (((user_rating >= 1) AND (user_rating <= 5)))
 );
 
@@ -1081,7 +1104,7 @@ CREATE TABLE public.seller_profiles (
     store_name character varying(100) NOT NULL,
     store_description text,
     store_phone_number character varying(30),
-    is_open_manually boolean DEFAULT true NOT NULL,
+    is_open boolean DEFAULT true CONSTRAINT seller_profiles_is_open_manually_not_null NOT NULL,
     business_hours jsonb,
     verification_status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
     logo_url text,
@@ -1094,7 +1117,19 @@ CREATE TABLE public.seller_profiles (
     postal_code character varying(10),
     latitude numeric(10,7),
     longitude numeric(10,7),
-    gmaps_link text
+    gmaps_link text,
+    store_slug character varying(120) NOT NULL,
+    store_email character varying(100),
+    website_url text,
+    social_media_links jsonb,
+    is_active boolean DEFAULT true,
+    cuisine_type text[],
+    price_range integer,
+    rejection_reason text,
+    verified_at timestamp with time zone,
+    average_rating numeric(3,2) DEFAULT 0.00,
+    review_count integer DEFAULT 0,
+    CONSTRAINT seller_profiles_price_range_check CHECK (((price_range >= 1) AND (price_range <= 4)))
 );
 
 
@@ -1529,11 +1564,13 @@ CREATE TABLE public.user_orders (
     user_id text NOT NULL,
     seller_id uuid NOT NULL,
     total_price numeric(10,2) NOT NULL,
-    status character varying(50) DEFAULT 'pending'::character varying NOT NULL,
+    status character varying(50) DEFAULT 'Pending Payment'::character varying NOT NULL,
     delivery_address_json jsonb NOT NULL,
     payment_status character varying(50) DEFAULT 'unpaid'::character varying NOT NULL,
     payment_method character varying(50),
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone,
+    seller_notes text
 );
 
 
@@ -1601,7 +1638,7 @@ CREATE TABLE public.users (
     user_provider character varying(50),
     user_provider_user_id character varying(255),
     user_raw_data jsonb,
-    created_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone,
     user_last_login_at timestamp with time zone,
     user_email_auth character varying(255),
@@ -1962,6 +1999,14 @@ ALTER TABLE ONLY public.recommended_foods
 
 ALTER TABLE ONLY public.user_sleep_logs
     ADD CONSTRAINT unique_user_sleep_date UNIQUE (user_id, sleep_date);
+
+
+--
+-- Name: seller_profiles uq_seller_profiles_slug; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.seller_profiles
+    ADD CONSTRAINT uq_seller_profiles_slug UNIQUE (store_slug);
 
 
 --
@@ -2608,13 +2653,6 @@ CREATE INDEX idx_recommended_activities_completed ON public.recommended_activiti
 
 
 --
--- Name: idx_recommended_activities_feedback; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_recommended_activities_feedback ON public.recommended_activities USING btree (feedback) WHERE (feedback IS NOT NULL);
-
-
---
 -- Name: idx_recommended_activities_rank; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -2626,13 +2664,6 @@ CREATE INDEX idx_recommended_activities_rank ON public.recommended_activities US
 --
 
 CREATE INDEX idx_recommended_activities_session_id ON public.recommended_activities USING btree (session_id);
-
-
---
--- Name: idx_recommended_foods_feedback; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_recommended_foods_feedback ON public.recommended_foods USING btree (feedback) WHERE (feedback IS NOT NULL);
 
 
 --
@@ -2685,10 +2716,38 @@ CREATE INDEX idx_refresh_tokens_user_id ON public.users_refresh_tokens USING btr
 
 
 --
+-- Name: idx_seller_cuisine; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_seller_cuisine ON public.seller_profiles USING gin (cuisine_type);
+
+
+--
+-- Name: idx_seller_geo; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_seller_geo ON public.seller_profiles USING btree (latitude, longitude);
+
+
+--
+-- Name: idx_seller_name_trgm; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_seller_name_trgm ON public.seller_profiles USING gin (store_name public.gin_trgm_ops);
+
+
+--
 -- Name: idx_seller_profiles_store_name; Type: INDEX; Schema: public; Owner: postgres
 --
 
 CREATE INDEX idx_seller_profiles_store_name ON public.seller_profiles USING btree (store_name);
+
+
+--
+-- Name: idx_seller_status; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_seller_status ON public.seller_profiles USING btree (verification_status);
 
 
 --
@@ -2860,6 +2919,20 @@ CREATE TRIGGER trigger_user_addresses_updated_at BEFORE UPDATE ON public.user_ad
 
 
 --
+-- Name: recommended_activities update_last_interaction_at(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_last_interaction_at()" BEFORE UPDATE ON public.recommended_activities FOR EACH ROW EXECUTE FUNCTION public.update_last_interaction_at_column();
+
+
+--
+-- Name: recommended_foods update_last_interaction_at(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_last_interaction_at()" BEFORE UPDATE ON public.recommended_foods FOR EACH ROW EXECUTE FUNCTION public.update_last_interaction_at_column();
+
+
+--
 -- Name: user_health_events update_updated_at(); Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -2920,6 +2993,13 @@ CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_hba1c_r
 --
 
 CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_meal_logs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_orders update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_orders FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
 --

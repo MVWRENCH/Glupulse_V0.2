@@ -12,6 +12,7 @@ import (
 	user "Glupulse_V0.2/internal/User"
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
+	seller "Glupulse_V0.2/internal/seller"
 	"Glupulse_V0.2/internal/server"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -59,6 +60,8 @@ func main() {
 	}
 
 	user.InitUserPackage(database.Dbpool)
+
+	seller.InitSellerPackage(database.Dbpool)
 
 	server := server.NewServer()
 

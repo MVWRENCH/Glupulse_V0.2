@@ -7,6 +7,8 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"strconv"
+	"time"
 
 	"Glupulse_V0.2/internal/database"
 	"Glupulse_V0.2/internal/utility"
@@ -100,6 +102,45 @@ type CleanOrderResponse struct {
 type CheckoutResponse struct {
 	Order      CleanOrderResponse       `json:"order"`
 	OrderItems []CleanOrderItemResponse `json:"order_items"`
+}
+
+// OrderItemResponse represents a single item in an order
+type OrderItemResponse struct {
+	FoodName string  `json:"food_name"`
+	Quantity int     `json:"quantity"`
+	Price    float64 `json:"price"`
+}
+
+// OrderHistoryResponse is for past orders (simplified view)
+type OrderHistoryResponse struct {
+	OrderID       string              `json:"order_id"`
+	StoreName     string              `json:"store_name"`
+	StoreSlug     string              `json:"store_slug"`
+	StoreLogo     string              `json:"store_logo"`
+	TotalPrice    float64             `json:"total_price"`
+	Status        string              `json:"status"`
+	PaymentStatus string              `json:"payment_status"`
+	CreatedAt     time.Time           `json:"created_at"`
+	Items         []OrderItemResponse `json:"items"`
+}
+
+// ActiveOrderResponse includes tracking details (address, seller phone)
+type ActiveOrderResponse struct {
+	OrderID         string              `json:"order_id"`
+	StoreName       string              `json:"store_name"`
+	StorePhone      string              `json:"store_phone"`
+	SellerLat       float64             `json:"seller_lat"`
+	SellerLong      float64             `json:"seller_long"`
+	TotalPrice      float64             `json:"total_price"`
+	Status          string              `json:"status"` // e.g., "shipping"
+	PaymentStatus   string              `json:"payment_status"`
+	DeliveryAddress json.RawMessage     `json:"delivery_address"` // Raw JSON from DB
+	CreatedAt       time.Time           `json:"created_at"`
+	Items           []OrderItemResponse `json:"items"`
+}
+
+type SimulatePaymentRequest struct {
+    OrderID string `json:"order_id" validate:"required"`
 }
 
 // getOrCreateCart ensures a cart exists for the user
@@ -205,7 +246,7 @@ func GetCartHandler(c echo.Context) error {
 				StoreName:          seller.StoreName,
 				StoreDescription:   seller.StoreDescription,
 				StorePhoneNumber:   seller.StorePhoneNumber.String,
-				IsOpenManually:     seller.IsOpenManually,
+				IsOpenManually:     seller.IsOpen,
 				BusinessHours:      seller.BusinessHours, // This is []byte, maps to json.RawMessage
 				VerificationStatus: seller.VerificationStatus,
 				LogoURL:            seller.LogoUrl,
@@ -484,7 +525,7 @@ func CheckoutHandler(c echo.Context) error {
 		TotalPrice:          pgTotalPrice, // This will now be correct
 		Status:              "Pending Payment",
 		DeliveryAddressJson: addressJSON,
-		PaymentStatus:       "unpaid",
+		PaymentStatus:       "Unpaid",
 		PaymentMethod:       pgtype.Text{String: req.PaymentMethod, Valid: true},
 	})
 	if err != nil {
@@ -542,17 +583,180 @@ func CheckoutHandler(c echo.Context) error {
 
 // ListAllFoodsHandler retrieves a list of all available food items
 func ListAllFoodsHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// Execute the SQL query
+	foods, err := queries.ListAllAvailableFoods(ctx)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return c.JSON(http.StatusOK, []interface{}{}) // Return empty array if no foods are available
+		}
+		log.Error().Err(err).Msg("Failed to retrieve available foods list")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve food data"})
+	}
+
+	return c.JSON(http.StatusOK, foods)
+}
+
+// GetFoodCategoriesHandler retrieves the list of available food categories
+func ListAllFoodCategoriesHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	categories, err := queries.ListFoodCategories(ctx)
+	if err != nil {
+		// Log the error internally if you have a logger
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to fetch food categories",
+		})
+	}
+
+	// Return empty list instead of null if no categories exist
+	if categories == nil {
+		return c.JSON(http.StatusOK, []interface{}{})
+	}
+
+	return c.JSON(http.StatusOK, categories)
+}
+
+// GetUserOrderHistoryHandler fetches completed/cancelled orders
+func GetUserOrderHistoryHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	userID, err := utility.GetUserIDFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	// Pagination
+	limit := 20
+	offset := 0
+	if l := c.QueryParam("limit"); l != "" {
+		if val, err := strconv.Atoi(l); err == nil {
+			limit = val
+		}
+	}
+	if o := c.QueryParam("offset"); o != "" {
+		if val, err := strconv.Atoi(o); err == nil {
+			offset = val
+		}
+	}
+
+	rows, err := queries.GetUserOrderHistory(ctx, database.GetUserOrderHistoryParams{
+		UserID: userID,
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch order history"})
+	}
+
+	// Map DB rows to Response
+	resp := make([]OrderHistoryResponse, 0)
+	for _, row := range rows {
+		var items []OrderItemResponse
+		// Unmarshal the JSON items array generated by Postgres
+		if len(row.Items) > 0 {
+			_ = json.Unmarshal(row.Items, &items)
+		}
+
+		resp = append(resp, OrderHistoryResponse{
+			OrderID:       utility.UuidToString(row.OrderID),
+			StoreName:     row.StoreName,
+			StoreSlug:     row.StoreSlug,
+			StoreLogo:     utility.TextToString(row.LogoUrl),
+			TotalPrice:    utility.NumericToFloat(row.TotalPrice),
+			Status:        row.Status,
+			PaymentStatus: row.PaymentStatus,
+			CreatedAt:     row.CreatedAt.Time,
+			Items:         items,
+		})
+	}
+
+	return c.JSON(http.StatusOK, resp)
+}
+
+// TrackUserActiveOrdersHandler fetches pending/ongoing orders
+func TrackUserActiveOrdersHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	userID, err := utility.GetUserIDFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	rows, err := queries.GetUserActiveOrders(ctx, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch active orders"})
+	}
+
+	resp := make([]ActiveOrderResponse, 0)
+	for _, row := range rows {
+		var items []OrderItemResponse
+		if len(row.Items) > 0 {
+			_ = json.Unmarshal(row.Items, &items)
+		}
+
+		resp = append(resp, ActiveOrderResponse{
+			OrderID:         utility.UuidToString(row.OrderID),
+			StoreName:       row.StoreName,
+			StorePhone:      utility.TextToString(row.StorePhoneNumber),
+			SellerLat:       utility.NumericToFloat(row.SellerLat),
+			SellerLong:      utility.NumericToFloat(row.SellerLong),
+			TotalPrice:      utility.NumericToFloat(row.TotalPrice),
+			Status:          row.Status,
+			PaymentStatus:   row.PaymentStatus,
+			DeliveryAddress: row.DeliveryAddressJson, // Pass through the raw JSON
+			CreatedAt:       row.CreatedAt.Time,
+			Items:           items,
+		})
+	}
+
+	// Return empty array instead of null
+	if resp == nil {
+		resp = []ActiveOrderResponse{}
+	}
+
+	return c.JSON(http.StatusOK, resp)
+}
+
+// SimulatePaymentHandler allows the mobile app to mark an order as Paid immediately.
+// Use this ONLY for the dummy/demo version.
+func SimulatePaymentHandler(c echo.Context) error {
     ctx := c.Request().Context()
 
-    // Execute the SQL query
-    foods, err := queries.ListAllAvailableFoods(ctx)
+    // 1. Get User ID from Token (Security)
+    userID, err := utility.GetUserIDFromContext(c)
     if err != nil {
-        if err.Error() == "no rows in result set" {
-            return c.JSON(http.StatusOK, []interface{}{}) // Return empty array if no foods are available
-        }
-        log.Error().Err(err).Msg("Failed to retrieve available foods list")
-        return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve food data"})
+        return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
     }
 
-    return c.JSON(http.StatusOK, foods)
+    // 2. Parse Request
+    var req SimulatePaymentRequest
+    if err := c.Bind(&req); err != nil {
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+    }
+
+    // 3. Validate UUID
+    orderUUID, err := uuid.Parse(req.OrderID)
+    if err != nil {
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Order ID"})
+    }
+
+    // 4. Execute Update (With Ownership Check)
+    updatedOrder, err := queries.SimulateUserPayment(ctx, database.SimulateUserPaymentParams{
+        OrderID: pgtype.UUID{Bytes: orderUUID, Valid: true},
+        UserID:  userID,
+    })
+
+    if err != nil {
+        // If error, it usually means Order ID doesn't exist OR it belongs to another user
+        return c.JSON(http.StatusNotFound, map[string]string{
+            "error": "Order not found, already paid, or belongs to another user",
+        })
+    }
+
+    return c.JSON(http.StatusOK, map[string]interface{}{
+        "message":        "Payment Successful (Dummy)",
+        "order_id":       utility.UuidToString(updatedOrder.OrderID),
+        "status":         updatedOrder.Status,
+        "payment_status": updatedOrder.PaymentStatus,
+    })
 }

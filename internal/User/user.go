@@ -118,13 +118,13 @@ func InitUserPackage(dbpool *pgxpool.Pool) {
 
 	// Load the success change email HTML template
 	var err error
-	successHTML, err = os.ReadFile("web/success_change_email.html")
+	successHTML, err = os.ReadFile("web/templates/success_change_email.html")
 	if err != nil {
 		log.Fatal().Err(err).Msg("FATAL: Could not read success_change_email.html")
 	}
 
 	// Load the failed change email HTML template
-	failedHTML, err = os.ReadFile("web/failed_change_email.html")
+	failedHTML, err = os.ReadFile("web/templates/failed_change_email.html")
 	if err != nil {
 		log.Fatal().Err(err).Msg("FATAL: Could not read failed_change_email.html")
 	}
@@ -906,7 +906,7 @@ func GetUserDataAllHandler(c echo.Context) error {
 				StoreName:          s.StoreName,
 				StoreDescription:   s.StoreDescription,
 				StorePhoneNumber:   s.StorePhoneNumber.String,
-				IsOpenManually:     s.IsOpenManually,
+				IsOpenManually:     s.IsOpen,
 				BusinessHours:      s.BusinessHours,
 				VerificationStatus: s.VerificationStatus,
 				LogoURL:            s.LogoUrl,

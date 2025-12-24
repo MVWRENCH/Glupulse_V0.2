@@ -170,13 +170,17 @@ Requested Types: %s
 INSTRUCTIONS:
 1. Verify my Age and Gender
 2. Analyze my health trends and current glucose/HbA1c levels
-3. ONLY recommend items that:
+3. FOOD RECOMMENDATIONS (QUANTITY):
+   - You MUST select the Top 5 best foods from the list.
+4. ACTIVITY RECOMMENDATIONS (QUANTITY):
+   - Select 3 to 5 best activities.
+5. ONLY recommend items that:
    a) Are in the available database lists above
    b) Match my health condition (Type 2 Diabetes/Prediabetes/Obesity/Wellness)
    c) Pass the filters I specified (meal type, categories, preferences)
    d) Are safe given my current glucose level
-4. Provide a clear, one-sentence reason for EACH recommendation
-5. Rank recommendations by safety first, then effectiveness for my condition`
+6. Provide a clear, one-sentence reason for EACH recommendation
+7. Rank recommendations by safety first, then effectiveness for my condition`
 
 /*
 RecommendationSchema describes the exact JSON structure the AI MUST output.
