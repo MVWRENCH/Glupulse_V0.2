@@ -140,7 +140,13 @@ type ActiveOrderResponse struct {
 }
 
 type SimulatePaymentRequest struct {
-    OrderID string `json:"order_id" validate:"required"`
+	OrderID string `json:"order_id" validate:"required"`
+}
+
+type CreateReviewRequest struct {
+	OrderID    string `json:"order_id" validate:"required"`
+	Rating     int32  `json:"rating" validate:"required,min=1,max=5"`
+	ReviewText string `json:"review_text"`
 }
 
 // getOrCreateCart ensures a cart exists for the user
@@ -720,43 +726,108 @@ func TrackUserActiveOrdersHandler(c echo.Context) error {
 // SimulatePaymentHandler allows the mobile app to mark an order as Paid immediately.
 // Use this ONLY for the dummy/demo version.
 func SimulatePaymentHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// 1. Get User ID from Token (Security)
+	userID, err := utility.GetUserIDFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	// 2. Parse Request
+	var req SimulatePaymentRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+	}
+
+	// 3. Validate UUID
+	orderUUID, err := uuid.Parse(req.OrderID)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Order ID"})
+	}
+
+	// 4. Execute Update (With Ownership Check)
+	updatedOrder, err := queries.SimulateUserPayment(ctx, database.SimulateUserPaymentParams{
+		OrderID: pgtype.UUID{Bytes: orderUUID, Valid: true},
+		UserID:  userID,
+	})
+
+	if err != nil {
+		// If error, it usually means Order ID doesn't exist OR it belongs to another user
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Order not found, already paid, or belongs to another user",
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":        "Payment Successful (Dummy)",
+		"order_id":       utility.UuidToString(updatedOrder.OrderID),
+		"status":         updatedOrder.Status,
+		"payment_status": updatedOrder.PaymentStatus,
+	})
+}
+
+// CreateSellerReviewHandler allows a user to review a completed order
+func CreateSellerReviewHandler(c echo.Context) error {
     ctx := c.Request().Context()
 
-    // 1. Get User ID from Token (Security)
+    // 1. Authenticate User
     userID, err := utility.GetUserIDFromContext(c)
     if err != nil {
         return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
     }
 
-    // 2. Parse Request
-    var req SimulatePaymentRequest
+    // 2. Bind & Validate Request
+    var req CreateReviewRequest
     if err := c.Bind(&req); err != nil {
-        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON format"})
     }
 
-    // 3. Validate UUID
+    // 3. Parse UUID
     orderUUID, err := uuid.Parse(req.OrderID)
     if err != nil {
         return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Order ID"})
     }
+    pgOrderUUID := pgtype.UUID{Bytes: orderUUID, Valid: true}
 
-    // 4. Execute Update (With Ownership Check)
-    updatedOrder, err := queries.SimulateUserPayment(ctx, database.SimulateUserPaymentParams{
-        OrderID: pgtype.UUID{Bytes: orderUUID, Valid: true},
+    // 4. Validate Order Eligibility
+    // Fetch order details to check ownership and status
+    orderDetails, err := queries.GetOrderForReview(ctx, database.GetOrderForReviewParams{
+        OrderID: pgOrderUUID,
         UserID:  userID,
+    })
+    if err != nil {
+        return c.JSON(http.StatusNotFound, map[string]string{"error": "Order not found or access denied"})
+    }
+
+    // Check 1: Is the order completed?
+    if orderDetails.Status != "Completed" {
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "You can only review completed orders"})
+    }
+
+    // Check 2: Has it already been reviewed?
+    exists, _ := queries.CheckReviewExists(ctx, pgOrderUUID)
+    if exists {
+        return c.JSON(http.StatusConflict, map[string]string{"error": "You have already reviewed this order"})
+    }
+
+    // 5. Create Review
+    // We use the seller_id retrieved from the order itself (orderDetails.SellerID)
+    review, err := queries.CreateSellerReview(ctx, database.CreateSellerReviewParams{
+        OrderID:    pgOrderUUID,
+        UserID:     userID,
+        SellerID:   orderDetails.SellerID,
+        Rating:     req.Rating,
+        ReviewText: utility.StringToText(req.ReviewText), // Helper for nullable text
     })
 
     if err != nil {
-        // If error, it usually means Order ID doesn't exist OR it belongs to another user
-        return c.JSON(http.StatusNotFound, map[string]string{
-            "error": "Order not found, already paid, or belongs to another user",
-        })
+        return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to submit review"})
     }
 
-    return c.JSON(http.StatusOK, map[string]interface{}{
-        "message":        "Payment Successful (Dummy)",
-        "order_id":       utility.UuidToString(updatedOrder.OrderID),
-        "status":         updatedOrder.Status,
-        "payment_status": updatedOrder.PaymentStatus,
+    return c.JSON(http.StatusCreated, map[string]interface{}{
+        "message":    "Review submitted successfully",
+        "review_id":  utility.UuidToString(review.ReviewID),
+        "created_at": review.CreatedAt.Time,
     })
 }

@@ -152,6 +152,10 @@ type UpdateSellerProfileRequest struct {
 	BannerUrl *string `json:"banner_url"`
 }
 
+type ReplyReviewRequest struct {
+    ReplyText string `json:"reply_text" validate:"required"`
+}
+
 // WebSocket Handler
 func DashboardSocketHandler(c echo.Context) error {
 	// 1. Authenticate user to get Seller ID
@@ -939,4 +943,134 @@ func UpdateSellerProfileHandler(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"message": "Store profile updated successfully", "store_name": updatedProfile.StoreName})
+}
+
+// GetSellerReviewsHandler retrieves reviews for the logged-in seller
+func GetSellerReviewsHandler(c echo.Context) error {
+    ctx := c.Request().Context()
+
+    // 1. Auth: Get Seller ID
+    userID, err := utility.GetUserIDFromContext(c)
+    if err != nil {
+        return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+    }
+    sellerID, err := queries.GetSellerIDByUserID(ctx, userID)
+    if err != nil {
+        return c.JSON(http.StatusNotFound, map[string]string{"error": "Seller profile not found"})
+    }
+
+    // 2. Pagination
+    limit := 20
+    offset := 0
+    if l := c.QueryParam("limit"); l != "" {
+        if val, err := strconv.Atoi(l); err == nil {
+            limit = val
+        }
+    }
+    if o := c.QueryParam("offset"); o != "" {
+        if val, err := strconv.Atoi(o); err == nil {
+            offset = val
+        }
+    }
+
+    // 3. Fetch Data
+    rows, err := queries.GetSellerReviews(ctx, database.GetSellerReviewsParams{
+        SellerID: sellerID,
+        Limit:    int32(limit),
+        Offset:   int32(offset),
+    })
+    if err != nil {
+        return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch reviews"})
+    }
+
+    // 4. Map Response
+    type ReviewResponse struct {
+        ReviewID      string  `json:"review_id"`
+        Rating        int32   `json:"rating"`
+        ReviewText    *string `json:"review_text"`
+        SellerReply   *string `json:"seller_reply"`
+        CreatedAt     string  `json:"created_at"`
+        CustomerName  string  `json:"customer_name"`
+        CustomerAvatar *string `json:"customer_avatar"`
+    }
+
+    resp := make([]ReviewResponse, 0)
+    for _, row := range rows {
+        // Format Name
+        firstName := utility.TextToString(row.UserFirstname)
+        lastName := utility.TextToString(row.UserLastname)
+        fullName := strings.TrimSpace(firstName + " " + lastName)
+
+        // Handle Nullables
+        var reviewText *string
+        if row.ReviewText.Valid {
+            reviewText = &row.ReviewText.String
+        }
+        var sellerReply *string
+        if row.SellerReply.Valid {
+            sellerReply = &row.SellerReply.String
+        }
+        var avatar *string
+        if row.UserAvatarUrl.Valid {
+            avatar = &row.UserAvatarUrl.String
+        }
+
+        resp = append(resp, ReviewResponse{
+            ReviewID:       utility.UuidToString(row.ReviewID),
+            Rating:         row.Rating,
+            ReviewText:     reviewText,
+            SellerReply:    sellerReply,
+            CreatedAt:      row.CreatedAt.Time.Format("2006-01-02 15:04:05"),
+            CustomerName:   fullName,
+            CustomerAvatar: avatar,
+        })
+    }
+
+    return c.JSON(http.StatusOK, resp)
+}
+
+// ReplyToReviewHandler allows seller to reply to a specific review
+func ReplyToReviewHandler(c echo.Context) error {
+    ctx := c.Request().Context()
+
+    // 1. Auth: Get Seller ID
+    userID, err := utility.GetUserIDFromContext(c)
+    if err != nil {
+        return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+    }
+    sellerID, err := queries.GetSellerIDByUserID(ctx, userID)
+    if err != nil {
+        return c.JSON(http.StatusNotFound, map[string]string{"error": "Seller profile not found"})
+    }
+
+    // 2. Get Review ID from URL
+    reviewIDParam := c.Param("review_id")
+    reviewUUID, err := uuid.Parse(reviewIDParam)
+    if err != nil {
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid review ID"})
+    }
+
+    // 3. Bind Request
+    var req ReplyReviewRequest
+    if err := c.Bind(&req); err != nil {
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+    }
+
+    // 4. Update DB
+    updatedReview, err := queries.ReplyToReview(ctx, database.ReplyToReviewParams{
+        ReviewID:    pgtype.UUID{Bytes: reviewUUID, Valid: true},
+        SellerReply: pgtype.Text{String: req.ReplyText, Valid: true},
+        SellerID:    sellerID, // Security: Ensures seller owns this review
+    })
+
+    if err != nil {
+        // If no rows affected, usually means Review ID doesn't belong to this seller
+        return c.JSON(http.StatusNotFound, map[string]string{"error": "Review not found or access denied"})
+    }
+
+    return c.JSON(http.StatusOK, map[string]interface{}{
+        "message":      "Reply posted successfully",
+        "review_id":    utility.UuidToString(updatedReview.ReviewID),
+        "seller_reply": updatedReview.SellerReply.String,
+    })
 }

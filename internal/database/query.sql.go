@@ -147,6 +147,17 @@ func (q *Queries) CheckIfUserHasShop(ctx context.Context, userID string) (bool, 
 	return exists, err
 }
 
+const checkReviewExists = `-- name: CheckReviewExists :one
+SELECT EXISTS(SELECT 1 FROM seller_reviews WHERE order_id = $1)
+`
+
+func (q *Queries) CheckReviewExists(ctx context.Context, orderID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, checkReviewExists, orderID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const checkSellerSlugExists = `-- name: CheckSellerSlugExists :one
 SELECT EXISTS(SELECT 1 FROM seller_profiles WHERE store_slug = $1)
 `
@@ -1508,6 +1519,45 @@ func (q *Queries) CreateSellerProfile(ctx context.Context, arg CreateSellerProfi
 		&i.AverageRating,
 		&i.ReviewCount,
 	)
+	return i, err
+}
+
+const createSellerReview = `-- name: CreateSellerReview :one
+INSERT INTO seller_reviews (
+    order_id,
+    user_id,
+    seller_id,
+    rating,
+    review_text
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+RETURNING review_id, created_at
+`
+
+type CreateSellerReviewParams struct {
+	OrderID    pgtype.UUID `json:"order_id"`
+	UserID     string      `json:"user_id"`
+	SellerID   pgtype.UUID `json:"seller_id"`
+	Rating     int32       `json:"rating"`
+	ReviewText pgtype.Text `json:"review_text"`
+}
+
+type CreateSellerReviewRow struct {
+	ReviewID  pgtype.UUID        `json:"review_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateSellerReview(ctx context.Context, arg CreateSellerReviewParams) (CreateSellerReviewRow, error) {
+	row := q.db.QueryRow(ctx, createSellerReview,
+		arg.OrderID,
+		arg.UserID,
+		arg.SellerID,
+		arg.Rating,
+		arg.ReviewText,
+	)
+	var i CreateSellerReviewRow
+	err := row.Scan(&i.ReviewID, &i.CreatedAt)
 	return i, err
 }
 
@@ -3260,6 +3310,30 @@ func (q *Queries) GetOrderDetails(ctx context.Context, arg GetOrderDetailsParams
 	return i, err
 }
 
+const getOrderForReview = `-- name: GetOrderForReview :one
+SELECT seller_id, status 
+FROM user_orders 
+WHERE order_id = $1 AND user_id = $2
+`
+
+type GetOrderForReviewParams struct {
+	OrderID pgtype.UUID `json:"order_id"`
+	UserID  string      `json:"user_id"`
+}
+
+type GetOrderForReviewRow struct {
+	SellerID pgtype.UUID `json:"seller_id"`
+	Status   string      `json:"status"`
+}
+
+// Checks if order exists, belongs to user, and is completed
+func (q *Queries) GetOrderForReview(ctx context.Context, arg GetOrderForReviewParams) (GetOrderForReviewRow, error) {
+	row := q.db.QueryRow(ctx, getOrderForReview, arg.OrderID, arg.UserID)
+	var i GetOrderForReviewRow
+	err := row.Scan(&i.SellerID, &i.Status)
+	return i, err
+}
+
 const getOrderItems = `-- name: GetOrderItems :many
 SELECT order_item_id, order_id, food_id, quantity, price_at_purchase, food_name_snapshot FROM user_order_items
 WHERE order_id = $1
@@ -4372,6 +4446,69 @@ func (q *Queries) GetSellerProfileByUserID(ctx context.Context, userID string) (
 		&i.ReviewCount,
 	)
 	return i, err
+}
+
+const getSellerReviews = `-- name: GetSellerReviews :many
+SELECT 
+    r.review_id,
+    r.rating,
+    r.review_text,
+    r.seller_reply,
+    r.created_at,
+    u.user_firstname,
+    u.user_lastname,
+    u.user_avatar_url
+FROM seller_reviews r
+JOIN users u ON r.user_id = u.user_id
+WHERE r.seller_id = $1
+ORDER BY r.created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type GetSellerReviewsParams struct {
+	SellerID pgtype.UUID `json:"seller_id"`
+	Limit    int32       `json:"limit"`
+	Offset   int32       `json:"offset"`
+}
+
+type GetSellerReviewsRow struct {
+	ReviewID      pgtype.UUID        `json:"review_id"`
+	Rating        int32              `json:"rating"`
+	ReviewText    pgtype.Text        `json:"review_text"`
+	SellerReply   pgtype.Text        `json:"seller_reply"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UserFirstname pgtype.Text        `json:"user_firstname"`
+	UserLastname  pgtype.Text        `json:"user_lastname"`
+	UserAvatarUrl pgtype.Text        `json:"user_avatar_url"`
+}
+
+func (q *Queries) GetSellerReviews(ctx context.Context, arg GetSellerReviewsParams) ([]GetSellerReviewsRow, error) {
+	rows, err := q.db.Query(ctx, getSellerReviews, arg.SellerID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSellerReviewsRow
+	for rows.Next() {
+		var i GetSellerReviewsRow
+		if err := rows.Scan(
+			&i.ReviewID,
+			&i.Rating,
+			&i.ReviewText,
+			&i.SellerReply,
+			&i.CreatedAt,
+			&i.UserFirstname,
+			&i.UserLastname,
+			&i.UserAvatarUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getSellerSummaryStats = `-- name: GetSellerSummaryStats :one
@@ -5945,6 +6082,33 @@ type MarkFoodViewedParams struct {
 func (q *Queries) MarkFoodViewed(ctx context.Context, arg MarkFoodViewedParams) error {
 	_, err := q.db.Exec(ctx, markFoodViewed, arg.SessionID, arg.FoodID)
 	return err
+}
+
+const replyToReview = `-- name: ReplyToReview :one
+UPDATE seller_reviews
+SET 
+    seller_reply = $2
+WHERE review_id = $1 AND seller_id = $3
+RETURNING review_id, seller_reply, updated_at
+`
+
+type ReplyToReviewParams struct {
+	ReviewID    pgtype.UUID `json:"review_id"`
+	SellerReply pgtype.Text `json:"seller_reply"`
+	SellerID    pgtype.UUID `json:"seller_id"`
+}
+
+type ReplyToReviewRow struct {
+	ReviewID    pgtype.UUID        `json:"review_id"`
+	SellerReply pgtype.Text        `json:"seller_reply"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ReplyToReview(ctx context.Context, arg ReplyToReviewParams) (ReplyToReviewRow, error) {
+	row := q.db.QueryRow(ctx, replyToReview, arg.ReviewID, arg.SellerReply, arg.SellerID)
+	var i ReplyToReviewRow
+	err := row.Scan(&i.ReviewID, &i.SellerReply, &i.UpdatedAt)
+	return i, err
 }
 
 const revokeAllUserRefreshTokens = `-- name: RevokeAllUserRefreshTokens :exec

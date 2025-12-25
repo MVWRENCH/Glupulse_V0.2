@@ -1,0 +1,79 @@
+<div class="fade-in pb-20 max-w-6xl mx-auto">
+
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-800">Ulasan Pembeli</h2>
+            <p class="text-sm text-gray-500">Pantau kepuasan pelanggan dan reputasi toko.</p>
+        </div>
+        
+        <div class="flex flex-wrap gap-2">
+            <select id="reviewFilter" onchange="applyReviewFilters()" class="bg-white border border-gray-200 text-gray-600 text-sm rounded-xl focus:ring-2 focus:ring-brand-100 focus:border-brand-500 block px-4 py-2.5 outline-none shadow-sm font-medium cursor-pointer hover:border-brand-300 transition">
+                <option value="all">Semua Bintang</option>
+                <option value="5">5 Bintang</option>
+                <option value="4">4 Bintang</option>
+                <option value="3">3 Bintang</option>
+                <option value="2">2 Bintang</option>
+                <option value="1">1 Bintang</option>
+            </select>
+
+            <select id="statusFilter" onchange="applyReviewFilters()" class="bg-white border border-gray-200 text-gray-600 text-sm rounded-xl focus:ring-2 focus:ring-brand-100 focus:border-brand-500 block px-4 py-2.5 outline-none shadow-sm font-medium cursor-pointer hover:border-brand-300 transition">
+                <option value="all">Semua Status</option>
+                <option value="unreplied">Belum Dibalas</option>
+                <option value="replied">Sudah Dibalas</option>
+            </select>
+
+            <select id="sortOrder" onchange="applyReviewFilters()" class="bg-white border border-gray-200 text-gray-600 text-sm rounded-xl focus:ring-2 focus:ring-brand-100 focus:border-brand-500 block px-4 py-2.5 outline-none shadow-sm font-medium cursor-pointer hover:border-brand-300 transition">
+                <option value="newest">Terbaru</option>
+                <option value="oldest">Terlama</option>
+                <option value="highest">Rating Tertinggi</option>
+                <option value="lowest">Rating Terendah</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        
+        <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center relative overflow-hidden">
+            <div class="absolute top-0 right-0 p-4 opacity-10 text-yellow-500 text-9xl -mr-4 -mt-4 pointer-events-none">
+                <i class="fas fa-star"></i>
+            </div>
+            
+            <h3 class="text-6xl font-extrabold text-gray-800 mb-2 tracking-tight" id="stat-avg-rating">0.0</h3>
+            
+            <div class="flex text-yellow-400 text-2xl gap-1 mb-3" id="stat-stars-display">
+                <i class="fas fa-star text-gray-200"></i>
+                <i class="fas fa-star text-gray-200"></i>
+                <i class="fas fa-star text-gray-200"></i>
+                <i class="fas fa-star text-gray-200"></i>
+                <i class="fas fa-star text-gray-200"></i>
+            </div>
+            
+            <p class="text-sm text-gray-500 font-bold uppercase tracking-wide">
+                Total <span id="stat-total-reviews" class="text-gray-800">0</span> Ulasan
+            </p>
+        </div>
+
+        <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col justify-center">
+            <h4 class="font-bold text-gray-800 text-sm mb-5 flex items-center gap-2">
+                <i class="fas fa-chart-bar text-brand-500"></i> Distribusi Rating
+            </h4>
+            
+            <div class="space-y-4" id="star-breakdown-container">
+                <div class="animate-pulse space-y-3">
+                    <div class="flex items-center gap-3"><div class="w-8 h-4 bg-gray-200 rounded"></div><div class="flex-1 h-3 bg-gray-100 rounded-full"></div></div>
+                    <div class="flex items-center gap-3"><div class="w-8 h-4 bg-gray-200 rounded"></div><div class="flex-1 h-3 bg-gray-100 rounded-full"></div></div>
+                    <div class="flex items-center gap-3"><div class="w-8 h-4 bg-gray-200 rounded"></div><div class="flex-1 h-3 bg-gray-100 rounded-full"></div></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div id="reviewsList" class="space-y-6">
+        <div class="text-center py-20 text-gray-400 bg-white rounded-2xl border border-dashed border-gray-200">
+            <i class="fas fa-circle-notch fa-spin text-3xl mb-4 text-brand-200"></i>
+            <p class="font-medium">Sedang memuat ulasan...</p>
+        </div>
+    </div>
+
+</div>

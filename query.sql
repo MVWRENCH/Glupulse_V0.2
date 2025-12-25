@@ -581,6 +581,27 @@ WHERE order_id = $1
   AND status = 'Pending Payment' -- Safety check
 RETURNING order_id, status, payment_status;
 
+-- name: CreateSellerReview :one
+INSERT INTO seller_reviews (
+    order_id,
+    user_id,
+    seller_id,
+    rating,
+    review_text
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+RETURNING review_id, created_at;
+
+-- name: GetOrderForReview :one
+-- Checks if order exists, belongs to user, and is completed
+SELECT seller_id, status 
+FROM user_orders 
+WHERE order_id = $1 AND user_id = $2;
+
+-- name: CheckReviewExists :one
+SELECT EXISTS(SELECT 1 FROM seller_reviews WHERE order_id = $1);
+
 /* ====================================================================
                    Health Profile Queries
 ==================================================================== */
@@ -1817,6 +1838,29 @@ SET
     updated_at = NOW()
 WHERE seller_id = sqlc.arg('seller_id')
 RETURNING *;
+
+-- name: ReplyToReview :one
+UPDATE seller_reviews
+SET 
+    seller_reply = $2
+WHERE review_id = $1 AND seller_id = $3
+RETURNING review_id, seller_reply, updated_at;
+
+-- name: GetSellerReviews :many
+SELECT 
+    r.review_id,
+    r.rating,
+    r.review_text,
+    r.seller_reply,
+    r.created_at,
+    u.user_firstname,
+    u.user_lastname,
+    u.user_avatar_url
+FROM seller_reviews r
+JOIN users u ON r.user_id = u.user_id
+WHERE r.seller_id = $1
+ORDER BY r.created_at DESC
+LIMIT $2 OFFSET $3;
 
 /* ====================================================================
                            Unused Queries

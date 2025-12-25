@@ -113,6 +113,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.GET("/order/history", user.GetUserOrderHistoryHandler)
 	protected.GET("/order/active", user.TrackUserActiveOrdersHandler)
 	protected.POST("/orders/pay", user.SimulatePaymentHandler)
+	protected.POST("/reviews", user.CreateSellerReviewHandler)
 
 	//User Health Data Function Routes
 	protected.GET("/health/profile", user.GetHealthProfileHandler)
@@ -167,6 +168,11 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	//Seller Protected Web Page
 	protected.GET("/seller/dashboard", s.RenderSellerDashboardHandler)
+	protected.GET("/seller/orders", s.RenderSellerDashboardHandler)
+	protected.GET("/seller/menu", s.RenderSellerDashboardHandler)
+	protected.GET("/seller/reports", s.RenderSellerDashboardHandler)
+	protected.GET("/seller/store-reviews", s.RenderSellerDashboardHandler)
+	protected.GET("/seller/store-profile", s.RenderSellerDashboardHandler)
 
 	//Websocket for seller dashboard website client
 	protected.GET("/seller/ws", seller.DashboardSocketHandler)
@@ -186,6 +192,8 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.GET("/seller/stats", seller.GetSellerDashboardStatsHandler)
 	protected.GET("/seller/stats/chart", seller.GetSellerSalesChartHandler)
 	protected.PUT("/seller/profile", seller.UpdateSellerProfileHandler)
+	protected.GET("/seller/reviews", seller.GetSellerReviewsHandler)
+	protected.POST("/seller/reviews/reply/:review_id", seller.ReplyToReviewHandler)
 
 	return e
 }

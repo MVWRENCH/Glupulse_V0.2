@@ -196,22 +196,6 @@ CREATE TYPE public.user_cart_cart_status AS ENUM (
 ALTER TYPE public.user_cart_cart_status OWNER TO postgres;
 
 --
--- Name: user_order_order_status; Type: TYPE; Schema: public; Owner: postgres
---
-
-CREATE TYPE public.user_order_order_status AS ENUM (
-    'Processing',
-    'Shipped',
-    'Delivered',
-    'Rejected',
-    'Cancelled',
-    'Pending Payment'
-);
-
-
-ALTER TYPE public.user_order_order_status OWNER TO postgres;
-
---
 -- Name: user_order_payment_status; Type: TYPE; Schema: public; Owner: postgres
 --
 
@@ -1136,6 +1120,26 @@ CREATE TABLE public.seller_profiles (
 ALTER TABLE public.seller_profiles OWNER TO postgres;
 
 --
+-- Name: seller_reviews; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.seller_reviews (
+    review_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    order_id uuid NOT NULL,
+    user_id character varying(100) NOT NULL,
+    seller_id uuid NOT NULL,
+    rating integer NOT NULL,
+    review_text text,
+    seller_reply text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT seller_reviews_rating_check CHECK (((rating >= 1) AND (rating <= 5)))
+);
+
+
+ALTER TABLE public.seller_reviews OWNER TO postgres;
+
+--
 -- Name: user_activity_logs; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1570,7 +1574,9 @@ CREATE TABLE public.user_orders (
     payment_method character varying(50),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone,
-    seller_notes text
+    seller_notes text,
+    CONSTRAINT check_order_status CHECK (((status)::text = ANY ((ARRAY['Pending Payment'::character varying, 'Waiting for Confirmation'::character varying, 'Preparing'::character varying, 'Ready to Pick Up'::character varying, 'On Delivery'::character varying, 'Completed'::character varying, 'Cancelled'::character varying, 'Rejected'::character varying])::text[]))),
+    CONSTRAINT check_payment_status CHECK (((payment_status)::text = ANY ((ARRAY['Unpaid'::character varying, 'Paid'::character varying, 'Failed'::character varying])::text[])))
 );
 
 
@@ -1978,6 +1984,14 @@ ALTER TABLE ONLY public.seller_profiles
 
 
 --
+-- Name: seller_reviews seller_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.seller_reviews
+    ADD CONSTRAINT seller_reviews_pkey PRIMARY KEY (review_id);
+
+
+--
 -- Name: recommended_activities unique_session_activity; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1999,6 +2013,14 @@ ALTER TABLE ONLY public.recommended_foods
 
 ALTER TABLE ONLY public.user_sleep_logs
     ADD CONSTRAINT unique_user_sleep_date UNIQUE (user_id, sleep_date);
+
+
+--
+-- Name: seller_reviews uq_review_order; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.seller_reviews
+    ADD CONSTRAINT uq_review_order UNIQUE (order_id);
 
 
 --
@@ -2744,6 +2766,20 @@ CREATE INDEX idx_seller_profiles_store_name ON public.seller_profiles USING btre
 
 
 --
+-- Name: idx_seller_reviews_rating; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_seller_reviews_rating ON public.seller_reviews USING btree (rating);
+
+
+--
+-- Name: idx_seller_reviews_seller_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_seller_reviews_seller_id ON public.seller_reviews USING btree (seller_id);
+
+
+--
 -- Name: idx_seller_status; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -3052,6 +3088,30 @@ ALTER TABLE ONLY public.user_cart_items
 
 ALTER TABLE ONLY public.user_cart_items
     ADD CONSTRAINT cart_items_food_id_fkey FOREIGN KEY (food_id) REFERENCES public.foods(food_id) ON DELETE CASCADE;
+
+
+--
+-- Name: seller_reviews fk_reviews_order; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.seller_reviews
+    ADD CONSTRAINT fk_reviews_order FOREIGN KEY (order_id) REFERENCES public.user_orders(order_id) ON DELETE CASCADE;
+
+
+--
+-- Name: seller_reviews fk_reviews_seller; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.seller_reviews
+    ADD CONSTRAINT fk_reviews_seller FOREIGN KEY (seller_id) REFERENCES public.seller_profiles(seller_id) ON DELETE CASCADE;
+
+
+--
+-- Name: seller_reviews fk_reviews_user; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.seller_reviews
+    ADD CONSTRAINT fk_reviews_user FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
 
 
 --

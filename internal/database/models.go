@@ -448,52 +448,6 @@ func (ns NullUserCartCartStatus) Value() (driver.Value, error) {
 	return string(ns.UserCartCartStatus), nil
 }
 
-type UserOrderOrderStatus string
-
-const (
-	UserOrderOrderStatusProcessing     UserOrderOrderStatus = "Processing"
-	UserOrderOrderStatusShipped        UserOrderOrderStatus = "Shipped"
-	UserOrderOrderStatusDelivered      UserOrderOrderStatus = "Delivered"
-	UserOrderOrderStatusRejected       UserOrderOrderStatus = "Rejected"
-	UserOrderOrderStatusCancelled      UserOrderOrderStatus = "Cancelled"
-	UserOrderOrderStatusPendingPayment UserOrderOrderStatus = "Pending Payment"
-)
-
-func (e *UserOrderOrderStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = UserOrderOrderStatus(s)
-	case string:
-		*e = UserOrderOrderStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for UserOrderOrderStatus: %T", src)
-	}
-	return nil
-}
-
-type NullUserOrderOrderStatus struct {
-	UserOrderOrderStatus UserOrderOrderStatus `json:"user_order_order_status"`
-	Valid                bool                 `json:"valid"` // Valid is true if UserOrderOrderStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullUserOrderOrderStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.UserOrderOrderStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.UserOrderOrderStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullUserOrderOrderStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.UserOrderOrderStatus), nil
-}
-
 type UserOrderPaymentStatus string
 
 const (
@@ -893,6 +847,18 @@ type SellerProfile struct {
 	VerifiedAt         pgtype.Timestamptz `json:"verified_at"`
 	AverageRating      pgtype.Numeric     `json:"average_rating"`
 	ReviewCount        pgtype.Int4        `json:"review_count"`
+}
+
+type SellerReview struct {
+	ReviewID    pgtype.UUID        `json:"review_id"`
+	OrderID     pgtype.UUID        `json:"order_id"`
+	UserID      string             `json:"user_id"`
+	SellerID    pgtype.UUID        `json:"seller_id"`
+	Rating      int32              `json:"rating"`
+	ReviewText  pgtype.Text        `json:"review_text"`
+	SellerReply pgtype.Text        `json:"seller_reply"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 // Unified user table supporting both traditional username/password and OAuth authentication

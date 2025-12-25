@@ -15,7 +15,8 @@ const routes = {
     '/seller/menu':      '/static/views/menu.html',
     '/seller/orders':    '/static/views/orders.html',
     '/seller/reports':   '/static/views/reports.html',
-    '/seller/profile':   '/static/views/profile.html',
+    '/seller/store-profile':   '/static/views/profile.html',
+    '/seller/store-reviews':   '/static/views/reviews.html',
     
     // Fallback
     '/': '/static/views/dashboard.html'
@@ -73,8 +74,11 @@ const router = async () => {
         else if (path == '/seller/reports') {
             initReportsPage();
         }
-        else if (path === '/seller/profile') {
+        else if (path === '/seller/store-profile') {
             initProfilePage();
+        }
+        else if (path == '/seller/store-reviews') {
+            initReviewsPage();
         }
 
     } catch (error) {
@@ -206,7 +210,7 @@ async function fetchActiveOrders() {
 // 3. FETCH STATS
 async function fetchStatsAndProfile() {
     try {
-        // Income (Completed Orders Only)
+        // --- A. Income Logic (Existing) ---
         const resHist = await fetch(`${API_BASE_URL}/seller/orders/history?limit=100`);
         if(resHist.ok) {
             const history = await resHist.json();
@@ -215,7 +219,6 @@ async function fetchStatsAndProfile() {
             
             if(Array.isArray(history)) {
                 history.forEach(o => {
-                    // Check valid date and Exact DB Status
                     if (o.created_at && o.status === 'Completed') {
                         const orderDate = new Date(o.created_at).toISOString().split('T')[0];
                         if (orderDate === today) income += o.total_price;
@@ -226,12 +229,18 @@ async function fetchStatsAndProfile() {
             if(statIncome) statIncome.innerText = formatRupiah(income);
         }
 
-        // Profile Rating
+        // --- B. Profile Rating Logic (FIXED) ---
         const resProf = await fetch(`${API_BASE_URL}/seller/profile`);
         if(resProf.ok) {
             const profile = await resProf.json();
+            
+            // KEY FIX: Use 'average_rating' instead of 'rating'
+            const ratingVal = profile.average_rating || 0; 
+            
             const statRating = document.getElementById('stat-rating');
-            if(statRating) statRating.innerText = (profile.rating || 0).toFixed(1);
+            if(statRating) {
+                statRating.innerText = ratingVal.toFixed(1);
+            }
         }
 
     } catch (e) { console.error("Stats Error", e); }
@@ -1638,5 +1647,293 @@ window.setLoading = function(btn, isLoading, originalText = "") {
     } else {
         btn.disabled = false;
         btn.innerHTML = originalText;
+    }
+};
+
+// =========================================================
+//  SECTION: REVIEWS PAGE LOGIC (FIXED)
+// =========================================================
+
+let globalReviews = [];
+
+function initReviewsPage() {
+    console.log("Reviews Page Initialized");
+    loadReviews();
+}
+
+// Attach to window to ensure global access
+window.loadReviews = async function() {
+    const container = document.getElementById('reviewsList');
+    if (!container) return;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/seller/reviews`); 
+        
+        if (!res.ok) throw new Error("Failed to fetch reviews");
+        
+        const data = await res.json();
+        globalReviews = data || []; 
+        
+        // 1. Calculate Stats & Render Bars
+        renderReviewStats(globalReviews);
+        
+        // 2. Render List (Apply default filters)
+        applyReviewFilters();
+
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = `
+            <div class="bg-white rounded-2xl p-10 text-center border border-gray-200">
+                <div class="text-red-100 text-5xl mb-4"><i class="fas fa-exclamation-circle"></i></div>
+                <h3 class="text-lg font-bold text-gray-800">Gagal memuat ulasan</h3>
+                <p class="text-gray-500 mb-6">Terjadi kesalahan saat mengambil data.</p>
+                <button onclick="loadReviews()" class="bg-white border border-gray-300 text-gray-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-gray-50">Coba Lagi</button>
+            </div>`;
+    }
+};
+
+function renderReviewStats(reviews) {
+    const total = reviews.length;
+    
+    // Calculate Average
+    const sum = reviews.reduce((acc, r) => acc + (r.rating || 0), 0);
+    const avg = total > 0 ? (sum / total).toFixed(1) : "0.0";
+    
+    // Update Stats Display
+    const elAvg = document.getElementById('stat-avg-rating');
+    const elTotal = document.getElementById('stat-total-reviews');
+    
+    if (elAvg) elAvg.innerText = avg;
+    if (elTotal) elTotal.innerText = total;
+
+    // Render Big Stars
+    let starsHtml = '';
+    const avgInt = Math.round(avg);
+    const starContainer = document.getElementById('stat-stars-display');
+    
+    if (starContainer) {
+        for(let i=1; i<=5; i++) {
+            starsHtml += `<i class="fas fa-star ${i <= avgInt ? 'text-yellow-400' : 'text-gray-200'}"></i>`;
+        }
+        starContainer.innerHTML = starsHtml;
+    }
+
+    // Calculate Breakdown (5 stars down to 1 star)
+    const counts = {5:0, 4:0, 3:0, 2:0, 1:0};
+    reviews.forEach(r => {
+        const rating = Math.round(r.rating);
+        if(counts[rating] !== undefined) counts[rating]++;
+    });
+
+    // Render Bars
+    const barsContainer = document.getElementById('star-breakdown-container');
+    if (barsContainer) {
+        let barsHtml = '';
+        for(let i=5; i>=1; i--) {
+            const count = counts[i];
+            const percentage = total > 0 ? (count / total) * 100 : 0;
+            
+            barsHtml += `
+                <div class="flex items-center gap-3 text-sm">
+                    <div class="flex items-center gap-1 w-12 flex-shrink-0 font-bold text-gray-600">
+                        <span>${i}</span> <i class="fas fa-star text-yellow-400 text-xs"></i>
+                    </div>
+                    <div class="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div class="h-full bg-yellow-400 rounded-full" style="width: ${percentage}%"></div>
+                    </div>
+                    <div class="w-10 text-right text-gray-400 text-xs font-medium">${count}</div>
+                </div>
+            `;
+        }
+        barsContainer.innerHTML = barsHtml;
+    }
+}
+
+window.applyReviewFilters = function() {
+    const starFilter = document.getElementById('reviewFilter').value;
+    const statusFilter = document.getElementById('statusFilter').value;
+    const sortOrder = document.getElementById('sortOrder').value;
+
+    // 1. Filter
+    let filtered = globalReviews.filter(r => {
+        // Star Filter
+        if (starFilter !== 'all' && Math.round(r.rating) != starFilter) return false;
+        
+        // Status Filter
+        if (statusFilter === 'unreplied' && r.seller_reply) return false;
+        if (statusFilter === 'replied' && !r.seller_reply) return false;
+
+        return true;
+    });
+
+    // 2. Sort
+    filtered.sort((a, b) => {
+        const dateA = new Date(a.created_at);
+        const dateB = new Date(b.created_at);
+
+        switch (sortOrder) {
+            case 'newest': return dateB - dateA;
+            case 'oldest': return dateA - dateB;
+            case 'highest': return b.rating - a.rating;
+            case 'lowest': return a.rating - b.rating;
+            default: return dateB - dateA;
+        }
+    });
+
+    renderReviews(filtered);
+};
+
+function renderReviews(reviews) {
+    const container = document.getElementById('reviewsList');
+    if (!container) return;
+
+    if (reviews.length === 0) {
+        container.innerHTML = `
+            <div class="bg-white rounded-2xl p-16 text-center border border-dashed border-gray-300">
+                <div class="text-gray-200 text-6xl mb-4"><i class="fas fa-star"></i></div>
+                <h3 class="text-lg font-bold text-gray-400">Tidak ada ulasan ditemukan</h3>
+                <p class="text-sm text-gray-400">Coba ubah filter pencarian anda.</p>
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = reviews.map(r => createReviewCard(r)).join('');
+}
+
+function createReviewCard(review) {
+    // Generate Stars
+    let starsHtml = '';
+    for (let i = 1; i <= 5; i++) {
+        starsHtml += `<i class="fas fa-star ${i <= review.rating ? 'text-yellow-400' : 'text-gray-200'} text-sm"></i>`;
+    }
+
+    // Format Date
+    let dateStr = "Baru saja";
+    if(review.created_at) {
+        try {
+            dateStr = new Date(review.created_at).toLocaleDateString('id-ID', {
+                day: 'numeric', month: 'long', year: 'numeric'
+            });
+        } catch(e) {}
+    }
+
+    // Avatar Logic
+    const avatarUrl = review.customer_avatar || `https://ui-avatars.com/api/?name=${review.customer_name}&background=random`;
+
+    // Reply Logic
+    let replySection = '';
+    if (review.seller_reply) {
+        // ALREADY REPLIED
+        replySection = `
+            <div class="mt-4 bg-gray-50 rounded-xl p-4 border border-gray-100 relative">
+                <div class="absolute -top-2 left-6 w-4 h-4 bg-gray-50 border-t border-l border-gray-100 transform rotate-45"></div>
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-xs font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded">Respon Toko</span>
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed">${review.seller_reply}</p>
+            </div>
+        `;
+    } else {
+        // NOT REPLIED YET (Input Form)
+        // Notice 'this' passed to submitReply
+        replySection = `
+            <div class="mt-4 pt-4 border-t border-gray-100" id="reply-box-${review.review_id}">
+                <button onclick="toggleReplyForm('${review.review_id}')" class="text-xs font-bold text-brand-600 hover:text-brand-700 flex items-center gap-2 bg-brand-50 px-3 py-1.5 rounded-lg transition">
+                    <i class="fas fa-reply"></i> Balas
+                </button>
+                
+                <div id="form-${review.review_id}" class="hidden mt-3 animate-fade-in">
+                    <textarea id="input-${review.review_id}" rows="3" class="w-full p-3 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-brand-100 focus:border-brand-500 outline-none resize-none" placeholder="Tulis balasan anda..."></textarea>
+                    <div class="flex justify-end gap-2 mt-2">
+                        <button onclick="toggleReplyForm('${review.review_id}')" class="text-gray-500 text-xs font-bold px-3 py-2 hover:bg-gray-100 rounded-lg">Batal</button>
+                        <button onclick="submitReply('${review.review_id}', this)" class="bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-2">
+                            <span>Kirim</span> <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition">
+            <div class="flex justify-between items-start">
+                <div class="flex gap-4">
+                    <img src="${avatarUrl}" class="w-10 h-10 rounded-full object-cover border border-gray-100 bg-gray-50">
+                    <div>
+                        <h4 class="font-bold text-gray-800 text-sm">${review.customer_name || 'Pelanggan'}</h4>
+                        <div class="flex items-center gap-2 mt-0.5">
+                            <div class="flex gap-0.5">${starsHtml}</div>
+                            <span class="text-[10px] text-gray-400">• ${dateStr}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <p class="text-gray-600 text-sm mt-4 leading-relaxed">${review.review_text || '<span class="italic text-gray-400">Tidak ada komentar tertulis.</span>'}</p>
+
+            ${replySection}
+        </div>
+    `;
+}
+
+// --- UTILS FOR REVIEWS ---
+
+window.toggleReplyForm = function(id) {
+    const form = document.getElementById(`form-${id}`);
+    const btn = document.querySelector(`#reply-box-${id} > button`);
+    
+    if (form.classList.contains('hidden')) {
+        form.classList.remove('hidden');
+        btn.classList.add('hidden');
+    } else {
+        form.classList.add('hidden');
+        btn.classList.remove('hidden');
+    }
+};
+
+// FIX: Accepts 'btnRef' to safely control the button without wiping document.body
+window.submitReply = async function(reviewId, btnRef) {
+    const input = document.getElementById(`input-${reviewId}`);
+    const text = input.value.trim();
+
+    if (!text) {
+        alert("Balasan tidak boleh kosong.");
+        return;
+    }
+
+    // Safe UI Loading State
+    let originalContent = "Kirim";
+    if(btnRef) {
+        originalContent = btnRef.innerHTML;
+        btnRef.disabled = true;
+        btnRef.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/seller/reviews/reply/${reviewId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reply_text: text })
+        });
+
+        if (res.ok) {
+            alert("Balasan berhasil dikirim!");
+            loadReviews(); // Reload list to show the new reply
+        } else {
+            const err = await res.json();
+            alert("Gagal: " + (err.error || "Unknown Error"));
+            if(btnRef) {
+                btnRef.disabled = false;
+                btnRef.innerHTML = originalContent;
+            }
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Terjadi kesalahan koneksi.");
+        if(btnRef) {
+            btnRef.disabled = false;
+            btnRef.innerHTML = originalContent;
+        }
     }
 };
