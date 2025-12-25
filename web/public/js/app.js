@@ -1121,7 +1121,7 @@ function renderCharts(data) {
 }
 
 // =========================================================
-//  SECTION: PROFILE PAGE LOGIC (UPDATED)
+//  SECTION: PROFILE PAGE LOGIC
 // =========================================================
 
 let profileMap = null;
@@ -1421,41 +1421,170 @@ async function saveProfileData() {
 }
 
 // ---------------------------------------------------------
-//  PART B: USER ACCOUNT (Personal Info & Security)
+//  PART B: USER ACCOUNT (Personal Info, Security & Google)
 // ---------------------------------------------------------
 
 // 1. Fetch User Data
 async function loadUserAccountData() {
     try {
-        // Matches protected.GET("/profile")
         const res = await fetch(`${API_BASE_URL}/profile`); 
         if(!res.ok) throw new Error("Failed to load user profile");
         
         const data = await res.json();
-        const profile = data.profile; // Matches UserProfileResponse
+        const profile = data.profile; 
 
         // Populate Fields
         if(document.getElementById('display_user_id')) {
             document.getElementById('display_user_id').innerText = profile.user_id.substring(0, 8);
         }
-        document.getElementById('account_username').value = profile.username;
-        document.getElementById('account_email').value = profile.email;
-        document.getElementById('account_first_name').value = profile.first_name;
-        document.getElementById('account_last_name').value = profile.last_name;
+        document.getElementById('account_username').value = profile.username || '';
+        document.getElementById('account_email').value = profile.email || '';
+        document.getElementById('account_first_name').value = profile.first_name || '';
+        document.getElementById('account_last_name').value = profile.last_name || '';
 
-        // Email Verification Badge
         const badge = document.getElementById('email_verified_badge');
         if(badge) {
             if(profile.is_email_verified) badge.classList.remove('hidden');
             else badge.classList.add('hidden');
         }
 
+        // Render Google Button (Logic Updated)
+        renderGoogleConnectSection(profile.is_google_linked);
+
     } catch (e) {
         console.error("User Profile Error:", e);
     }
 }
 
-// 2. Update Personal Profile (First/Last Name)
+// 2. Render Google Section
+function renderGoogleConnectSection(isLinked) {
+    const container = document.getElementById('google-connect-container');
+    if(!container) return;
+
+    if (isLinked) {
+        // State: LINKED -> Show Custom Disconnect UI
+        container.innerHTML = `
+            <div class="flex items-center justify-between px-4 py-3 bg-white border border-green-200 rounded-xl">
+                <div class="flex items-center gap-3">
+                    <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-5 h-5">
+                    <div>
+                        <p class="text-sm font-bold text-gray-800">Google</p>
+                        <p class="text-[10px] text-green-600 font-bold">Terhubung</p>
+                    </div>
+                </div>
+                <button onclick="unlinkGoogleAccount()" class="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition border border-red-100">
+                    Putuskan
+                </button>
+            </div>
+        `;
+    } else {
+        // State: NOT LINKED -> Render Container for Google Button
+        container.innerHTML = `<div id="googleBtnWrapper" class="w-full flex justify-center"></div>`;
+        
+        // Initialize Google Button
+        setTimeout(() => {
+            initGoogleLinkButton();
+        }, 100);
+    }
+}
+
+// 3. Initialize Google Library & Render Button
+function initGoogleLinkButton() {
+    if (typeof google === 'undefined') {
+        console.warn("Google library not loaded yet. Waiting...");
+        setTimeout(initGoogleLinkButton, 500); // Retry if script is loading
+        return;
+    }
+
+    const CLIENT_ID = "269881508037-qt0cqfbeemtdj5ar4nuh0i2p4lonr5sf.apps.googleusercontent.com";
+
+    try {
+        google.accounts.id.initialize({
+            client_id: CLIENT_ID,
+            callback: handleGoogleLinkCallback,
+            context: 'use' // Hints that this is for an existing user
+        });
+
+        // Render the Official Google Button
+        // We customize it to fit the UI width
+        google.accounts.id.renderButton(
+            document.getElementById("googleBtnWrapper"),
+            { 
+                theme: "outline", 
+                size: "large", 
+                width: "400", // Will try to fill width
+                text: "continue_with",
+                shape: "rectangular",
+                logo_alignment: "left"
+            }
+        );
+    } catch (e) {
+        console.error("Google Button Render Error:", e);
+    }
+}
+
+// 4. Callback: Handle the ID Token returned by Google
+async function handleGoogleLinkCallback(response) {
+    // Show global loading if possible, or just alert
+    // Since the button is controlled by Google, we can't easily add a spinner inside it.
+    
+    const idToken = response.credential;
+    
+    try {
+        const res = await fetch(`${API_BASE_URL}/auth/mobile/google/link`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id_token: idToken })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+            alert("Berhasil menghubungkan akun Google!");
+            loadUserAccountData(); // Refresh UI
+        } else {
+            alert("Gagal menghubungkan: " + (data.error || "Unknown error"));
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Terjadi kesalahan koneksi.");
+    }
+}
+
+// 5. Unlink Google Account
+window.unlinkGoogleAccount = async function() {
+    const password = prompt("Masukkan password anda untuk konfirmasi pemutusan akun Google:");
+    if (password === null) return;
+    if (!password) {
+        alert("Password dibutuhkan untuk keamanan.");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/auth/mobile/google/unlink`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: password })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+            alert("Akun Google berhasil diputus.");
+            loadUserAccountData();
+        } else {
+            if (data.error_code === "PASSWORD_NOT_SET") {
+                alert("Gagal: Password belum diatur pada akun ini.");
+            } else {
+                alert("Gagal: " + (data.error || "Password salah."));
+            }
+        }
+    } catch(e) {
+        alert("Terjadi kesalahan koneksi.");
+    }
+};
+
+// 6. Update Personal Profile
 async function updatePersonalProfile() {
     const payload = {
         first_name: document.getElementById('account_first_name').value,
@@ -1471,7 +1600,7 @@ async function updatePersonalProfile() {
 
         if(res.ok) {
             alert("Informasi pribadi berhasil diupdate.");
-            loadUserAccountData(); // Refresh to ensure sync
+            loadUserAccountData();
         } else {
             const data = await res.json();
             alert(data.error || "Gagal update profil.");
@@ -1481,7 +1610,7 @@ async function updatePersonalProfile() {
     }
 }
 
-// 3. Update Username
+// 7. Update Username
 async function submitUsernameChange() {
     const newUsername = document.getElementById('new_username_input').value;
     const btn = document.getElementById('btnSaveUsername');
@@ -1511,7 +1640,7 @@ async function submitUsernameChange() {
     }
 }
 
-// 4. Request Email Change
+// 8. Request Email Change
 async function submitEmailChange() {
     const newEmail = document.getElementById('new_email_input').value;
     const password = document.getElementById('email_confirm_password').value;
@@ -1541,7 +1670,7 @@ async function submitEmailChange() {
     }
 }
 
-// 5. Change Password
+// 9. Change Password
 async function submitPasswordChange() {
     const currentPass = document.getElementById('current_password').value;
     const newPass = document.getElementById('new_password').value;
