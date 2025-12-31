@@ -1,0 +1,130 @@
+<div class="space-y-6 animate-fade-in">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-bold text-white tracking-tight">Seller Management</h2>
+            <p class="text-sm text-gray-400 mt-1">Monitor, manage, and audit all registered store partners.</p>
+        </div>
+        <div class="flex items-center gap-2">
+             <button onclick="loadSellersList()" class="bg-gray-800 hover:bg-gray-700 text-white p-2.5 rounded-xl border border-gray-700 transition shadow-sm group">
+                <i class="fas fa-sync-alt group-hover:rotate-180 transition-transform duration-500"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-store"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Total Sellers</p>
+                    <p class="text-xl font-bold text-white" id="m_total_sellers">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-green-500/20 text-green-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Active</p>
+                    <p class="text-xl font-bold text-white" id="m_active_sellers">0</p>
+                </div>
+            </div>
+        </div>
+         <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-orange-500/20 text-orange-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-pause-circle"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Suspended</p>
+                    <p class="text-xl font-bold text-white" id="m_suspended_sellers">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-yellow-500/20 text-yellow-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-clock"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Verification Pending</p>
+                    <p class="text-xl font-bold text-white" id="m_pending_sellers">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-xl overflow-hidden">
+        
+        <div class="p-4 border-b border-gray-700 flex flex-col sm:flex-row gap-3 bg-gray-900/50 items-center">
+            
+            <div class="relative flex-1 w-full">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+                <input type="text" id="sellerMgmtSearch" oninput="filterSellersList()" placeholder="Search by store name or city..." 
+                    class="w-full bg-gray-800/50 border border-gray-600 text-white text-sm rounded-xl py-2.5 pl-9 pr-4 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all placeholder-gray-500 hover:bg-gray-800">
+            </div>
+
+            <div class="relative group w-full sm:w-auto">
+                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-400 transition-colors">
+                    <i class="fas fa-filter text-xs"></i>
+                </div>
+                <select id="sellerMgmtStatusFilter" onchange="filterSellersList()" 
+                    class="appearance-none w-full sm:w-40 bg-gray-800 border border-gray-600 text-gray-200 text-sm font-medium rounded-xl py-2.5 pl-9 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 cursor-pointer hover:bg-gray-750 transition-all">
+                    <option value="all">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="blacklisted">Blacklisted</option>
+                </select>
+                <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
+                    <i class="fas fa-chevron-down text-[10px]"></i>
+                </div>
+            </div>
+
+            <div class="relative group w-full sm:w-auto">
+                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-400 transition-colors">
+                    <i class="fas fa-sort-amount-down text-xs"></i>
+                </div>
+                <select id="sellerMgmtSort" onchange="filterSellersList()" 
+                    class="appearance-none w-full sm:w-40 bg-gray-800 border border-gray-600 text-gray-200 text-sm font-medium rounded-xl py-2.5 pl-9 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 cursor-pointer hover:bg-gray-750 transition-all">
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="az">Name A-Z</option>
+                </select>
+                <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
+                    <i class="fas fa-chevron-down text-[10px]"></i>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-gray-900/80 text-xs uppercase text-gray-400 font-bold tracking-wider">
+                    <tr>
+                        <th class="p-4 border-b border-gray-700">Store</th>
+                        <th class="p-4 border-b border-gray-700">Location</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Verification</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Admin Status</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Joined</th>
+                        <th class="p-4 border-b border-gray-700 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="sellersMgmtTableBody" class="divide-y divide-gray-700 text-sm bg-gray-800/20">
+                    <tr><td colspan="6" class="p-8 text-center text-gray-500">Loading sellers...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="p-4 border-t border-gray-700 bg-gray-900/50 flex justify-between items-center text-xs text-gray-500">
+            <span id="sellerCountDisplay">Showing 0 sellers</span>
+            <div class="flex gap-2">
+                <button class="px-3 py-1.5 bg-gray-800 rounded-lg border border-gray-700 hover:text-white hover:border-gray-500 disabled:opacity-50 transition-colors" disabled>Prev</button>
+                <button class="px-3 py-1.5 bg-gray-800 rounded-lg border border-gray-700 hover:text-white hover:border-gray-500 disabled:opacity-50 transition-colors" disabled>Next</button>
+            </div>
+        </div>
+    </div>
+</div>

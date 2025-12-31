@@ -1,0 +1,125 @@
+<div class="space-y-6 animate-fade-in">
+    
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-extrabold text-white tracking-tight">Settings</h2>
+            <p class="text-sm text-gray-400 mt-1">Manage your account preferences and system configurations.</p>
+        </div>
+        <div class="hidden md:flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-xl">
+            <span class="w-2 h-2 rounded-full bg-green-500"></span>
+            <span class="text-xs font-bold text-gray-400 uppercase tracking-wide">System Online</span>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <div class="lg:col-span-1 space-y-6">
+            
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg overflow-hidden">
+                <div class="p-6 border-b border-gray-700 bg-gray-900/50 flex flex-col items-center text-center">
+                    <div class="relative">
+                        <img id="settingsAvatar" src="https://ui-avatars.com/api/?name=Admin&background=random" class="w-24 h-24 rounded-full border-4 border-gray-800 shadow-xl mb-3">
+                        <button class="absolute bottom-0 right-0 bg-blue-600 p-2 rounded-full text-white hover:bg-blue-500 transition shadow-lg border-2 border-gray-800">
+                            <i class="fas fa-camera text-xs"></i>
+                        </button>
+                    </div>
+                    <h3 class="text-lg font-bold text-white" id="settingsName">Super Admin</h3>
+                    <p class="text-xs text-gray-500 font-mono bg-gray-800 px-2 py-1 rounded mt-1" id="settingsRole">SUPER_ADMIN</p>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Username</label>
+                        <input type="text" id="set_username" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-blue-500 outline-none transition">
+                    </div>
+                    <button onclick="updateAdminProfile()" id="btnSaveProfile" class="w-full bg-gray-700 hover:bg-white hover:text-gray-900 text-gray-200 font-bold py-3 rounded-xl transition shadow-lg">
+                        Update Profile
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg p-6">
+                <h4 class="text-sm font-bold text-white uppercase tracking-wider mb-4 border-b border-gray-700 pb-2">
+                    <i class="fas fa-lock text-red-500 mr-2"></i> Security
+                </h4>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Current Password</label>
+                        <input type="password" id="set_curr_pass" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-red-500 outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">New Password</label>
+                        <input type="password" id="set_new_pass" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-red-500 outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Confirm New Password</label>
+                        <input type="password" id="set_confirm_pass" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-red-500 outline-none transition">
+                    </div>
+                    <button onclick="updateAdminPassword()" id="btnSavePass" class="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition shadow-lg">
+                        Change Password
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="lg:col-span-2 space-y-6">
+            
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg p-6">
+                <h4 class="text-sm font-bold text-white uppercase tracking-wider mb-6 border-b border-gray-700 pb-2">
+                    <i class="fas fa-cogs text-blue-500 mr-2"></i> System Configuration
+                </h4>
+                
+                <div class="space-y-6">
+                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl border border-gray-700">
+                        <div>
+                            <h5 class="text-sm font-bold text-white">Maintenance Mode</h5>
+                            <p class="text-xs text-gray-500 mt-1">Prevent users from accessing the app. Admins still have access.</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="sys_maintenance" onchange="toggleSystemConfig('maintenance')" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl border border-gray-700">
+                        <div>
+                            <h5 class="text-sm font-bold text-white">Allow New User Registration</h5>
+                            <p class="text-xs text-gray-500 mt-1">If disabled, new users cannot sign up via the mobile app.</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="sys_registration" onchange="toggleSystemConfig('registration')" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl border border-gray-700">
+                        <div>
+                            <h5 class="text-sm font-bold text-white">Verbose Debug Logging</h5>
+                            <p class="text-xs text-gray-500 mt-1">Log all API request bodies. Recommended only for troubleshooting.</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="sys_debug" onchange="toggleSystemConfig('debug')" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-red-500/5 rounded-2xl border border-red-500/20 shadow-lg p-6">
+                <h4 class="text-sm font-bold text-red-500 uppercase tracking-wider mb-4 border-b border-red-500/20 pb-2">
+                    <i class="fas fa-exclamation-triangle mr-2"></i> Danger Zone
+                </h4>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h5 class="text-sm font-bold text-white">Clear System Cache</h5>
+                        <p class="text-xs text-gray-500 mt-1">Flush Redis cache and session stores. Users may be logged out.</p>
+                    </div>
+                    <button onclick="clearSystemCache()" class="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition shadow">
+                        Clear Cache
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>

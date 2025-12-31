@@ -10,6 +10,7 @@ import (
 	"time"
 
 	user "Glupulse_V0.2/internal/User"
+	"Glupulse_V0.2/internal/admin"
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
 	seller "Glupulse_V0.2/internal/seller"
@@ -63,6 +64,12 @@ func main() {
 
 	seller.InitSellerPackage(database.Dbpool)
 
+	admin.InitAdminPackage(database.Dbpool)
+
+	go admin.StartServerHealthBroadcaster()
+
+	go admin.StartDashboardBroadcaster(database.Dbpool)
+	
 	server := server.NewServer()
 
 	// Create a done channel to signal when the shutdown is complete

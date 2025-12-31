@@ -284,12 +284,37 @@ type ResetRequest struct {
 	Email string `json:"email" form:"email" validate:"required,email"`
 }
 
-// CompleteResetRequest used to confirm OTP and set new password
+// CompleteResetRequest used to confirm OTP and set new passwordAdminRegisterHandler
 type CompleteResetRequest struct {
 	UserID          string `json:"user_id" form:"user_id" validate:"required"`
 	OtpCode         string `json:"otp_code" form:"otp_code" validate:"required"`
 	NewPassword     string `json:"new_password" form:"new_password" validate:"required"`
 	ConfirmPassword string `json:"confirm_password" form:"confirm_password" validate:"required"`
+}
+
+// Structs for Request/Response
+type AdminLoginRequest struct {
+	Username string `json:"username" validate:"required"`
+	Password string `json:"password" validate:"required"`
+}
+
+type AdminRegisterRequest struct {
+	Username  string `json:"username" validate:"required,min=4,alphanum"`
+	Password  string `json:"password" validate:"required,min=8"`
+	Role      string `json:"role" validate:"required,oneof=super_admin moderator"` // Enforce specific roles
+	SecretKey string `json:"secret_key" validate:"required"`                       // Security gate
+}
+
+// AdminClaims extends standard claims to include Role
+type AdminCustomClaims struct {
+	AdminID  string `json:"admin_id"`
+	Username string `json:"username"`
+	Role     string `json:"role"` // e.g., 'super_admin', 'moderator'
+	jwt.RegisteredClaims
+}
+
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
 func InitAuth(dbpool *pgxpool.Pool) error {
@@ -471,8 +496,6 @@ func MobileGoogleAuthHandler(c echo.Context) error {
 		UserRawData:        rawDataJSON,
 		UserLastLoginAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		UserEmailAuth:      pgtype.Text{String: userInfo.Email, Valid: true},
-		UserUsername:       pgtype.Text{String: "", Valid: false},
-		UserPassword:       pgtype.Text{String: "", Valid: false},
 		EmailVerifiedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 	})
 
@@ -646,6 +669,17 @@ func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 					return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not found"})
 				}
 				return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
+			}
+
+			if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
+				log.Warn().Msgf("Blocked access for %s user: %s", user.Status.UserStatus, user.UserID)
+				if isMobile {
+					return c.JSON(http.StatusForbidden, map[string]string{
+						"error": "Account is " + string(user.Status.UserStatus),
+						"code":  "ACCOUNT_DISABLED",
+					})
+				}
+				return c.Redirect(http.StatusTemporaryRedirect, "/seller/login?error=account_disabled")
 			}
 
 			c.Set("user", &user)
@@ -903,6 +937,10 @@ func useRefreshToken(ctx context.Context, c echo.Context, token string, r *http.
 	if err != nil {
 		log.Error().Err(err).Msgf("User not found for refresh token: %s", rt.UserID)
 		return nil, "", fmt.Errorf("user not found")
+	}
+
+	if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
+		return nil, "", fmt.Errorf("account is %s", user.Status.UserStatus)
 	}
 
 	// Generate new refresh token
@@ -1402,6 +1440,12 @@ func LoginHandler(c echo.Context) error {
 			},
 		})
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid username or password"})
+	}
+
+	if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": "Account is " + string(user.Status.UserStatus),
+		})
 	}
 
 	// Generate and send OTP
@@ -1993,7 +2037,6 @@ func VerifyOTPHandler(c echo.Context) error {
 			UserEmail:       pgtype.Text{String: pending.Email, Valid: true},
 			UserDob:         dob,
 			UserGender:      gender,
-			UserAccounttype: pgtype.Int2{Int16: 0, Valid: true},
 			IsEmailVerified: pgtype.Bool{Bool: true, Valid: true},
 			EmailVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		})
@@ -2849,157 +2892,147 @@ func StopCleanup() {
 /* ====================================================================
                    			Seller Authentication
 ==================================================================== */
+func SellerActionGuard(next echo.HandlerFunc) echo.HandlerFunc {
+    return func(c echo.Context) error {
+        user, ok := c.Get("user").(*database.User)
+        if !ok {
+            return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+        }
 
-// The Seller web client will initiate the OAuth flow, and Google will redirect the user
+        // 2. Only perform this check for sellers (AccountType 2)
+        if user.UserAccounttype.Int16 == 2 {
+            ctx := c.Request().Context()
+
+            // 3. Fetch status using the corrected UUID type
+            profile, err := queries.GetSellerProfileByUserID(ctx, user.UserID)
+            if err != nil {
+                log.Error().Err(err).Msg("Failed to fetch seller profile in guard")
+                return next(c)
+            }
+
+            // 4. Block "Write" operations if suspended
+            if profile.AdminStatus.Valid && 
+               profile.AdminStatus.SellerAdminStatus == "suspended" && 
+               c.Request().Method != http.MethodGet {
+                
+                return c.JSON(http.StatusForbidden, map[string]interface{}{
+                    "error":  "Your store is currently suspended.",
+                    "reason": profile.SuspensionReason.String,
+                    "code":   "STORE_SUSPENDED",
+                })
+            }
+        }
+
+        return next(c)
+    }
+}
+
 func SellerWebGoogleAuthCallbackHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
 	provider := c.Param("provider")
 	if provider == "" {
 		provider = "google"
 	}
 
-	req := c.Request()
-	req = req.WithContext(context.WithValue(req.Context(), "role_target", "seller"))
-
-	// 1. Complete OAuth Authentication (using Goth library)
-	gothUser, err := gothic.CompleteUserAuth(c.Response().Writer, req)
+	// 1. Complete OAuth Authentication via Goth
+	gothUser, err := gothic.CompleteUserAuth(c.Response().Writer, c.Request())
 	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryOAuth,
-			Action:   "seller_oauth_callback_error",
-			Message:  fmt.Sprintf("Seller OAuth callback error: %s", err.Error()),
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"provider": provider, "error": err.Error()},
-		})
-
-		// If session is lost, redirect back to auth start
-		if strings.Contains(err.Error(), "select a provider") {
-			log.Info().Msg("Session lost, redirecting to auth start")
-			return c.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("/auth/%s", provider))
-		}
-
-		return c.String(http.StatusInternalServerError, fmt.Sprintf("Error completing auth: %v", err))
+		log.Error().Err(err).Msg("OAuth completion failed")
+		return c.Redirect(http.StatusTemporaryRedirect, "/seller/login?error=auth_failed")
 	}
 
-	// 2. Check for traditional account conflict
-	existingTraditionalUser, err := queries.GetUserByEmail(ctx, pgtype.Text{String: gothUser.Email, Valid: true})
-	if err == nil && existingTraditionalUser.UserID != "" && existingTraditionalUser.UserProvider.String == "" {
-		// Traditional account exists. Don't allow OAuth.
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(existingTraditionalUser.UserID),
-			Category: LogCategoryOAuth,
-			Action:   "oauth_login_conflict",
-			Message:  "OAuth login attempt detected existing traditional user email",
-			Level:    LogLevelWarning, // This is now an expected flow, so LogLevelInfo is also fine
-			Metadata: map[string]interface{}{
-				"email":            gothUser.Email,
-				"existing_user_id": existingTraditionalUser.UserID,
-			},
-		})
-
-		return c.JSON(http.StatusConflict, map[string]string{
-			"error_code": "ACCOUNT_EXISTS_TRADITIONAL",
-			"message":    "This email is already registered with username and password. Please login using your credentials and link with google account.",
-		})
-
-	}
-
-	// 3. Upsert User
+	// 2. Prepare Data for Upsert
 	rawDataJSON, _ := json.Marshal(gothUser.RawData)
 	now := time.Now()
-	userID := uuid.New().String()
 
+	// 3. Robust Upsert: Handles New Users, Traditional Linkers, and Returning Users
+	// sqlc UpsertOAuthUser should use "ON CONFLICT (user_email) DO UPDATE"
 	user, err := queries.UpsertOAuthUser(ctx, database.UpsertOAuthUserParams{
-		UserID:             userID,
+		UserID:             uuid.New().String(),
 		UserEmail:          pgtype.Text{String: gothUser.Email, Valid: true},
-		UserNameAuth:       pgtype.Text{String: gothUser.Name, Valid: gothUser.Name != ""},
-		UserAvatarUrl:      pgtype.Text{String: gothUser.AvatarURL, Valid: gothUser.AvatarURL != ""},
+		UserNameAuth:       pgtype.Text{String: gothUser.Name, Valid: true},
+		UserAvatarUrl:      pgtype.Text{String: gothUser.AvatarURL, Valid: true},
 		UserProvider:       pgtype.Text{String: gothUser.Provider, Valid: true},
 		UserProviderUserID: pgtype.Text{String: gothUser.UserID, Valid: true},
 		UserRawData:        rawDataJSON,
 		UserLastLoginAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		UserEmailAuth:      pgtype.Text{String: gothUser.Email, Valid: true},
-		UserUsername:       pgtype.Text{String: "", Valid: false},
-		UserPassword:       pgtype.Text{String: "", Valid: false},
+		EmailVerifiedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 	})
 
 	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(userID),
-			Category: LogCategoryOAuth,
-			Action:   "oauth_upsert_error",
-			Message:  "Error upserting OAuth user",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{
-				"provider": provider,
-				"email":    gothUser.Email,
-				"error":    err.Error(),
-			},
-		})
-		return c.String(http.StatusInternalServerError, "Error saving user data")
+		log.Error().Err(err).Msg("Database upsert failed during OAuth")
+		return c.String(http.StatusInternalServerError, "Failed to synchronize account data")
 	}
 
-	// 4. Role Assignment: Assign 'seller' role upon registration/login
-	targetRole := "seller"
-	if err = queries.AssignUserRole(ctx, database.AssignUserRoleParams{
+	// 4. Identity Level Security Check (Banned/Inactive)
+	if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
+		status := string(user.Status.UserStatus)
+
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryLogin,
+			Action:   fmt.Sprintf("seller_login_%s", status),
+			Message:  fmt.Sprintf("Google login blocked. Account status: %s", status),
+			Level:    LogLevelWarning,
+		})
+
+		// Redirect with specific error flag
+		return c.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("/seller/login?error=account_%s", status))
+	}
+
+	// 5. Business Level Security Check (Seller Profile)
+	sellerProfile, err := queries.GetSellerProfileByUserID(ctx, user.UserID)
+	if err == nil {
+		if sellerProfile.AdminStatus.Valid && sellerProfile.AdminStatus.SellerAdminStatus == "blacklisted" {
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(user.UserID),
+				Category: LogCategoryLogin,
+				Action:   "seller_login_blacklisted",
+				Message:  "Attempted login by blacklisted seller",
+				Level:    LogLevelCritical,
+				Metadata: map[string]interface{}{"reason": sellerProfile.SuspensionReason.String},
+			})
+			return c.Redirect(http.StatusTemporaryRedirect, "/seller/login?error=store_blacklisted")
+		}
+		if sellerProfile.AdminStatus.Valid && sellerProfile.AdminStatus.SellerAdminStatus == "suspended" {
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(user.UserID),
+				Category: LogCategoryLogin,
+				Action:   "seller_login_suspended",
+				Message:  "Suspended seller logged in",
+				Level:    LogLevelInfo,
+				Metadata: map[string]interface{}{"reason": sellerProfile.SuspensionReason.String},
+			})
+		}
+	}
+
+	// 6. Role Check & Redirection Logic
+	hasShop, _ := queries.CheckIfUserHasShop(ctx, user.UserID)
+
+	if !hasShop {
+		// Fresh User or Buyer-only account: Send to registration to create Seller Profile
+		// We set cookies here so they stay logged in during the registration form process
+		accessToken, _ := generateAccessToken(&user)
+		refreshToken, _ := generateAndStoreRefreshToken(ctx, c, queries, user.UserID, c.Request())
+		setAuthCookies(c, accessToken, refreshToken)
+
+		return c.Redirect(http.StatusTemporaryRedirect, "/seller/register")
+	}
+
+	// 7. Success Path: Existing Seller Logging In
+	// Ensure they have the 'seller' role (Role ID: 2)
+	_ = queries.AssignUserRole(ctx, database.AssignUserRoleParams{
 		UserID:   user.UserID,
-		RoleName: targetRole,
-	}); err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: LogCategoryError,
-			Action:   "seller_role_assign_failed",
-			Message:  fmt.Sprintf("Failed to assign %s role after user creation", targetRole),
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"email": gothUser.Email, "error": err.Error()},
-		})
-		return c.Redirect(http.StatusTemporaryRedirect, os.Getenv("/seller/login")+"?error=role_assign_failed")
-	}
+		RoleName: "seller",
+	})
 
-	// 5. Generate and Store Tokens
-	accessToken, err := generateAccessToken(&user)
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: LogCategoryError,
-			Action:   "token_generation_error",
-			Message:  "Error generating access token for OAuth user",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.String(http.StatusInternalServerError, "Error generating access token")
-	}
-
+	accessToken, _ := generateAccessToken(&user)
 	refreshToken, err := generateAndStoreRefreshToken(ctx, c, queries, user.UserID, c.Request())
 	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: LogCategoryError,
-			Action:   "token_generation_error",
-			Message:  "Error generating refresh token for OAuth user",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.String(http.StatusInternalServerError, "Error generating refresh token")
+		return c.String(http.StatusInternalServerError, "Token generation failed")
 	}
 
-	// Log successful OAuth login
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: LogCategoryOAuth,
-		Action:   "oauth_login_success",
-		Message:  fmt.Sprintf("OAuth user successfully authenticated via %s", provider),
-		Level:    LogLevelInfo,
-		Metadata: map[string]interface{}{
-			"provider": provider,
-			"email":    gothUser.Email,
-			"name":     gothUser.Name,
-		},
-	})
-
-	// Set cookies and redirect
 	setAuthCookies(c, accessToken, refreshToken)
 	return c.Redirect(http.StatusTemporaryRedirect, "/seller/dashboard")
 }
@@ -3326,7 +3359,6 @@ func VerifySellerOTPHandler(c echo.Context) error {
 			UserEmail:       pgtype.Text{String: pending.Email, Valid: true},
 			UserDob:         dob,
 			UserGender:      gender,
-			UserAccounttype: pgtype.Int2{Int16: 1, Valid: true}, // 1 = Seller Account
 			IsEmailVerified: pgtype.Bool{Bool: true, Valid: true},
 			EmailVerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		})
@@ -3485,6 +3517,56 @@ func VerifySellerOTPHandler(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "User not found"})
 		}
 
+		// --- ADD THIS CHECK TO PREVENT INACTIVE SELLER LOGIN ---
+		if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
+			status := string(user.Status.UserStatus) // e.g., "suspended", "banned", "deactivated"
+
+			LogAuthActivity(ctx, c, AuthLogEntry{
+				UserID:   utility.StringPtr(user.UserID),
+				Category: LogCategoryLogin,
+				Action:   fmt.Sprintf("seller_login_%s", status),
+				Message:  fmt.Sprintf("Login blocked. Account status: %s", status),
+				Level:    LogLevelWarning,
+			})
+
+			// Return specific error code to frontend
+			return c.JSON(http.StatusForbidden, map[string]string{
+				"error":    fmt.Sprintf("account_%s", status), // e.g. "account_suspended"
+				"message":  fmt.Sprintf("Your account has been %s.", status),
+				"redirect": fmt.Sprintf("/seller/login?error=account_%s", status),
+			})
+		}
+
+		// 2. Business Level Check: Prevent 'blacklisted' sellers from the 'seller_profiles' table
+		sellerProfile, err := queries.GetSellerProfileByUserID(ctx, user.UserID)
+		if err == nil {
+			if sellerProfile.AdminStatus.Valid && sellerProfile.AdminStatus.SellerAdminStatus == "blacklisted" {
+				LogAuthActivity(ctx, c, AuthLogEntry{
+					UserID:   utility.StringPtr(user.UserID),
+					Category: LogCategoryLogin,
+					Action:   "seller_login_blacklisted",
+					Message:  "Attempted login by blacklisted seller",
+					Level:    LogLevelCritical,
+					Metadata: map[string]interface{}{"reason": sellerProfile.SuspensionReason.String},
+				})
+				return c.JSON(http.StatusForbidden, map[string]string{
+					"error":    "store_blacklisted",
+					"message":  "Your store account has been permanently terminated.",
+					"redirect": "/seller/login?error=store_blacklisted",
+				})
+			}
+			if sellerProfile.AdminStatus.Valid && sellerProfile.AdminStatus.SellerAdminStatus == "suspended" {
+				LogAuthActivity(ctx, c, AuthLogEntry{
+					UserID:   utility.StringPtr(user.UserID),
+					Category: LogCategoryLogin,
+					Action:   "seller_login_suspended",
+					Message:  "Suspended seller logged in",
+					Level:    LogLevelInfo,
+					Metadata: map[string]interface{}{"reason": sellerProfile.SuspensionReason.String},
+				})
+			}
+		}
+
 		// SECURITY CHECK: Is this user actually a seller?
 		hasShop, err := queries.CheckIfUserHasShop(ctx, user.UserID)
 		if err != nil {
@@ -3538,6 +3620,7 @@ func VerifySellerOTPHandler(c echo.Context) error {
 				"username": user.UserUsername.String,
 			},
 		})
+
 	}
 
 	// Update last login
@@ -3561,7 +3644,7 @@ func VerifySellerOTPHandler(c echo.Context) error {
 		Email:       user.UserEmail.String,
 		FirstName:   user.UserFirstname.String,
 		LastName:    user.UserLastname.String,
-		AccountType: user.UserAccounttype.Int16, // Should be 1 for seller
+		AccountType: user.UserAccounttype.Int16,
 	}
 
 	if user.UserDob.Valid {
@@ -3609,4 +3692,286 @@ func VerifySellerOTPHandler(c echo.Context) error {
 		"redirect_url": "/seller/dashboard", // Seller dashboard
 		"user":         userResponse,
 	})
+}
+
+/* ====================================================================
+                   			Admin Authentication
+==================================================================== */
+
+func generateAdminAccessToken(adminID, username, role string) (string, error) {
+	claims := &AdminCustomClaims{
+		AdminID:  adminID,
+		Username: username,
+		Role:     role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			// Admins get a short session for security (refresh token handles renewal)
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * 15)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "glupulse-admin",
+		},
+	}
+
+	// Sign the token with your existing global secret key
+	// Ensure 'sessionSecret' is defined in this package or passed as an argument
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(sessionSecret)
+}
+
+// generateAndStoreAdminRefreshToken creates a secure random token, hashes it, and stores the hash.
+func generateAndStoreAdminRefreshToken(c echo.Context, adminID pgtype.UUID) (string, error) {
+	ctx := c.Request().Context()
+
+	// 1. Generate 32 random bytes
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", err
+	}
+
+	// 2. Create the token string that will be sent to the ADMIN CLIENT
+	// This is the "Key" the admin holds. We NEVER store this raw string.
+	rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
+
+	// 3. Hash the ORIGINAL raw bytes
+	// We store this hash. If DB is leaked, hackers can't reverse this to get the Key.
+	hash := sha256.Sum256(tokenBytes)
+	tokenHash := base64.URLEncoding.EncodeToString(hash[:])
+
+	// 4. Extract Metadata
+	deviceInfo := c.Request().UserAgent()
+	realIP := c.RealIP() // Or utility.GetRealIP(c) if you have that helper
+
+	// 5. Store the HASH in the database
+	// Note: We use 'RefreshToken' column to store the HASH now.
+	_, err := queries.CreateAdminRefreshToken(ctx, database.CreateAdminRefreshTokenParams{
+		AdminID:      adminID,
+		RefreshToken: tokenHash,
+		UserAgent:    deviceInfo,
+		ClientIp:     realIP,
+		ExpiresAt: pgtype.Timestamptz{
+			Time:  time.Now().Add(time.Hour * 24 * 7),
+			Valid: true,
+		},
+	})
+
+	if err != nil {
+		c.Logger().Error("Database error creating admin refresh token: ", err)
+		return "", err
+	}
+
+	// 6. Return the RAW token to the user
+	return rawToken, nil
+}
+
+func getSessionSecret() []byte {
+	secret := os.Getenv("SESSION_SECRET")
+
+	// 2. Safety Check
+	if secret == "" {
+		return []byte("unsafe_development_secret_key_change_this_immediately")
+	}
+
+	return []byte(secret)
+}
+
+// AdminJwtAuthMiddleware validates tokens for the /admin/* routes
+func AdminJwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var tokenString string
+
+		// 1. Try Authorization Header (Standard API)
+		authHeader := c.Request().Header.Get("Authorization")
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+
+		// 2. Fallback: Try Query Param (For WebSockets)
+		// This allows ws://localhost:8080/admin/ws?token=YOUR_TOKEN
+		if tokenString == "" {
+			tokenString = c.QueryParam("token")
+		}
+
+		// If still empty, unauthorized
+		if tokenString == "" {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing Token"})
+		}
+
+		// 3. Parse Token
+		claims := &AdminCustomClaims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return getSessionSecret(), nil
+		})
+
+		// 4. Validation
+		if err != nil || !token.Valid {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or Expired Admin Token"})
+		}
+
+		// 5. Set Context
+		c.Set("admin_id", claims.AdminID)
+		c.Set("role", claims.Role)
+		c.Set("username", claims.Username)
+
+		return next(c)
+	}
+}
+
+func AdminRefreshTokenHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	var req RefreshTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+	}
+
+	// 1. HASH the incoming raw token to find it in the DB
+	// We need to decode base64 first to get bytes, then hash, then re-encode
+	rawBytes, err := base64.URLEncoding.DecodeString(req.RefreshToken)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid token format"})
+	}
+
+	hash := sha256.Sum256(rawBytes)
+	tokenHash := base64.URLEncoding.EncodeToString(hash[:])
+
+	// 2. Verify Token exists in DB (Lookup by HASH)
+	storedToken, err := queries.GetAdminRefreshToken(ctx, tokenHash)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired session"})
+	}
+
+	// 3. Fetch Admin Details
+	admin, err := queries.GetAdminByID(ctx, storedToken.AdminID)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Admin account not found"})
+	}
+
+	// 4. Issue NEW Access Token
+	newAccessToken, _ := generateAdminAccessToken(
+		utility.UuidToString(admin.AdminID),
+		admin.Username,
+		admin.Role,
+	)
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"access_token": newAccessToken,
+	})
+}
+
+// AdminLoginHandler with Secure Hashed Refresh Token
+func AdminLoginHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	var req AdminLoginRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+	}
+
+	// 1. Validate Credentials
+	admin, err := queries.GetAdminByUsername(ctx, req.Username)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
+	}
+
+	// Check Password
+	if err := bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)); err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
+	}
+
+	// 2. Generate Access Token (JWT)
+	accessToken, err := generateAdminAccessToken(
+		utility.UuidToString(admin.AdminID),
+		admin.Username,
+		admin.Role,
+	)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate access token"})
+	}
+
+	// 3. Generate & Store Refresh Token (Using the new secure function)
+	// This returns the RAW token string to give to the user
+	refreshToken, err := generateAndStoreAdminRefreshToken(c, admin.AdminID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate session"})
+	}
+
+	// 4. Update Last Login
+	_ = queries.UpdateAdminLastLogin(ctx, admin.AdminID)
+
+	// 5. Return Response
+	return c.JSON(http.StatusOK, map[string]string{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken, // The user gets the Key (Raw Token)
+		"username":      admin.Username,
+		"role":          admin.Role,
+	})
+}
+
+func AdminRegisterHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	var req AdminRegisterRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+	}
+
+	// SECURITY CHECK: Verify Secret Key
+	// ideally, load this from os.Getenv("ADMIN_SECRET_KEY")
+	expectedSecret := os.Getenv("ADMIN_SECRET_KEY")
+
+	if req.SecretKey != expectedSecret {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Forbidden: Invalid Secret Key"})
+	}
+
+	// 1. Hash Password
+	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Encryption failed"})
+	}
+
+	// 2. Create Admin
+	newAdmin, err := queries.CreateAdmin(ctx, database.CreateAdminParams{
+		Username:     req.Username,
+		PasswordHash: string(hashedPwd),
+		Role:         req.Role,
+	})
+
+	if err != nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists"})
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{
+		"message":  "Admin account created successfully",
+		"username": newAdmin.Username,
+		"role":     newAdmin.Role,
+	})
+}
+
+// AdminLogoutHandler invalidates the session by deleting the refresh token
+func AdminLogoutHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// We reuse the same struct as the Refresh Token handler
+	var req RefreshTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+	}
+
+	// 1. Decode and Hash the incoming Raw Token
+	// We must hash the request token to find the matching record in the DB.
+	rawBytes, err := base64.URLEncoding.DecodeString(req.RefreshToken)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid token format"})
+	}
+
+	hash := sha256.Sum256(rawBytes)
+	tokenHash := base64.URLEncoding.EncodeToString(hash[:])
+
+	// 2. Delete the token from DB
+	// This makes the Refresh Token unusable immediately.
+	err = queries.DeleteAdminRefreshToken(ctx, tokenHash)
+	if err != nil {
+		c.Logger().Error("Logout failed (DB Error): ", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Logout failed"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Logged out successfully"})
 }

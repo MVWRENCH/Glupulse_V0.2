@@ -1,0 +1,110 @@
+<div class="fade-in space-y-6">
+    
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-bold text-white tracking-tight">User Management</h2>
+            <p class="text-sm text-gray-400 mt-1">Monitor user base, manage access, and review activity.</p>
+        </div>
+        <div class="flex items-center gap-2">
+             <button onclick="initUserManagement()" class="bg-gray-800 hover:bg-gray-700 text-white p-2.5 rounded-xl border border-gray-700 transition shadow-sm group">
+                <i class="fas fa-sync-alt group-hover:rotate-180 transition-transform duration-500"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-users"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Total Users</p>
+                    <p class="text-xl font-bold text-white" id="u_total_users">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-green-500/20 text-green-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-user-check"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Active</p>
+                    <p class="text-xl font-bold text-white" id="u_active_users">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-orange-500/20 text-orange-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-user-clock"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Suspended</p>
+                    <p class="text-xl font-bold text-white" id="u_suspended_users">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-user-slash"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Restricted</p>
+                    <p class="text-xl font-bold text-white" id="u_banned_users">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden shadow-lg">
+        
+        <div class="p-4 border-b border-gray-700 flex flex-col sm:flex-row gap-3 bg-gray-900/50 items-center">
+            <div class="relative flex-1 w-full">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+                <input type="text" id="userSearchInput" oninput="filterUsers()" placeholder="Search by name, email, or user ID..." 
+                    class="w-full bg-gray-800/50 border border-gray-600 text-white text-sm rounded-xl py-2.5 pl-9 pr-4 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all placeholder-gray-500 hover:bg-gray-800">
+            </div>
+            
+            <div class="relative group w-full sm:w-auto">
+                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-400 transition-colors">
+                    <i class="fas fa-filter text-xs"></i>
+                </div>
+                <select id="userStatusFilter" onchange="filterUsers()" 
+                    class="appearance-none w-full sm:w-48 bg-gray-800 border border-gray-600 text-gray-200 text-sm font-medium rounded-xl py-2.5 pl-9 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 cursor-pointer hover:bg-gray-750 transition-all">
+                    <option value="all">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="banned">Banned</option>
+                    <option value="deactivated">Deactivated</option>
+                </select>
+                <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
+                    <i class="fas fa-chevron-down text-[10px]"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-gray-900/80 text-xs uppercase text-gray-400 font-bold tracking-wider">
+                    <tr>
+                        <th class="p-4 border-b border-gray-700">User Identity</th>
+                        <th class="p-4 border-b border-gray-700">Roles</th>
+                        <th class="p-4 border-b border-gray-700">Status</th>
+                        <th class="p-4 border-b border-gray-700">Joined Date</th>
+                        <th class="p-4 border-b border-gray-700 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="user_table_body" class="text-sm divide-y divide-gray-700 bg-gray-800/20">
+                    <tr>
+                        <td colspan="5" class="p-8 text-center text-gray-500">
+                            Loading users...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

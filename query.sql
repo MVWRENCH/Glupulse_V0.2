@@ -69,23 +69,22 @@ INSERT INTO users (
     user_raw_data,
     user_last_login_at,
     user_email_auth,
-    user_username,
-    user_password,
     is_email_verified,
     email_verified_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10
 )
-ON CONFLICT (user_provider, user_provider_user_id) 
+ON CONFLICT (user_email)
 DO UPDATE SET 
-    -- Update fields based on EXCLUDED (the row that was attempted to be inserted)
-    user_email = COALESCE(EXCLUDED.user_email, users.user_email),
+    user_provider = EXCLUDED.user_provider,
+    user_provider_user_id = EXCLUDED.user_provider_user_id,
     user_name_auth = EXCLUDED.user_name_auth,
     user_avatar_url = EXCLUDED.user_avatar_url,
     user_raw_data = EXCLUDED.user_raw_data,
     user_last_login_at = EXCLUDED.user_last_login_at,
     is_email_verified = true,
-    email_verified_at = COALESCE(users.email_verified_at, EXCLUDED.email_verified_at)
+    email_verified_at = COALESCE(users.email_verified_at, EXCLUDED.email_verified_at),
+    updated_at = NOW()
 RETURNING *;
 
 -- name: UpdateUserGoogleLink :exec
@@ -407,9 +406,13 @@ SELECT
     f.food_name,
     f.price,
     f.photo_url,
-    f.seller_id
+    f.seller_id,
+    f.is_available,
+    f.is_approved, -- Return this so Frontend can gray it out if false
+    s.verification_status -- Return this so Frontend can gray it out if !verified
 FROM user_cart_items ci
 JOIN foods f ON ci.food_id = f.food_id
+JOIN seller_profiles s ON f.seller_id = s.seller_id
 WHERE ci.cart_id = $1;
 
 -- name: UpsertCartItem :one
@@ -504,14 +507,20 @@ WHERE food_id = $1;
 
 -- name: GetSellerProfile :one
 SELECT * FROM seller_profiles
-WHERE seller_id = $1;
+WHERE seller_id = $1 
+  AND verification_status = 'verified'
+  AND is_active = true;
 
 -- name: ListAllAvailableFoods :many
 -- Retrieves a list of all food items currently marked as available
-SELECT *
-FROM foods
-WHERE is_available = true AND is_active = true
-ORDER BY food_name;
+SELECT f.*
+FROM foods f
+JOIN seller_profiles s ON f.seller_id = s.seller_id
+WHERE f.is_available = true 
+  AND f.is_active = true 
+  AND f.is_approved = 'verified'             -- Food must be approved by Admin
+  AND s.verification_status = 'verified' -- Seller must be verified
+ORDER BY f.food_name;
 
 -- name: ListFoodCategories :many
 SELECT category_id, category_code, display_name, description 
@@ -578,8 +587,8 @@ SET
     payment_status = 'Paid'
 WHERE order_id = $1 
   AND user_id = $2 
-  AND status = 'Pending Payment' -- Safety check
-RETURNING order_id, status, payment_status;
+  AND status = 'Pending Payment'
+RETURNING order_id, status, payment_status, seller_id;
 
 -- name: CreateSellerReview :one
 INSERT INTO seller_reviews (
@@ -1321,8 +1330,12 @@ Ordering:
 Primary: Low glycemic load first (safer for blood sugar)
 Secondary: High fiber (better for glucose control)
 */
-SELECT * FROM foods
-WHERE is_available = true
+SELECT f.* FROM foods f
+JOIN seller_profiles s ON f.seller_id = s.seller_id
+WHERE f.is_available = true
+    AND f.is_active = true
+    AND f.is_approved = 'verified'             -- Admin Approval Check
+    AND s.verification_status = 'verified' -- Seller Verification Check
     AND (
         sqlc.narg('excluded_food_ids')::uuid[] IS NULL 
         OR NOT (food_id = ANY(sqlc.narg('excluded_food_ids')::uuid[]))
@@ -1644,11 +1657,28 @@ INSERT INTO foods (
 RETURNING *;
 
 -- name: GetFoodByID :one
-SELECT * FROM foods WHERE food_id = $1;
+SELECT f.*
+FROM foods f
+JOIN seller_profiles s ON f.seller_id = s.seller_id
+WHERE f.food_id = $1
+  AND f.is_active = true;
 
--- name: ListFoodsBySeller :many
+-- name: GetSellerMenuPublic :many
+-- FOR USERS: View a store's menu. MUST check is_approved and verification_status.
+SELECT f.* FROM foods f
+JOIN seller_profiles s ON f.seller_id = s.seller_id
+WHERE f.seller_id = $1 
+  AND f.is_active = true 
+  AND f.is_approved = 'verified'             -- User can ONLY see approved foods
+  AND s.verification_status = 'verified' -- User can ONLY see verified shops
+ORDER BY f.created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: GetSellerInventory :many
+-- FOR SELLERS: View their own list. Shows pending/unapproved items too.
 SELECT * FROM foods 
-WHERE seller_id = $1 AND is_active = true
+WHERE seller_id = $1 
+  AND is_active = true -- Seller generally wants to see active items (even if pending approval)
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
@@ -1661,7 +1691,8 @@ SET
     currency = COALESCE(sqlc.narg('currency'), currency),
     photo_url = COALESCE(sqlc.narg('photo_url'), photo_url),
     thumbnail_url = COALESCE(sqlc.narg('thumbnail_url'), thumbnail_url),
-    is_available = COALESCE(sqlc.narg('is_available'), is_available),
+    is_available = COALESCE(sqlc.narg('is_available'), is_available), -- In Stock / Out of Stock
+    is_active = COALESCE(sqlc.narg('is_active'), is_active),          -- Deleted / Not Deleted (Reactivation)
     stock_count = COALESCE(sqlc.narg('stock_count'), stock_count),
     tags = COALESCE(sqlc.narg('tags'), tags),
     serving_size = COALESCE(sqlc.narg('serving_size'), serving_size),
@@ -1833,9 +1864,7 @@ SET
     
     -- Images (URLs)
     logo_url = COALESCE(sqlc.narg('logo_url'), logo_url),
-    banner_url = COALESCE(sqlc.narg('banner_url'), banner_url),
-    
-    updated_at = NOW()
+    banner_url = COALESCE(sqlc.narg('banner_url'), banner_url)
 WHERE seller_id = sqlc.arg('seller_id')
 RETURNING *;
 
@@ -1863,6 +1892,500 @@ ORDER BY r.created_at DESC
 LIMIT $2 OFFSET $3;
 
 /* ====================================================================
+                           Admin Queries
+==================================================================== */
+
+-- name: CreateAdmin :one
+INSERT INTO admins (username, password_hash, role)
+VALUES ($1, $2, $3)
+RETURNING admin_id, username, role, created_at;
+
+-- name: GetAdminByUsername :one
+SELECT * FROM admins WHERE username = $1;
+
+-- name: GetAdminByID :one
+SELECT * FROM admins WHERE admin_id = $1;
+
+-- name: UpdateAdminLastLogin :exec
+UPDATE admins 
+SET last_login_at = NOW() 
+WHERE admin_id = $1;
+
+-- name: CreateAdminRefreshToken :one
+INSERT INTO admin_refresh_tokens (
+    admin_id, refresh_token, user_agent, client_ip, expires_at
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+RETURNING id;
+
+-- name: GetAdminRefreshToken :one
+SELECT * FROM admin_refresh_tokens 
+WHERE refresh_token = $1 AND is_blocked = false AND expires_at > NOW();
+
+-- name: DeleteAdminRefreshToken :exec
+DELETE FROM admin_refresh_tokens WHERE refresh_token = $1;
+
+-- name: RevokeAllAdminTokens :exec
+-- Useful for "Reset Password" or "Security Panic" scenarios
+DELETE FROM admin_refresh_tokens WHERE admin_id = $1;
+
+-- name: GetDashboardStats :one
+-- Fetches the 4 key numbers for the top of the dashboard
+SELECT
+    (SELECT COUNT(*) FROM users WHERE user_accounttype = 0) AS total_users,
+    (SELECT COUNT(*) FROM seller_profiles WHERE verification_status = 'pending') AS pending_sellers,
+    (SELECT COUNT(*) FROM foods WHERE is_approved = 'pending' AND is_active = true) AS pending_foods,
+    (SELECT COALESCE(SUM(total_price), 0)::float8 FROM user_orders 
+     WHERE status = 'Completed' AND created_at >= CURRENT_DATE) AS revenue_today;
+
+-- name: GetAdminNeedsAttention :one
+-- Fetches specific lists for the "ToDo" section
+SELECT 
+    (SELECT json_agg(t) FROM (
+        SELECT seller_id, store_name, created_at 
+        FROM seller_profiles 
+        WHERE verification_status = 'pending' 
+        ORDER BY created_at ASC LIMIT 5
+    ) t) AS pending_sellers,
+    (SELECT json_agg(t) FROM (
+        SELECT f.food_id, f.food_name, s.store_name, f.created_at
+        FROM foods f
+        JOIN seller_profiles s ON f.seller_id = s.seller_id
+        WHERE f.is_approved = 'pending' AND f.is_active = true
+        ORDER BY f.created_at ASC LIMIT 5
+    ) t) AS pending_foods;
+
+-- name: GetGlobalSecurityLogs :many
+-- Adapted from: GetFailedLoginAttempts (Removed user_id filter)
+SELECT 
+    log_id,
+    user_id,
+    ip_address,
+    user_agent,
+    created_at,
+    log_message,
+    log_action,
+    log_level
+FROM logs_auth
+WHERE log_level IN ('warning', 'error', 'critical')
+ORDER BY created_at DESC
+LIMIT 10;
+
+-- name: VerifySeller :exec
+UPDATE seller_profiles 
+SET 
+    verification_status = $2, 
+    rejection_reason = $3,
+    verified_at = $4 
+WHERE seller_id = $1;
+
+-- name: UpdateFoodStatus :one
+-- Approve or Reject food. Returns seller_id so we can notify them via WebSocket.
+UPDATE foods 
+SET 
+    is_approved = $2,
+    rejection_reason = $3
+WHERE food_id = $1
+RETURNING seller_id;
+
+-- name: GetPendingFoodByID :one
+SELECT *
+FROM foods
+WHERE food_id = $1
+  AND is_active = true
+  AND is_approved = 'pending';
+
+-- name: GetPendingSellers :many
+-- Fetches all sellers awaiting verification
+SELECT * FROM seller_profiles
+WHERE verification_status = 'pending'
+ORDER BY created_at ASC;
+
+-- name: GetPendingFoods :many
+SELECT f.*, s.store_name
+FROM foods f
+JOIN seller_profiles s ON f.seller_id = s.seller_id
+WHERE f.is_approved = 'pending' 
+  AND f.is_active = true
+ORDER BY f.created_at ASC;
+
+-- name: AdminGetUsersList :many
+-- Global list for management dashboard
+SELECT 
+    u.user_id, 
+    u.user_username, 
+    u.user_email, 
+    u.status, 
+    u.created_at,
+    COALESCE(STRING_AGG(r.role_name, ', '), '') AS roles
+FROM users u
+LEFT JOIN user_roles ur ON u.user_id = ur.user_id
+LEFT JOIN roles r ON ur.role_id = r.role_id
+GROUP BY u.user_id
+ORDER BY u.created_at DESC;
+
+-- name: AdminUpdateUserStatus :exec
+-- The Ban/Suspend logic
+UPDATE users
+SET 
+    status = $2,
+    status_reason = $3,
+    status_updated_at = NOW()
+WHERE user_id = $1;
+
+-- name: AdminUpdateInternalNotes :exec
+UPDATE users SET admin_notes = $2 WHERE user_id = $1;
+
+-- name: AdminForceUpdatePassword :exec
+UPDATE users 
+SET 
+    user_password = $2 
+WHERE user_id = $1;
+
+-- name: GetAuthLogsByUserID :many
+SELECT * FROM logs_auth 
+WHERE user_id = $1 
+ORDER BY created_at DESC;
+
+-- name: AdminGetUserDetails :one
+-- Basic profile without sensitive internal tokens
+SELECT 
+    user_id, user_firstname, user_lastname, user_email, user_username,
+    user_dob, user_gender, status, admin_notes, created_at, 
+    user_last_login_at, is_email_verified
+FROM users WHERE user_id = $1;
+
+-- name: AdminGetUserOrderStats :one
+-- Calculates metrics for CS troubleshooting
+SELECT 
+    COUNT(order_id)::int as total_orders,
+    COALESCE(SUM(total_price), 0)::float8 as total_spent,
+    COUNT(order_id) FILTER (WHERE status = 'Completed')::int as successful_orders,
+    ROUND(
+        (COUNT(order_id) FILTER (WHERE status = 'Completed')::float8 / 
+        NULLIF(COUNT(order_id), 0)::float8) * 100
+    )::float8 as success_rate
+FROM user_orders 
+WHERE user_id = $1;
+
+-- name: AdminGetHealthSafetyInfo :one
+-- Fetches ONLY the safety-critical health data
+SELECT 
+    condition_id, dietary_pattern, food_allergies, 
+    food_intolerances, foods_to_avoid, dietary_restrictions,
+    has_hypertension, has_kidney_disease
+FROM user_health_profiles 
+WHERE user_id = $1;
+
+-- name: AdminGetUserOrders :many
+-- Comprehensive order history for CS troubleshooting
+SELECT 
+    o.order_id, 
+    o.total_price, 
+    o.status AS order_status, 
+    o.payment_status, 
+    o.created_at, 
+    o.seller_id,
+    s.store_name AS seller_name,
+    s.store_phone_number AS seller_contact
+FROM user_orders o
+LEFT JOIN seller_profiles s ON o.seller_id = s.seller_id
+WHERE o.user_id = $1
+ORDER BY o.created_at DESC;
+
+-- name: AdminGetOrderItems :many
+-- To see exactly what food items are in a dispute
+SELECT 
+    oi.order_item_id,
+    oi.food_id,
+    f.food_name,
+    oi.quantity,
+    oi.price_at_purchase
+FROM user_order_items oi
+JOIN foods f ON oi.food_id = f.food_id
+WHERE oi.order_id = $1;
+
+-- name: AdminGetSellersList :many
+-- Get all sellers for the dashboard
+SELECT seller_id, store_name, store_slug, city, verification_status, admin_status, created_at
+FROM seller_profiles
+ORDER BY created_at DESC;
+
+-- name: AdminGetSellerDetail :one
+-- Get full details for a specific seller
+SELECT 
+    seller_id, 
+    user_id, 
+    store_name, 
+    store_slug, 
+    store_description, 
+    store_phone_number, 
+    store_email, 
+    address_line1, 
+    address_line2, 
+    district, 
+    city, 
+    province, 
+    postal_code, 
+    latitude, 
+    longitude, 
+    gmaps_link, 
+    cuisine_type, 
+    price_range, 
+    business_hours::jsonb as business_hours, -- Cast to jsonb for raw output
+    verification_status, 
+    verified_at, 
+    admin_status, 
+    suspension_reason, 
+    admin_notes, 
+    created_at, 
+    updated_at
+FROM seller_profiles 
+WHERE seller_id = $1;
+
+-- name: AdminGetSellerOrderStats :one
+-- Get monthly revenue and total order count for a seller
+SELECT 
+    COUNT(order_id)::int as total_orders,
+    COALESCE(SUM(total_price), 0)::float8 as total_revenue,
+    COUNT(order_id) FILTER (WHERE created_at >= date_trunc('month', CURRENT_DATE))::int as monthly_order_count,
+    COALESCE(SUM(total_price) FILTER (WHERE created_at >= date_trunc('month', CURRENT_DATE)), 0)::float8 as monthly_revenue
+FROM user_orders
+WHERE seller_id = $1 AND status = 'Completed';
+
+-- name: AdminGetSellerOrderHistory :many
+-- Detailed list of all orders associated with this seller
+SELECT 
+    o.order_id, 
+    o.user_id, 
+    u.user_firstname, 
+    u.user_lastname, 
+    o.total_price, 
+    o.status, 
+    o.payment_status, 
+    o.created_at
+FROM user_orders o
+JOIN users u ON o.user_id = u.user_id
+WHERE o.seller_id = $1
+ORDER BY o.created_at DESC;
+
+-- name: AdminUpdateSellerStatus :exec
+-- Suspend or Blacklist a seller
+UPDATE seller_profiles
+SET 
+    admin_status = $2,
+    suspension_reason = $3
+WHERE seller_id = $1;
+
+-- name: AdminUpdateSellerNotes :exec
+-- Update internal administrative notes
+UPDATE seller_profiles 
+SET admin_notes = $2 
+WHERE seller_id = $1;
+
+-- name: AdminGetSellerReviews :many
+-- List reviews for moderation
+SELECT 
+    r.review_id, r.rating, r.review_text, r.created_at, r.seller_reply,
+    u.user_firstname, u.user_lastname
+FROM seller_reviews r
+JOIN users u ON r.user_id = u.user_id
+WHERE r.seller_id = $1
+ORDER BY r.created_at DESC;
+
+-- name: AdminDeleteReview :exec
+-- Delete review violating rules (will not affect rating if calculated on-the-fly)
+DELETE FROM seller_reviews WHERE review_id = $1;
+
+-- name: AdminGetSellerMenu :many
+-- Fetch all products belonging to a seller for administrative audit
+SELECT *
+FROM foods
+WHERE seller_id = $1 AND is_active = true
+ORDER BY created_at DESC;
+
+-- name: AdminListAllFoods :many
+-- List all foods for audit, including seller store name
+SELECT 
+    f.food_id, f.food_name, f.seller_id, s.store_name, 
+    f.carbs_grams, f.sugar_grams, f.fiber_grams, f.glycemic_load,
+    f.is_approved, f.is_available, f.is_active, f.created_at
+FROM foods f
+JOIN seller_profiles s ON f.seller_id = s.seller_id
+ORDER BY f.created_at DESC;
+
+-- name: AdminSetFoodVisibility :exec
+-- Admin can force-disable a food item (e.g., if reported for health safety)
+UPDATE foods 
+SET is_active = $2
+WHERE food_id = $1;
+
+-- name: AdminDeleteFood :exec
+-- Hard delete a food item
+DELETE FROM foods WHERE food_id = $1;
+
+-- name: GetAIAccuracyStats :one
+-- Calculate average confidence and distribution of user feedback for the last 30 days
+SELECT 
+    COUNT(*)::INT as total_sessions,
+    ROUND(AVG(ai_confidence_score)::NUMERIC, 4)::FLOAT8 as avg_confidence_score,
+    
+    COUNT(*) FILTER (WHERE overall_feedback IN ('helpful', 'very_helpful'))::INT as positive_count,
+    COUNT(*) FILTER (WHERE overall_feedback = 'neutral')::INT as neutral_count,
+    COUNT(*) FILTER (WHERE overall_feedback = 'not_helpful')::INT as negative_count,
+    
+    -- FIX: Cast the division result to NUMERIC
+    ROUND(
+        ((COUNT(*) FILTER (WHERE overall_feedback IN ('helpful', 'very_helpful'))::FLOAT / 
+        NULLIF(COUNT(*), 0)) * 100)::NUMERIC, 2
+    )::FLOAT8 as helpfulness_rate
+FROM recommendation_sessions
+WHERE created_at >= NOW() - INTERVAL '30 days';
+
+-- name: GetAIUsageChartData :many
+-- Data for Daily Usage Line Chart
+SELECT 
+    date_trunc('day', created_at)::date as day,
+    COUNT(*)::INT as total_requests
+FROM recommendation_sessions
+WHERE created_at >= NOW() - INTERVAL '14 days'
+GROUP BY day
+ORDER BY day ASC;
+
+-- name: GetAISuccessFailureStats :one
+-- Data for Success/Failure Pie Chart
+-- Success = helpful/very_helpful, Failure = not_helpful, Neutral = neutral/null
+SELECT 
+    COUNT(*) FILTER (WHERE overall_feedback IN ('helpful', 'very_helpful'))::INT as success_count,
+    COUNT(*) FILTER (WHERE overall_feedback = 'not_helpful')::INT as failure_count,
+    COUNT(*) FILTER (WHERE overall_feedback IS NULL OR overall_feedback = 'neutral')::INT as neutral_count
+FROM recommendation_sessions
+WHERE created_at >= NOW() - INTERVAL '30 days';
+
+-- name: GetAIUsageTrends :many
+-- View daily usage trends and model distribution
+SELECT 
+    date_trunc('day', created_at) as usage_date,
+    ai_model_used,
+    COUNT(*)::INT as total_requests
+FROM recommendation_sessions
+WHERE created_at >= NOW() - INTERVAL '30 days'
+GROUP BY usage_date, ai_model_used
+ORDER BY usage_date DESC;
+
+-- name: GetDetailedSessionAudit :one
+-- Detailed audit of a specific session including user info
+SELECT 
+    rs.*,
+    u.user_firstname, u.user_lastname, u.user_email
+FROM recommendation_sessions rs
+JOIN users u ON rs.user_id = u.user_id
+WHERE rs.session_id = $1;
+
+-- name: GetFoodRecommendationsBySession :many
+SELECT rf.*, f.food_name, f.carbs_grams, f.glycemic_load
+FROM recommended_foods rf
+JOIN foods f ON rf.food_id = f.food_id
+WHERE rf.session_id = $1
+ORDER BY rf.recommendation_rank ASC;
+
+-- name: GetActivityRecommendationsBySession :many
+SELECT ra.*, a.activity_name, a.met_value
+FROM recommended_activities ra
+JOIN activities a ON ra.activity_id = a.id
+WHERE ra.session_id = $1
+ORDER BY ra.recommendation_rank ASC;
+
+-- name: AdminListAllSessions :many
+-- List all recommendation sessions with user details for the admin dashboard
+SELECT 
+    rs.session_id,
+    rs.user_id,
+    u.user_firstname,
+    u.user_lastname,
+    rs.requested_types,
+    rs.ai_model_used,
+    rs.ai_confidence_score,
+    rs.overall_feedback,
+    rs.created_at
+FROM recommendation_sessions rs
+JOIN users u ON rs.user_id = u.user_id
+ORDER BY rs.created_at DESC;
+
+-- name: AdminListAllAuthLogs :many
+-- List every authentication log entry using the logs_auth schema
+SELECT 
+    log_id, 
+    user_id, 
+    log_category, 
+    log_action, 
+    log_message, 
+    log_level, 
+    ip_address, 
+    user_agent, 
+    metadata, 
+    created_at
+FROM logs_auth
+ORDER BY created_at DESC;
+
+-- name: AdminClearOldAuthLogs :exec
+-- Delete logs older than a specific interval to save database space
+DELETE FROM logs_auth 
+WHERE created_at < NOW() - $1::interval;
+
+-- name: ListAllAdmins :many
+-- List all administrators for the management table
+SELECT admin_id, username, role, last_login_at, created_at 
+FROM admins 
+ORDER BY created_at ASC;
+
+-- name: UpdateAdminRole :one
+-- Change an admin's access level (e.g., from admin to super_admin)
+UPDATE admins 
+SET role = $1
+WHERE admin_id = $2 
+RETURNING admin_id, username, role;
+
+-- name: DeleteAdmin :exec
+-- Remove an administrator's access
+DELETE FROM admins WHERE admin_id = $1;
+
+-- name: GetDatabaseStatus :one
+-- Checks DB connectivity and basic health metrics without pg_settings
+SELECT 
+    now()::timestamp as current_time,
+    pg_is_in_recovery() as is_readonly;
+
+-- name: UpdateAdminUsername :one
+UPDATE admins 
+SET username = $2
+WHERE admin_id = $1
+RETURNING admin_id, username;
+
+-- name: UpdateAdminPassword :exec
+UPDATE admins 
+SET password_hash = $2, updated_at = NOW()
+WHERE admin_id = $1;
+
+-- name: GetSystemSetting :one
+-- Get the boolean value of a specific system setting (e.g., 'maintenance_mode')
+SELECT value 
+FROM system_settings 
+WHERE key = $1;
+
+-- name: UpdateSystemSetting :exec
+-- Update a global system toggle
+UPDATE system_settings 
+SET value = $2, updated_at = NOW() 
+WHERE key = $1;
+
+-- name: GetAllSystemSettings :many
+-- Fetch all settings to populate the Admin Dashboard toggles
+SELECT key, value 
+FROM system_settings;
+
+/* ====================================================================
                            Unused Queries
 ==================================================================== */
 -- name: GetUserActiveRefreshTokens :many
@@ -1877,45 +2400,8 @@ UPDATE users_refresh_tokens
 SET replaced_by_token_id = $2
 WHERE id = $1;
 
--- name: GetAuthLogsByUserID :many
-SELECT * FROM logs_auth
-WHERE user_id = $1
-ORDER BY created_at DESC
-LIMIT $2 OFFSET $3;
-
--- name: GetAuthLogsByCategory :many
-SELECT * FROM logs_auth
-WHERE log_category = $1
-ORDER BY created_at DESC
-LIMIT $2 OFFSET $3;
-
--- name: GetAuthLogsByDateRange :many
-SELECT * FROM logs_auth
-WHERE created_at BETWEEN $1 AND $2
-ORDER BY created_at DESC
-LIMIT $3 OFFSET $4;
-
--- name: GetFailedLoginAttempts :many
-SELECT * FROM logs_auth
-WHERE log_category = 'login'
-  AND log_action = 'login_failed'
-  AND created_at > $1
-ORDER BY created_at DESC;
-
--- name: GetRecentAuthActivity :many
-SELECT * FROM logs_auth
-WHERE user_id = $1
-  AND created_at > $2
-ORDER BY created_at DESC
-LIMIT $3;
-
--- name: DeleteOldAuthLogs :exec
-DELETE FROM logs_auth
-WHERE created_at < $1;
-
 -- name: VerifyOTPAtomic :one
 SELECT * FROM verify_otp_atomic($1, $2);
-
 
 -- name: ExpireRecommendationSession :exec
 UPDATE recommendation_sessions
@@ -2043,21 +2529,3 @@ GROUP BY a.id
 HAVING COUNT(ra.user_rating) >= 3
 ORDER BY AVG(ra.user_rating) DESC, COUNT(ra.was_completed) DESC
 LIMIT 10;
-
--- name: GetUserRecommendationHistory :many
-SELECT 
-    rs.session_id,
-    rs.created_at,
-    rs.analysis_summary,
-    rs.meal_type,
-    rs.requested_types,
-    rs.overall_feedback,
-    COUNT(DISTINCT rf.food_id) as foods_count,
-    COUNT(DISTINCT ra.activity_id) as activities_count
-FROM recommendation_sessions rs
-LEFT JOIN recommended_foods rf ON rs.session_id = rf.session_id
-LEFT JOIN recommended_activities ra ON rs.session_id = ra.session_id
-WHERE rs.user_id = $1
-GROUP BY rs.session_id
-ORDER BY rs.created_at DESC
-LIMIT sqlc.arg(limit_count)::INTEGER;

@@ -1,0 +1,128 @@
+<div class="space-y-6 animate-fade-in">
+    
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-extrabold text-white tracking-tight">Admin Access</h2>
+            <p class="text-sm text-gray-400 mt-1">Manage system administrators, roles, and privileges.</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="openCreateAdminModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-blue-600/20 transition active:scale-95 flex items-center gap-2">
+                <i class="fas fa-plus"></i> Add New Admin
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-users-cog"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Total Admins</p>
+                    <p class="text-xl font-bold text-white" id="adm_stat_total">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-crown"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Super Admins</p>
+                    <p class="text-xl font-bold text-white" id="adm_stat_super">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-gray-500/20 text-gray-400 flex items-center justify-center font-bold">
+                    <i class="fas fa-user-shield"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Standard Admins</p>
+                    <p class="text-xl font-bold text-white" id="adm_stat_standard">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-xl overflow-hidden">
+        <div class="p-4 border-b border-gray-700 flex flex-col sm:flex-row gap-3 bg-gray-900/50 items-center">
+            <div class="relative flex-1 w-full">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+                <input type="text" id="adminSearch" oninput="filterAdminsList()" placeholder="Search username..." 
+                    class="w-full bg-gray-800/50 border border-gray-600 text-white text-sm rounded-xl py-2.5 pl-9 pr-4 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all placeholder-gray-500 hover:bg-gray-800">
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-gray-900/80 text-xs uppercase text-gray-400 font-bold tracking-wider">
+                    <tr>
+                        <th class="p-4 border-b border-gray-700">Admin User</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Role</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Last Login</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Created At</th>
+                        <th class="p-4 border-b border-gray-700 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="adminsTableBody" class="divide-y divide-gray-700 text-sm bg-gray-800/20">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="createAdminModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+    <div class="bg-gray-800 w-full max-w-md rounded-2xl border border-gray-700 shadow-2xl overflow-hidden animate-pop-in">
+        <div class="p-5 border-b border-gray-700 bg-gray-900 flex justify-between items-center">
+            <h3 class="text-lg font-bold text-white">Add New Administrator</h3>
+            <button onclick="closeModal('createAdminModal')" class="text-gray-400 hover:text-white transition"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="p-6 space-y-4">
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Username</label>
+                <input type="text" id="newAdminUsername" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-blue-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Password</label>
+                <input type="password" id="newAdminPassword" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-blue-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Role</label>
+                <select id="newAdminRole" class="standard-select w-full">
+                    <option value="admin">Admin (Standard)</option>
+                    <option value="super_admin">Super Admin</option>
+                </select>
+            </div>
+            <div class="pt-2">
+                <button onclick="submitCreateAdmin()" id="btnCreateAdmin" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition shadow-lg">Create Account</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="editRoleModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+    <div class="bg-gray-800 w-full max-w-sm rounded-2xl border border-gray-700 shadow-2xl overflow-hidden animate-pop-in">
+        <div class="p-5 border-b border-gray-700 bg-gray-900">
+            <h3 class="text-lg font-bold text-white">Update Role</h3>
+            <p class="text-xs text-gray-500 mt-1">For user: <span id="editRoleUsername" class="text-white font-mono">...</span></p>
+        </div>
+        <div class="p-6 space-y-4">
+            <input type="hidden" id="editRoleAdminId">
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">New Role</label>
+                <select id="editRoleSelect" class="standard-select w-full">
+                    <option value="admin">Admin</option>
+                    <option value="super_admin">Super Admin</option>
+                </select>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button onclick="closeModal('editRoleModal')" class="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 font-bold py-2.5 rounded-xl transition">Cancel</button>
+                <button onclick="submitUpdateRole()" id="btnUpdateRole" class="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 rounded-xl transition shadow-lg">Save</button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin - Glupulse</title>
+    <meta name="referrer" content="no-referrer-when-downgrade" />
+    
+    <script>
+        const token = localStorage.getItem('admin_access_token');
+        if (!token) window.location.replace('/admin/login');
+    </script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Plus Jakarta Sans"', 'sans-serif'] },
+                    colors: {
+                        gray: { 750: '#2d3748', 850: '#1a202c', 900: '#111827', 950: '#0B0F19' },
+                        brand: { 500: '#3b82f6', 600: '#2563eb' }
+                    },
+                    animation: {
+                        'pop-in': 'popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                    },
+                    keyframes: {
+                        popIn: {
+                            '0%': { opacity: '0', transform: 'scale(0.95) translateY(10px)' },
+                            '100%': { opacity: '1', transform: 'scale(1) translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body::-webkit-scrollbar { width: 8px; }
+        body::-webkit-scrollbar-track { background: #111827; }
+        body::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+        
+        .sidebar-item.active { 
+            background-color: #374151 !important; 
+            color: #ffffff !important; 
+            border-right: 4px solid #3b82f6 !important;
+        }
+        .standard-select {
+            background-color: #1f2937; /* gray-800 */
+            border: 1px solid #4b5563; /* gray-600 */
+            color: #e5e7eb; /* gray-200 */
+            font-size: 0.75rem; /* text-xs */
+            font-weight: 700; /* font-bold */
+            border-radius: 0.5rem; /* rounded-lg */
+            padding: 0.5rem 2rem 0.5rem 0.75rem; /* Right padding for arrow */
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+            background-position: right 0.5rem center;
+            background-repeat: no-repeat;
+            background-size: 1.5em 1.5em;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .standard-select:focus {
+            border-color: #3b82f6; /* blue-500 */
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); /* blue-500 ring */
+        }
+
+        .standard-select:hover {
+            background-color: #374151; /* gray-700 */
+        }
+
+        /* Option Styling */
+        .standard-select option {
+            background-color: #1f2937;
+            color: white;
+            padding: 8px;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 font-sans text-gray-300 antialiased overflow-hidden flex h-screen">
+
+    <aside class="w-64 bg-gray-800 border-r border-gray-700 hidden md:flex flex-col z-20 flex-shrink-0">
+        <div class="h-20 flex items-center px-6 bg-gray-900 border-b border-gray-800">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-lg">G</div>
+                <div>
+                    <h1 class="text-lg font-bold text-white tracking-tight leading-none">Glupulse</h1>
+                    <span class="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Admin Panel</span>
+                </div>
+            </div>
+        </div>
+        
+        <nav class="flex-1 overflow-y-auto py-6 space-y-1 custom-scroll" id="sidebar-nav">
+            
+            <p class="px-6 text-[10px] font-extrabold text-blue-400 uppercase tracking-widest mb-2 mt-2">Main</p>
+            <a href="/admin/dashboard" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-chart-pie w-6 opacity-70"></i> Dashboard
+            </a>
+
+            <p class="px-6 text-[10px] font-extrabold text-blue-400 uppercase tracking-widest mb-2 mt-6">Management</p>
+            <a href="/admin/users" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-users w-6 opacity-70"></i> Users
+            </a>
+            <a href="/admin/sellers" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-store w-6 opacity-70"></i> Sellers
+            </a>
+
+            <p class="px-6 text-[10px] font-extrabold text-blue-400 uppercase tracking-widest mb-2 mt-6 flex justify-between items-center">
+                <span>Verification Center</span>
+            </p>
+            <a href="/admin/verifications/seller" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50 justify-between group">
+                <div class="flex items-center">
+                    <i class="fas fa-id-card w-6 opacity-70"></i> Seller Requests
+                </div>
+                <span id="badge_pending_sellers" class="hidden bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg shadow-red-500/20">0</span>
+            </a>
+            <a href="/admin/verifications/menu" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50 justify-between group">
+                <div class="flex items-center">
+                    <i class="fas fa-utensils w-6 opacity-70"></i> Menu Approvals
+                </div>
+                <span id="badge_pending_menu" class="hidden bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg shadow-orange-500/20">0</span>
+            </a>
+
+            <p class="px-6 text-[10px] font-extrabold text-blue-400 uppercase tracking-widest mb-2 mt-6">Data & AI</p>
+            <a href="/admin/data/foods" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-database w-6 opacity-70"></i> Food Database
+            </a>
+            <a href="/admin/data/ai-analytics" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-robot w-6 opacity-70"></i> AI Analytics
+            </a>
+
+            <p class="px-6 text-[10px] font-extrabold text-blue-400 uppercase tracking-widest mb-2 mt-6">Security & Logs</p>
+            <a href="/admin/security/logs" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-shield-alt w-6 opacity-70"></i> Auth Logs
+            </a>
+            <a href="/admin/system/access" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-user-lock w-6 opacity-70"></i> Admin Access
+            </a>
+
+            <p class="px-6 text-[10px] font-extrabold text-blue-400 uppercase tracking-widest mb-2 mt-6">System</p>
+            <a href="/admin/system/health" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-server w-6 opacity-70"></i> Server Health
+            </a>
+            <a href="/admin/system/settings" data-link class="sidebar-item w-full flex items-center px-6 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-700/50">
+                <i class="fas fa-cog w-6 opacity-70"></i> Settings
+            </a>
+
+        </nav>
+
+        <div class="p-4 border-t border-gray-700 bg-gray-800">
+            <button onclick="adminLogout()" class="flex items-center gap-3 px-4 py-3 text-sm font-bold text-red-400 bg-gray-700/50 rounded-xl hover:bg-red-500 hover:text-white transition-all w-full group border border-gray-700 hover:border-red-500">
+                <i class="fas fa-sign-out-alt group-hover:animate-pulse"></i> Logout
+            </button>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col h-screen overflow-hidden relative bg-gray-900">
+        <header class="h-20 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-8 z-10 flex-shrink-0 shadow-md">
+            <div class="flex items-center gap-4">
+                <div class="hidden md:flex items-center text-sm font-medium text-gray-400">
+                    <span class="hover:text-white cursor-pointer">Admin</span>
+                    <i class="fas fa-chevron-right text-[10px] mx-2 opacity-50"></i>
+                    <span class="text-white" id="page-title">Overview</span>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-3 border-l border-gray-700 pl-4 h-10">
+                    <div class="text-right hidden sm:block">
+                        <p class="text-sm font-bold text-gray-200 leading-tight" id="header_username">Admin</p>
+                        <p class="text-[10px] text-blue-400 font-bold uppercase tracking-wide">Super Admin</p>
+                    </div>
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold border-2 border-gray-700 text-lg shadow-lg">A</div>
+                </div>
+            </div>
+        </header>
+
+        <div id="app" class="flex-1 overflow-y-auto p-8 relative custom-scroll">
+            </div>
+    </main>
+
+    <div id="sellerReviewModal" class="fixed inset-0 z-[100] hidden flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-2xl rounded-2xl border border-gray-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-pop-in">
+            <div class="relative h-32 bg-gray-700">
+                <img id="modal_seller_banner" src="" class="w-full h-full object-cover opacity-60">
+                <div class="absolute -bottom-10 left-6">
+                    <img id="modal_seller_logo" src="" class="w-20 h-20 rounded-xl bg-gray-800 object-cover border-4 border-gray-800">
+                </div>
+                <div class="absolute top-4 right-4">
+                    <button onclick="closeModal('sellerReviewModal')" class="bg-black/50 hover:bg-black/70 text-white rounded-full w-8 h-8 flex items-center justify-center transition"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <div class="p-6 pt-12 overflow-y-auto custom-scroll space-y-6">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h4 id="modal_store_name" class="text-2xl font-bold text-white">Store Name</h4>
+                        <div id="modal_seller_rating_container" class="flex items-center gap-2 mt-1 hidden">
+                            <span id="modal_seller_rating" class="text-yellow-400 font-bold text-sm"></span>
+                            <span class="text-gray-500 text-xs">•</span>
+                            <span id="modal_seller_price_range" class="text-green-400 font-bold text-sm">$$$</span>
+                        </div>
+                        <div id="modal_seller_cuisines" class="flex gap-2 mt-3 flex-wrap"></div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs font-bold text-gray-500 uppercase">Owner</p>
+                        <p id="modal_owner_name" class="text-white font-bold">...</p>
+                        <p id="modal_owner_email" class="text-xs text-gray-400">...</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4 bg-gray-700/30 p-4 rounded-xl border border-gray-700">
+                    <div class="space-y-2">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Contact</p>
+                        <p class="text-sm text-white"><i class="fas fa-phone mr-2 text-blue-400"></i> <span id="modal_seller_phone">...</span></p>
+                        <p class="text-sm text-white"><i class="fas fa-envelope mr-2 text-blue-400"></i> <span id="modal_seller_email">...</span></p>
+                    </div>
+                    <div class="space-y-2">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Location</p>
+                        <p id="modal_seller_address" class="text-sm text-gray-300 leading-tight">...</p>
+                        <a id="modal_seller_map_btn" href="#" target="_blank" class="text-xs text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1 mt-1 hidden">
+                            <i class="fas fa-map-marker-alt"></i> View on Google Maps
+                        </a>
+                    </div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-gray-500 uppercase mb-2">About Store</p>
+                    <p id="modal_seller_desc" class="text-sm text-gray-300 leading-relaxed bg-gray-700/20 p-3 rounded-lg border border-gray-700/50">...</p>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-700 bg-gray-900">
+                <div id="sellerActionsDefault" class="flex gap-3">
+                    <button onclick="toggleRejectReason('seller')" class="flex-1 py-3 rounded-xl font-bold text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 transition">Reject</button>
+                    <button onclick="submitVerification('seller', 'approve')" class="flex-1 py-3 rounded-xl font-bold text-white bg-green-600 hover:bg-green-500 shadow-lg shadow-green-500/20 transition">Approve Seller</button>
+                </div>
+                <div id="sellerActionsReject" class="hidden space-y-3">
+                    <textarea id="sellerRejectReason" rows="2" class="w-full bg-gray-800 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-red-500 outline-none" placeholder="Reason for rejection..."></textarea>
+                    <div class="flex gap-3">
+                        <button onclick="toggleRejectReason('seller')" class="flex-1 py-2 rounded-xl font-bold text-gray-400 hover:bg-gray-700">Cancel</button>
+                        <button onclick="submitVerification('seller', 'reject')" class="flex-1 py-2 rounded-xl font-bold text-white bg-red-600 hover:bg-red-500">Confirm Reject</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="foodInspectModal" class="fixed inset-0 z-[100] hidden flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-2xl rounded-2xl border border-gray-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-pop-in">
+            <div class="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-900">
+                <h3 class="text-lg font-bold text-white">Inspect Menu Item</h3>
+                <button onclick="closeModal('foodInspectModal')" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-6 overflow-y-auto custom-scroll space-y-6">
+                <div class="flex gap-6 flex-col sm:flex-row">
+                    <div class="sm:w-1/3 aspect-square rounded-xl overflow-hidden bg-gray-700 border border-gray-600 shrink-0 relative flex items-center justify-center">
+                        <img id="modal_food_img" src="" class="w-full h-full object-cover hidden">
+                        <div id="modal_food_no_photo" class="text-center p-4">
+                            <i class="fas fa-image text-4xl text-gray-600 mb-2"></i>
+                            <p class="text-sm font-bold text-gray-500">No Photo</p>
+                        </div>
+                    </div>
+                    <div class="flex-1 space-y-3">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h4 id="modal_food_name" class="text-xl font-bold text-white leading-tight">Food Name</h4>
+                                <span id="modal_food_cat" class="text-[10px] text-blue-400 font-bold uppercase bg-blue-500/10 px-2 py-1 rounded inline-block mt-1">Category</span>
+                            </div>
+                            <div class="text-right">
+                                <span id="modal_food_price" class="text-xl font-bold text-green-400 block">Rp0</span>
+                                <span id="modal_food_stock" class="text-xs text-gray-400">Stock: 0</span>
+                            </div>
+                        </div>
+                        <div id="modal_food_tags" class="flex flex-wrap gap-1"></div>
+                        <p id="modal_food_desc" class="text-sm text-gray-400 leading-relaxed h-20 overflow-y-auto custom-scroll pr-2">...</p>
+                    </div>
+                </div>
+                <div>
+                    <h5 class="text-xs font-bold text-gray-500 uppercase mb-3 flex justify-between items-center">
+                        Nutrition Facts <span class="text-gray-600 normal-case">per <span id="modal_food_serving_size">1 srv</span></span>
+                    </h5>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-px bg-gray-700 border border-gray-700 rounded-xl overflow-hidden">
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Calories</p><p class="text-white font-bold" id="modal_val_cal">0</p></div>
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Protein</p><p class="text-blue-400 font-bold" id="modal_val_pro">0g</p></div>
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Carbs</p><p class="text-yellow-400 font-bold" id="modal_val_carb">0g</p></div>
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Fat</p><p class="text-red-400 font-bold" id="modal_val_fat">0g</p></div>
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Fiber</p><p class="text-gray-300 font-medium" id="modal_val_fib">0g</p></div>
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Sugar</p><p class="text-gray-300 font-medium" id="modal_val_sug">0g</p></div>
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Sodium</p><p class="text-gray-300 font-medium" id="modal_val_sod">0mg</p></div>
+                        <div class="bg-gray-800 p-3 text-center"><p class="text-[10px] text-gray-500 uppercase">Cholesterol</p><p class="text-gray-300 font-medium" id="modal_val_chol">0mg</p></div>
+                        <div class="bg-gray-800 p-3 text-center col-span-2"><p class="text-[10px] text-gray-500 uppercase">Glycemic Index</p><p class="text-white font-bold" id="modal_val_gi">0</p></div>
+                        <div class="bg-gray-800 p-3 text-center col-span-2"><p class="text-[10px] text-gray-500 uppercase">Glycemic Load</p><p class="text-white font-bold" id="modal_val_gl">0</p></div>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-700 bg-gray-900">
+                <div id="foodActionsDefault" class="flex gap-3">
+                    <button onclick="toggleRejectReason('food')" class="flex-1 py-3 rounded-xl font-bold text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 transition">Reject</button>
+                    <button onclick="submitVerification('food', 'approve')" class="flex-1 py-3 rounded-xl font-bold text-white bg-green-600 hover:bg-green-500 shadow-lg shadow-green-500/20 transition">Approve Menu</button>
+                </div>
+                <div id="foodActionsReject" class="hidden space-y-3">
+                    <textarea id="foodRejectReason" rows="2" class="w-full bg-gray-800 border border-gray-600 rounded-xl p-3 text-white text-sm focus:border-red-500 outline-none" placeholder="Reason for rejection..."></textarea>
+                    <div class="flex gap-3">
+                        <button onclick="toggleRejectReason('food')" class="flex-1 py-2 rounded-xl font-bold text-gray-400 hover:bg-gray-700">Cancel</button>
+                        <button onclick="submitVerification('food', 'reject')" class="flex-1 py-2 rounded-xl font-bold text-white bg-red-600 hover:bg-red-500">Confirm Reject</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="logDetailModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-lg rounded-2xl border border-gray-700 shadow-2xl overflow-hidden animate-pop-in">
+            <div class="p-5 border-b border-gray-700 flex justify-between items-center bg-gray-900">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i class="fas fa-shield-alt text-gray-500"></i> Security Log
+                </h3>
+                <button onclick="closeModal('logDetailModal')" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-6 space-y-5">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-500 uppercase mb-1">Action Type</p>
+                        <p id="log_modal_action" class="text-white font-mono text-sm bg-gray-700 px-2 py-1 rounded inline-block">...</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase mb-1">Severity</p>
+                        <span id="log_modal_level">...</span>
+                    </div>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase mb-1">Message</p>
+                    <div class="bg-gray-900/50 p-3 rounded-lg border border-gray-700">
+                        <p id="log_modal_message" class="text-sm text-gray-300 font-medium leading-relaxed">...</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4 bg-gray-700/20 p-4 rounded-xl border border-gray-700/50">
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">IP Address</p>
+                        <p id="log_modal_ip" class="text-white font-mono text-xs">...</p>
+                    </div>
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">User ID</p>
+                        <p id="log_modal_user" class="text-white font-mono text-xs truncate">...</p>
+                    </div>
+                    <div class="col-span-2">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Timestamp</p>
+                        <p id="log_modal_time" class="text-white text-xs">...</p>
+                    </div>
+                    <div class="col-span-2">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">User Agent</p>
+                        <p id="log_modal_agent" class="text-gray-400 text-[10px] leading-tight break-all font-mono bg-gray-900/50 p-1 rounded">...</p>
+                    </div>
+                </div>
+                <div class="flex justify-between items-center pt-2 border-t border-gray-700 mt-2">
+                    <span class="text-[10px] text-gray-600 font-mono">Log ID: <span id="log_modal_id">...</span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="userDetailModal" class="fixed inset-0 z-[110] hidden flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-5xl h-[85vh] rounded-2xl border border-gray-700 shadow-2xl flex overflow-hidden animate-pop-in">
+            
+            <div class="w-80 bg-gray-900 border-r border-gray-700 flex flex-col p-6 flex-shrink-0">
+                <div class="text-center mb-6">
+                    <div class="w-24 h-24 rounded-full bg-gray-700 mx-auto mb-4 border-4 border-gray-800 overflow-hidden relative">
+                        <img id="u_modal_avatar" src="" class="w-full h-full object-cover">
+                    </div>
+                    <h3 id="u_modal_name" class="text-lg font-bold text-white leading-tight">...</h3>
+                    <p id="u_modal_email" class="text-xs text-gray-400 mt-1 break-all">...</p>
+                    
+                    <div class="mt-3 flex flex-col items-center gap-2">
+                        <span id="u_modal_status" class="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border">...</span>
+                        
+                        <div id="u_modal_roles" class="flex flex-wrap justify-center gap-1"></div>
+                        
+                        <span id="u_modal_verified" class="hidden px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border border-blue-500/30 bg-blue-500/10 text-blue-400"><i class="fas fa-check-circle"></i> Verified</span>
+                    </div>
+                </div>
+                
+                <div class="flex-1 min-h-0 flex flex-col mb-4">
+                    <label class="text-[10px] font-bold text-gray-500 uppercase mb-2">Admin Notes</label>
+                    <textarea id="u_modal_notes" class="flex-1 bg-gray-800 border border-gray-700 rounded-xl p-3 text-xs text-gray-300 resize-none focus:border-blue-500 outline-none custom-scroll"></textarea>
+                    <button onclick="saveUserNotes()" class="mt-2 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 py-2 rounded-lg font-bold transition">Save Notes</button>
+                </div>
+                <div class="space-y-2 pt-4 border-t border-gray-800">
+                    <button onclick="openStatusModal()" class="w-full py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-600/30 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2">Change Status</button>
+                    <button onclick="confirmPasswordReset()" class="w-full py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 border border-red-600/30 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2">Reset Password</button>
+                </div>
+            </div>
+
+            <div class="flex-1 flex flex-col bg-gray-800 min-w-0">
+                <div class="flex items-center justify-between px-6 pt-4 pb-0 border-b border-gray-700 bg-gray-800 z-10">
+                    <div class="flex gap-6">
+                        <button onclick="switchUserTab('health')" id="tab_btn_health" class="tab-btn pb-4 text-sm font-bold text-blue-400 border-b-2 border-blue-400 transition-colors">Insights</button>
+                        <button onclick="switchUserTab('orders')" id="tab_btn_orders" class="tab-btn pb-4 text-sm font-bold text-gray-500 border-b-2 border-transparent transition-colors">Order History</button>
+                        <button onclick="switchUserTab('logs')" id="tab_btn_logs" class="tab-btn pb-4 text-sm font-bold text-gray-500 border-b-2 border-transparent transition-colors">Audit Logs</button>
+                    </div>
+                    <button onclick="closeModal('userDetailModal')" class="text-gray-500 hover:text-white mb-4"><i class="fas fa-times text-lg"></i></button>
+                </div>
+                
+                <div class="p-6 overflow-y-auto custom-scroll flex-1 relative">
+                    
+                    <div id="tab_content_health" class="space-y-6 animate-fade-in">
+                        <div class="grid grid-cols-4 gap-4">
+                            <div class="bg-gray-700/30 p-3 rounded-xl border border-gray-700 text-center">
+                                <p class="text-[10px] font-bold text-gray-500 uppercase">Reliability</p>
+                                <span id="u_stat_reliable" class="text-sm font-bold block mt-1">...</span>
+                            </div>
+                            <div class="bg-gray-700/30 p-3 rounded-xl border border-gray-700 text-center">
+                                <p class="text-[10px] font-bold text-gray-500 uppercase">Success Rate</p>
+                                <span id="u_stat_rate" class="text-sm font-bold text-white block mt-1">...</span>
+                            </div>
+                            <div class="bg-gray-700/30 p-3 rounded-xl border border-gray-700 text-center">
+                                <p class="text-[10px] font-bold text-gray-500 uppercase">Orders</p>
+                                <span id="u_stat_count" class="text-sm font-bold text-white block mt-1">...</span>
+                            </div>
+                            <div class="bg-gray-700/30 p-3 rounded-xl border border-gray-700 text-center">
+                                <p class="text-[10px] font-bold text-gray-500 uppercase">Total Spent</p>
+                                <span id="u_stat_spent" class="text-sm font-bold text-green-400 block mt-1">...</span>
+                            </div>
+                        </div>
+                        <hr class="border-gray-700">
+                        <h5 class="text-xs font-bold text-gray-400 uppercase">Safety Profile</h5>
+                        <div id="u_safety_grid" class="grid grid-cols-2 gap-4"></div>
+                    </div>
+
+                    <div id="tab_content_orders" class="hidden space-y-4 animate-fade-in">
+                        <div class="bg-gray-700/20 rounded-xl border border-gray-700 overflow-hidden">
+                            <table class="w-full text-left text-sm">
+                                <thead class="bg-gray-900/50 text-xs text-gray-400 uppercase">
+                                    <tr>
+                                        <th class="p-3">Order ID</th>
+                                        <th class="p-3">Date</th>
+                                        <th class="p-3">Store</th>
+                                        <th class="p-3">Total</th>
+                                        <th class="p-3 text-right">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="u_orders_list" class="divide-y divide-gray-700"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="tab_content_logs" class="hidden space-y-3 animate-fade-in">
+                        <div class="flex flex-wrap gap-2 mb-4 bg-gray-900 p-2 rounded-xl border border-gray-700 shadow-inner">
+                            <div class="flex-1 min-w-[150px] relative">
+                                <i class="fas fa-search absolute left-3 top-2.5 text-gray-500 text-xs"></i>
+                                <input id="log_search" oninput="filterUserLogs()" type="text" placeholder="Search logs..." 
+                                    class="w-full bg-gray-800 border border-transparent hover:border-gray-600 focus:border-blue-500 rounded-lg py-2 pl-8 pr-3 text-xs text-white outline-none transition-all">
+                            </div>
+                            
+                            <select id="log_filter_category" onchange="filterUserLogs()" class="standard-select">
+                                <option value="all">All Categories</option>
+                            </select>
+
+                            <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-2 border border-gray-700 hover:border-gray-500 transition-colors">
+                                <span class="text-[9px] font-bold text-gray-500 uppercase">From</span>
+                                <input id="log_date_start" onchange="filterUserLogs()" type="date" class="bg-transparent text-gray-300 text-xs py-1.5 border-none focus:ring-0 outline-none">
+                            </div>
+                            <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-2 border border-gray-700 hover:border-gray-500 transition-colors">
+                                <span class="text-[9px] font-bold text-gray-500 uppercase">To</span>
+                                <input id="log_date_end" onchange="filterUserLogs()" type="date" class="bg-transparent text-gray-300 text-xs py-1.5 border-none focus:ring-0 outline-none">
+                            </div>
+                        </div>
+                        
+                        <div id="u_logs_list" class="space-y-2">
+                            </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="orderDetailModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-lg rounded-2xl border border-gray-700 shadow-2xl overflow-hidden animate-pop-in flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b border-gray-700 flex justify-between items-center bg-gray-900">
+                <div>
+                    <h3 class="text-lg font-bold text-white">Order Details</h3>
+                    <p id="od_id" class="text-xs text-gray-400 font-mono mt-0.5">...</p>
+                </div>
+                <button onclick="closeModal('orderDetailModal')" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            
+            <div class="p-6 space-y-6 overflow-y-auto custom-scroll">
+                <div class="bg-gray-700/30 p-4 rounded-xl border border-gray-700 flex justify-between items-center">
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Order Status</p>
+                        <span id="od_status" class="text-sm font-bold text-white">...</span>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Total Amount</p>
+                        <span id="od_total" class="text-xl font-bold text-green-400">...</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-900/50 p-3 rounded-xl border border-gray-700">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase mb-1">Seller</p>
+                        <p id="od_seller_name" class="text-sm font-bold text-white">...</p>
+                        <p id="od_seller_contact" class="text-xs text-gray-400 font-mono mt-1">...</p>
+                    </div>
+                    <div class="bg-gray-900/50 p-3 rounded-xl border border-gray-700">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase mb-1">Payment</p>
+                        <p id="od_payment" class="text-sm font-medium text-white">...</p>
+                        <p id="od_date" class="text-xs text-gray-400 mt-1">...</p>
+                    </div>
+                </div>
+
+                <div>
+                    <h5 class="text-xs font-bold text-gray-400 uppercase mb-3">Items Purchased</h5>
+                    <div class="bg-gray-700/20 rounded-xl border border-gray-700 overflow-hidden">
+                        <table class="w-full text-sm text-left">
+                            <thead class="bg-gray-900/50 text-xs text-gray-500 uppercase">
+                                <tr>
+                                    <th class="p-3">Item</th>
+                                    <th class="p-3 text-center">Qty</th>
+                                    <th class="p-3 text-right">Price</th>
+                                </tr>
+                            </thead>
+                            <tbody id="od_items_list" class="divide-y divide-gray-700">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="userStatusModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-sm rounded-2xl border border-gray-700 shadow-2xl overflow-hidden animate-pop-in">
+            <div class="p-5 border-b border-gray-700">
+                <h3 class="text-lg font-bold text-white">Update Account Status</h3>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase mb-1">New Status</label>
+                    <select id="status_select" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500">
+                        <option value="active">Active (Normal)</option>
+                        <option value="suspended">Suspended (Temporary)</option>
+                        <option value="banned">Banned (Permanent)</option>
+                        <option value="deactivated">Deactivated</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase mb-1">Reason / Note</label>
+                    <textarea id="status_reason" rows="3" class="w-full bg-gray-900 border border-gray-600 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500" placeholder="Why is this status changing?"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button onclick="closeModal('userStatusModal')" class="flex-1 py-2 rounded-xl font-bold text-gray-400 hover:bg-gray-700 transition">Cancel</button>
+                    <button onclick="submitUserStatus()" class="flex-1 py-2 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-500 transition">Update</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="sellerDetailModal" class="fixed inset-0 z-[110] hidden flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-6xl h-[90vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden animate-pop-in">
+            
+            <div class="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-900">
+                <div>
+                    <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                        <i class="fas fa-store text-blue-500"></i> <span id="detailStoreNameHeader">Loading...</span>
+                    </h2>
+                    <p class="text-xs text-gray-500 mt-1" id="detailOwnerNameHeader">...</p>
+                </div>
+                <button onclick="closeModal('sellerDetailModal')" class="text-gray-400 hover:text-red-500 text-2xl transition">&times;</button>
+            </div>
+
+            <div class="flex border-b border-gray-700 bg-gray-800/50 px-6">
+                <button onclick="switchSellerTab('overview')" id="tab_s_overview" class="py-4 px-4 text-sm font-bold border-b-2 border-blue-500 text-blue-400 transition">Overview</button>
+                <button onclick="switchSellerTab('menu')" id="tab_s_menu" class="py-4 px-4 text-sm font-bold border-b-2 border-transparent text-gray-400 hover:text-white transition">Menu Items</button>
+                <button onclick="switchSellerTab('orders')" id="tab_s_orders" class="py-4 px-4 text-sm font-bold border-b-2 border-transparent text-gray-400 hover:text-white transition">Order History</button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-6 custom-scroll bg-gray-900 relative">
+                <input type="hidden" id="detailSellerId">
+
+                <div id="content_s_overview" class="space-y-6">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="bg-gray-700/30 p-5 rounded-xl border border-gray-700">
+                            <h3 class="font-bold text-lg mb-4 text-gray-200 border-b border-gray-600 pb-2">Store Profile</h3>
+                            <div class="space-y-2 text-sm text-gray-300">
+                                <p><strong class="text-gray-500 uppercase text-xs">Store Name:</strong> <span id="detailStoreName" class="text-white font-bold ml-2"></span></p>
+                                <p><strong class="text-gray-500 uppercase text-xs">Owner:</strong> <span id="detailOwnerName" class="ml-2"></span></p>
+                                <p><strong class="text-gray-500 uppercase text-xs">Phone:</strong> <span id="detailPhone" class="ml-2 font-mono"></span></p>
+                                <p><strong class="text-gray-500 uppercase text-xs">Email:</strong> <span id="detailEmail" class="ml-2"></span></p>
+                                <p><strong class="text-gray-500 uppercase text-xs">Address:</strong> <span id="detailAddress" class="ml-2 truncate block"></span></p>
+                                <div class="mt-3">
+                                    <span id="detailVerificationBadge" class="px-2 py-1 text-[10px] rounded-full font-bold uppercase tracking-wider"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-blue-900/10 p-5 rounded-xl border border-blue-500/20">
+                            <h3 class="font-bold text-lg mb-4 text-blue-400 border-b border-blue-500/30 pb-2">Admin Actions</h3>
+                            <div class="mb-5">
+                                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-wider">Account Status</label>
+                                <div class="flex gap-2 mb-2">
+                                    <select id="detailAdminStatus" class="standard-select flex-1">
+                                        <option value="active">Active</option>
+                                        <option value="suspended">Suspended</option>
+                                        <option value="blacklisted">Blacklisted</option>
+                                    </select>
+                                    
+                                    <button onclick="updateSellerStatus()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-500 transition-colors shadow-lg active:scale-95">Update</button>
+                                </div>
+                                <input type="text" id="detailStatusReason" placeholder="Reason for action..." 
+                                    class="w-full p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg text-gray-300 text-xs outline-none focus:border-blue-500 transition-colors placeholder-gray-600">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-400 uppercase mb-2">Internal Notes</label>
+                                <textarea id="detailAdminNotes" rows="2" class="w-full p-2.5 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm mb-2 outline-none resize-none"></textarea>
+                                <button onclick="updateSellerNotes()" class="w-full bg-gray-700 text-gray-300 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-600">Save Notes</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div class="bg-gray-700/30 p-4 rounded-xl border border-gray-700">
+                            <div class="text-[10px] font-bold text-gray-500 uppercase">Total Revenue</div>
+                            <div class="font-bold text-green-400 text-lg mt-1" id="statTotalRev">Rp 0</div>
+                        </div>
+                        <div class="bg-gray-700/30 p-4 rounded-xl border border-gray-700">
+                            <div class="text-[10px] font-bold text-gray-500 uppercase">Total Orders</div>
+                            <div class="font-bold text-white text-lg mt-1" id="statTotalOrd">0</div>
+                        </div>
+                        <div class="bg-gray-700/30 p-4 rounded-xl border border-gray-700">
+                            <div class="text-[10px] font-bold text-gray-500 uppercase">Month Revenue</div>
+                            <div class="font-bold text-green-400 text-lg mt-1" id="statMonthRev">Rp 0</div>
+                        </div>
+                        <div class="bg-gray-700/30 p-4 rounded-xl border border-gray-700">
+                            <div class="text-[10px] font-bold text-gray-500 uppercase">Month Orders</div>
+                            <div class="font-bold text-white text-lg mt-1" id="statMonthOrd">0</div>
+                        </div>
+                        <div class="col-span-2 md:col-span-4 bg-gray-700/30 p-4 rounded-xl border border-gray-700 text-left">
+                            <div class="text-[10px] font-bold text-gray-500 uppercase mb-2">Business Hours</div>
+                            <div id="detailBusinessHours" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="content_s_menu" class="hidden space-y-4">
+                    <div class="flex justify-between items-center bg-gray-800 p-3 rounded-xl border border-gray-700">
+                        <h3 class="font-bold text-white text-lg">Store Menu</h3>
+                        <div class="relative w-64">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+                            <input type="text" id="menuSearch" oninput="filterSellerMenu()" placeholder="Search menu..." class="w-full bg-gray-900 border border-gray-600 text-white text-xs rounded-lg pl-8 pr-3 py-2 outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" id="sellerMenuGrid">
+                        </div>
+                </div>
+
+                <div id="content_s_orders" class="hidden space-y-4">
+                    <h3 class="font-bold text-white text-lg mb-2">Order History</h3>
+                    <div class="overflow-x-auto rounded-xl border border-gray-700">
+                        <table class="min-w-full text-sm text-left">
+                            <thead class="bg-gray-800 text-xs text-gray-500 uppercase font-bold">
+                                <tr>
+                                    <th class="p-3 border-b border-gray-700">Order ID</th>
+                                    <th class="p-3 border-b border-gray-700">User</th>
+                                    <th class="p-3 border-b border-gray-700">Total</th>
+                                    <th class="p-3 border-b border-gray-700">Status</th>
+                                    <th class="p-3 border-b border-gray-700">Date</th>
+                                </tr>
+                            </thead>
+                            <tbody id="detailOrderTableBody" class="divide-y divide-gray-700 bg-gray-900"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <div id="sellerReviewsModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+        <div class="bg-gray-800 w-full max-w-2xl rounded-2xl border border-gray-700 shadow-2xl flex flex-col max-h-[85vh] animate-pop-in">
+            <div class="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-900">
+                <h2 class="text-xl font-bold text-white">Store Reviews</h2>
+                <button onclick="closeModal('sellerReviewsModal')" class="text-gray-400 hover:text-red-500 text-2xl">&times;</button>
+            </div>
+            <div class="p-6 space-y-4 overflow-y-auto custom-scroll flex-1" id="reviewsContainer">
+                </div>
+        </div>
+    </div>
+    <div id="aiSessionModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+    <div class="bg-gray-800 w-full max-w-5xl h-[85vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden animate-pop-in">
+        
+        <div class="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-900">
+            <div>
+                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                    <i class="fas fa-robot text-indigo-500"></i> AI Session Analysis
+                </h2>
+                <p class="text-xs text-gray-500 mt-1 font-mono" id="ai_modal_session_id">Session ID: ...</p>
+            </div>
+            <button onclick="closeModal('aiSessionModal')" class="text-gray-400 hover:text-red-500 text-2xl transition">&times;</button>
+        </div>
+
+        <div class="flex-1 flex overflow-hidden">
+            
+            <div class="w-80 bg-gray-900/50 border-r border-gray-700 p-6 overflow-y-auto custom-scroll flex-shrink-0">
+                
+                <div class="text-center mb-6">
+                    <img id="ai_modal_avatar" src="" class="w-16 h-16 rounded-full mx-auto mb-3 border-2 border-gray-700">
+                    <h3 id="ai_modal_username" class="text-sm font-bold text-white">...</h3>
+                    <p id="ai_modal_email" class="text-xs text-gray-500">...</p>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="bg-gray-800 p-3 rounded-xl border border-gray-700">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Model Used</p>
+                        <p id="ai_modal_model" class="text-sm text-indigo-300 font-mono mt-1 break-all">...</p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-gray-800 p-3 rounded-xl border border-gray-700 text-center">
+                            <p class="text-[10px] font-bold text-gray-500 uppercase">Glucose</p>
+                            <p id="ai_modal_glucose" class="text-lg font-bold text-white mt-1">...</p>
+                        </div>
+                        <div class="bg-gray-800 p-3 rounded-xl border border-gray-700 text-center">
+                            <p class="text-[10px] font-bold text-gray-500 uppercase">HbA1c</p>
+                            <p id="ai_modal_hba1c" class="text-lg font-bold text-white mt-1">...</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-800 p-3 rounded-xl border border-gray-700">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase mb-2">Confidence Score</p>
+                        <div class="w-full bg-gray-700 rounded-full h-2">
+                            <div id="ai_modal_confidence_bar" class="bg-emerald-500 h-2 rounded-full" style="width: 0%"></div>
+                        </div>
+                        <p id="ai_modal_confidence_text" class="text-right text-xs font-bold text-emerald-400 mt-1">0%</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto custom-scroll p-6 bg-gray-900">
+                
+                <div class="mb-8">
+                    <h3 class="text-sm font-bold text-gray-300 uppercase tracking-wider mb-3 border-b border-gray-700 pb-2">
+                        <i class="fas fa-lightbulb text-yellow-500 mr-2"></i> AI Analysis & Summary
+                    </h3>
+                    <div class="bg-gray-800 p-5 rounded-2xl border border-gray-700 text-gray-300 text-sm leading-relaxed whitespace-pre-wrap font-sans" id="ai_modal_response">
+                        Loading analysis...
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-sm font-bold text-gray-300 uppercase tracking-wider mb-4 border-b border-gray-700 pb-2">
+                        <i class="fas fa-list-check text-blue-500 mr-2"></i> Recommendations
+                    </h3>
+                    
+                    <div class="space-y-6">
+                        <div>
+                            <h4 class="text-xs font-bold text-green-400 uppercase mb-3">Recommended Foods</h4>
+                            <div id="ai_modal_foods_list" class="grid grid-cols-1 gap-3"></div>
+                        </div>
+
+                        <div>
+                            <h4 class="text-xs font-bold text-orange-400 uppercase mb-3">Recommended Activities</h4>
+                            <div id="ai_modal_activities_list" class="grid grid-cols-1 gap-3"></div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+    <script src="/static/js/app.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 1. Username
+            const u = localStorage.getItem('admin_username');
+            if(u) document.getElementById('header_username').innerText = u;
+
+            // 2. Fetch Badges
+            updateSidebarBadges();
+            
+            // 3. Poll every 30s
+            setInterval(updateSidebarBadges, 30000);
+        });
+
+        // FETCH LOGIC FOR BADGES
+        async function updateSidebarBadges() {
+            try {
+                const res = await adminFetch('/admin/dashboard/stats');
+                if(res.ok) {
+                    const data = await res.json();
+                    
+                    const sellers = data.stats.pending_sellers || 0;
+                    const elSeller = document.getElementById('badge_pending_sellers');
+                    if(elSeller) {
+                        elSeller.innerText = sellers;
+                        if(sellers > 0) elSeller.classList.remove('hidden');
+                        else elSeller.classList.add('hidden');
+                    }
+
+                    const foods = data.stats.pending_foods || 0;
+                    const elFood = document.getElementById('badge_pending_menu');
+                    if(elFood) {
+                        elFood.innerText = foods;
+                        if(foods > 0) elFood.classList.remove('hidden');
+                        else elFood.classList.add('hidden');
+                    }
+                }
+            } catch(e) {
+                console.warn("Badge update failed", e);
+            }
+        }
+    </script>
+</body>
+</html>

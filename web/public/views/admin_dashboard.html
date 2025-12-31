@@ -1,0 +1,119 @@
+<div class="fade-in space-y-6">
+
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-extrabold text-white tracking-tight">Overview</h2>
+            <p class="text-sm text-gray-400 mt-1">Platform performance and business metrics.</p>
+        </div>
+        <div class="flex items-center gap-2">
+             <div class="flex items-center gap-2 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-xl">
+                <span class="relative flex h-2 w-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span class="text-xs font-bold text-green-400 uppercase tracking-wide">Live</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-lg relative overflow-hidden group">
+            <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <i class="fas fa-users text-6xl text-blue-500"></i>
+            </div>
+            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Users</p>
+            <h3 class="text-3xl font-extrabold text-white mt-1" id="dash_total_users">...</h3>
+            <p class="text-[10px] text-gray-500 mt-2">Registered accounts</p>
+        </div>
+
+        <div class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-lg relative overflow-hidden group">
+            <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <i class="fas fa-wallet text-6xl text-green-500"></i>
+            </div>
+            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Revenue Today</p>
+            <h3 class="text-3xl font-extrabold text-white mt-1" id="dash_revenue">...</h3>
+            <p class="text-[10px] text-gray-500 mt-2">Platform Fees (Est.)</p>
+        </div>
+
+        <a href="/admin/verifications/sellers" onclick="event.preventDefault(); navigateTo('/admin/verifications/sellers')" class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-lg relative overflow-hidden group hover:border-red-500/50 transition cursor-pointer">
+            <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <i class="fas fa-store text-6xl text-red-500"></i>
+            </div>
+            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Seller Requests</p>
+            <h3 class="text-3xl font-extrabold text-white mt-1" id="dash_pending_sellers">...</h3>
+            <p class="text-[10px] text-red-400 mt-2 font-bold animate-pulse">Needs Review</p>
+        </a>
+
+        <a href="/admin/verifications/menu" onclick="event.preventDefault(); navigateTo('/admin/verifications/menu')" class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-lg relative overflow-hidden group hover:border-orange-500/50 transition cursor-pointer">
+            <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <i class="fas fa-utensils text-6xl text-orange-500"></i>
+            </div>
+            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Menu Approvals</p>
+            <h3 class="text-3xl font-extrabold text-white mt-1" id="dash_pending_foods">...</h3>
+            <p class="text-[10px] text-orange-400 mt-2 font-bold animate-pulse">Need Approval</p>
+        </a>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <div class="lg:col-span-2 space-y-6">
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg">
+                <div class="p-6 border-b border-gray-700 flex justify-between items-center">
+                    <h4 class="font-bold text-white text-lg"><i class="fas fa-id-card text-gray-500 mr-2"></i> New Seller Requests</h4>
+                    <button onclick="navigateTo('/admin/verifications/sellers')" class="text-xs font-bold text-blue-400 hover:text-blue-300">View All</button>
+                </div>
+                <div class="p-4 space-y-3" id="dash_seller_list">
+                    <div class="flex flex-col items-center justify-center py-8">
+                        <i class="fas fa-circle-notch fa-spin text-gray-600 mb-2"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg">
+                <div class="p-6 border-b border-gray-700 flex justify-between items-center">
+                    <h4 class="font-bold text-white text-lg"><i class="fas fa-utensils text-gray-500 mr-2"></i> Latest Menu Approvals</h4>
+                    <button onclick="navigateTo('/admin/verifications/menu')" class="text-xs font-bold text-orange-400 hover:text-orange-300">View All</button>
+                </div>
+                <div class="p-4 space-y-3" id="dash_menu_list">
+                    <div class="text-center text-gray-500 py-6 text-xs">No new menus pending.</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4">
+                <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Server Load</p>
+                        <p class="text-lg font-bold text-green-400" id="dash_server_load">...</p>
+                    </div>
+                    <i class="fas fa-microchip text-gray-600 text-xl"></i>
+                </div>
+                <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Database</p>
+                        <p class="text-lg font-bold text-green-400" id="dash_db_status">...</p>
+                    </div>
+                    <i class="fas fa-database text-gray-600 text-xl"></i>
+                </div>
+                <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">API Latency</p>
+                        <p class="text-lg font-bold text-blue-400" id="dash_latency">...</p>
+                    </div>
+                    <i class="fas fa-bolt text-gray-600 text-xl"></i>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="space-y-6">
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg flex flex-col h-[700px]">
+                <div class="p-6 border-b border-gray-700 flex justify-between items-center">
+                    <h4 class="font-bold text-white text-lg"><i class="fas fa-shield-alt text-green-500 mr-2"></i> Security Feed</h4>
+                </div>
+                <div class="flex-1 overflow-y-auto p-4 space-y-2 custom-scroll" id="dash_security_feed">
+                    <div class="text-center text-gray-500 py-4 text-xs">Waiting for logs...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -583,7 +583,7 @@ func CheckoutHandler(c echo.Context) error {
 		},
 		OrderItems: cleanOrderItems,
 	}
-
+	
 	return c.JSON(http.StatusCreated, finalResponse)
 }
 
@@ -759,6 +759,10 @@ func SimulatePaymentHandler(c echo.Context) error {
 		})
 	}
 
+	sellerIDStr := utility.UuidToString(updatedOrder.SellerID)
+    
+    go utility.TriggerSellerUpdate(sellerIDStr)
+
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":        "Payment Successful (Dummy)",
 		"order_id":       utility.UuidToString(updatedOrder.OrderID),
@@ -830,4 +834,47 @@ func CreateSellerReviewHandler(c echo.Context) error {
         "review_id":  utility.UuidToString(review.ReviewID),
         "created_at": review.CreatedAt.Time,
     })
+}
+
+func ListPublicSellerMenuHandler(c echo.Context) error {
+    ctx := c.Request().Context()
+    
+    // 1. Get Seller ID from URL Parameter (e.g. /sellers/123-abc/menu)
+    sellerIDParam := c.Param("seller_id")
+    sellerUUID, err := uuid.Parse(sellerIDParam)
+    if err != nil {
+        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Seller ID format"})
+    }
+
+    // 2. Pagination
+    limit := 20
+    offset := 0
+    if l := c.QueryParam("limit"); l != "" {
+        if val, err := strconv.Atoi(l); err == nil {
+            limit = val
+        }
+    }
+    if o := c.QueryParam("offset"); o != "" {
+        if val, err := strconv.Atoi(o); err == nil {
+            offset = val
+        }
+    }
+
+    // 3. Query: GetSellerMenuPublic (Strict filtering: Approved & Verified only)
+    foods, err := queries.GetSellerMenuPublic(ctx, database.GetSellerMenuPublicParams{
+        SellerID: pgtype.UUID{Bytes: sellerUUID, Valid: true},
+        Limit:    int32(limit),
+        Offset:   int32(offset),
+    })
+    
+    if err != nil {
+        return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch menu"})
+    }
+
+    // Return empty array instead of null
+    if foods == nil {
+        foods = []database.Food{} 
+    }
+
+    return c.JSON(http.StatusOK, foods)
 }

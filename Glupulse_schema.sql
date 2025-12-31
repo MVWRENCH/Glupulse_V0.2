@@ -73,99 +73,17 @@ CREATE TYPE public.activity_activity_intensity AS ENUM (
 ALTER TYPE public.activity_activity_intensity OWNER TO postgres;
 
 --
--- Name: chat_conversations_participant1_type; Type: TYPE; Schema: public; Owner: postgres
+-- Name: seller_admin_status; Type: TYPE; Schema: public; Owner: postgres
 --
 
-CREATE TYPE public.chat_conversations_participant1_type AS ENUM (
-    'user',
-    'seller',
-    'doctor'
-);
-
-
-ALTER TYPE public.chat_conversations_participant1_type OWNER TO postgres;
-
---
--- Name: chat_conversations_participant2_type; Type: TYPE; Schema: public; Owner: postgres
---
-
-CREATE TYPE public.chat_conversations_participant2_type AS ENUM (
-    'user',
-    'seller',
-    'doctor'
-);
-
-
-ALTER TYPE public.chat_conversations_participant2_type OWNER TO postgres;
-
---
--- Name: chat_messages_sender_type; Type: TYPE; Schema: public; Owner: postgres
---
-
-CREATE TYPE public.chat_messages_sender_type AS ENUM (
-    'user',
-    'seller',
-    'doctor'
-);
-
-
-ALTER TYPE public.chat_messages_sender_type OWNER TO postgres;
-
---
--- Name: doctor_appointments_appointment_status; Type: TYPE; Schema: public; Owner: postgres
---
-
-CREATE TYPE public.doctor_appointments_appointment_status AS ENUM (
-    'scheduled',
-    'confirmed',
-    'completed',
-    'cancelled',
-    'rescheduled',
-    'no_show'
-);
-
-
-ALTER TYPE public.doctor_appointments_appointment_status OWNER TO postgres;
-
---
--- Name: doctor_appointments_appointment_type; Type: TYPE; Schema: public; Owner: postgres
---
-
-CREATE TYPE public.doctor_appointments_appointment_type AS ENUM (
-    'video_call',
-    'chat',
-    'in_person',
-    'phone_call'
-);
-
-
-ALTER TYPE public.doctor_appointments_appointment_type OWNER TO postgres;
-
---
--- Name: seller_promotions_promotion_type; Type: TYPE; Schema: public; Owner: postgres
---
-
-CREATE TYPE public.seller_promotions_promotion_type AS ENUM (
-    'percentage',
-    'fixed_amount'
-);
-
-
-ALTER TYPE public.seller_promotions_promotion_type OWNER TO postgres;
-
---
--- Name: seller_seller_status; Type: TYPE; Schema: public; Owner: postgres
---
-
-CREATE TYPE public.seller_seller_status AS ENUM (
+CREATE TYPE public.seller_admin_status AS ENUM (
     'active',
-    'inactive',
     'suspended',
-    'pending'
+    'blacklisted'
 );
 
 
-ALTER TYPE public.seller_seller_status OWNER TO postgres;
+ALTER TYPE public.seller_admin_status OWNER TO postgres;
 
 --
 -- Name: seller_verification_status; Type: TYPE; Schema: public; Owner: postgres
@@ -207,6 +125,20 @@ CREATE TYPE public.user_order_payment_status AS ENUM (
 
 
 ALTER TYPE public.user_order_payment_status OWNER TO postgres;
+
+--
+-- Name: user_status; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.user_status AS ENUM (
+    'active',
+    'suspended',
+    'banned',
+    'deactivated'
+);
+
+
+ALTER TYPE public.user_status OWNER TO postgres;
 
 --
 -- Name: user_transaction_payment_status; Type: TYPE; Schema: public; Owner: postgres
@@ -456,22 +388,6 @@ $$;
 ALTER FUNCTION public.link_meal_to_recommendation(p_meal_id uuid, p_food_id uuid) OWNER TO postgres;
 
 --
--- Name: update_address_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.update_address_updated_at() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$;
-
-
-ALTER FUNCTION public.update_address_updated_at() OWNER TO postgres;
-
---
 -- Name: update_last_interaction_at_column(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -488,20 +404,28 @@ $$;
 ALTER FUNCTION public.update_last_interaction_at_column() OWNER TO postgres;
 
 --
--- Name: update_seller_profiles_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: update_seller_rating_stats(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.update_seller_profiles_updated_at() RETURNS trigger
+CREATE FUNCTION public.update_seller_rating_stats() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    NEW.updated_at = NOW();
+    UPDATE seller_profiles
+    SET 
+        -- Count all rows for this seller
+        review_count = (SELECT COUNT(*) FROM seller_reviews WHERE seller_id = NEW.seller_id),
+        
+        -- Calculate average (default to 0 if null)
+        average_rating = (SELECT COALESCE(AVG(rating), 0) FROM seller_reviews WHERE seller_id = NEW.seller_id)
+    WHERE seller_id = NEW.seller_id;
+    
     RETURN NEW;
 END;
 $$;
 
 
-ALTER FUNCTION public.update_seller_profiles_updated_at() OWNER TO postgres;
+ALTER FUNCTION public.update_seller_rating_stats() OWNER TO postgres;
 
 --
 -- Name: update_updated_at_column(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -716,6 +640,41 @@ ALTER SEQUENCE public.activity_types_activity_type_id_seq OWNED BY public.activi
 
 
 --
+-- Name: admin_refresh_tokens; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.admin_refresh_tokens (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    admin_id uuid NOT NULL,
+    refresh_token text NOT NULL,
+    user_agent text NOT NULL,
+    client_ip text NOT NULL,
+    is_blocked boolean DEFAULT false,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.admin_refresh_tokens OWNER TO postgres;
+
+--
+-- Name: admins; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.admins (
+    admin_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    username character varying(50) NOT NULL,
+    password_hash character varying(255) NOT NULL,
+    role character varying(20) DEFAULT 'super_admin'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    last_login_at timestamp with time zone
+);
+
+
+ALTER TABLE public.admins OWNER TO postgres;
+
+--
 -- Name: food_categories; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -786,7 +745,9 @@ CREATE TABLE public.foods (
     monounsaturated_fat_grams numeric(6,2),
     polyunsaturated_fat_grams numeric(6,2),
     cholesterol_mg numeric(6,2),
-    is_active boolean
+    is_active boolean DEFAULT true,
+    is_approved character varying(10) DEFAULT 'pending'::character varying,
+    rejection_reason text
 );
 
 
@@ -1111,8 +1072,11 @@ CREATE TABLE public.seller_profiles (
     price_range integer,
     rejection_reason text,
     verified_at timestamp with time zone,
-    average_rating numeric(3,2) DEFAULT 0.00,
+    average_rating numeric(3,1) DEFAULT 0.0,
     review_count integer DEFAULT 0,
+    admin_status public.seller_admin_status DEFAULT 'active'::public.seller_admin_status,
+    suspension_reason text,
+    admin_notes text,
     CONSTRAINT seller_profiles_price_range_check CHECK (((price_range >= 1) AND (price_range <= 4)))
 );
 
@@ -1138,6 +1102,19 @@ CREATE TABLE public.seller_reviews (
 
 
 ALTER TABLE public.seller_reviews OWNER TO postgres;
+
+--
+-- Name: system_settings; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.system_settings (
+    key character varying(50) NOT NULL,
+    value boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.system_settings OWNER TO postgres;
 
 --
 -- Name: user_activity_logs; Type: TABLE; Schema: public; Owner: postgres
@@ -1649,7 +1626,11 @@ CREATE TABLE public.users (
     user_last_login_at timestamp with time zone,
     user_email_auth character varying(255),
     is_email_verified boolean DEFAULT false,
-    email_verified_at timestamp with time zone
+    email_verified_at timestamp with time zone,
+    status public.user_status DEFAULT 'active'::public.user_status,
+    status_reason text,
+    status_updated_at timestamp with time zone,
+    admin_notes text
 );
 
 
@@ -1710,26 +1691,6 @@ COMMENT ON COLUMN public.users.user_email_auth IS 'Email from OAuth provider (ma
 
 COMMENT ON COLUMN public.users.is_email_verified IS 'Whether user has verified their email via OTP';
 
-
---
--- Name: users_auth; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.users_auth (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    email character varying(255) NOT NULL,
-    name character varying(255),
-    avatar_url text,
-    provider character varying(50) NOT NULL,
-    provider_user_id character varying(255) NOT NULL,
-    raw_data jsonb,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    last_login_at timestamp with time zone
-);
-
-
-ALTER TABLE public.users_auth OWNER TO postgres;
 
 --
 -- Name: users_refresh_tokens; Type: TABLE; Schema: public; Owner: postgres
@@ -1821,6 +1782,30 @@ ALTER TABLE ONLY public.activity_types
 
 ALTER TABLE ONLY public.activity_types
     ADD CONSTRAINT activity_types_pkey PRIMARY KEY (activity_type_id);
+
+
+--
+-- Name: admin_refresh_tokens admin_refresh_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.admin_refresh_tokens
+    ADD CONSTRAINT admin_refresh_tokens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: admins admins_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.admins
+    ADD CONSTRAINT admins_pkey PRIMARY KEY (admin_id);
+
+
+--
+-- Name: admins admins_username_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.admins
+    ADD CONSTRAINT admins_username_key UNIQUE (username);
 
 
 --
@@ -1989,6 +1974,14 @@ ALTER TABLE ONLY public.seller_profiles
 
 ALTER TABLE ONLY public.seller_reviews
     ADD CONSTRAINT seller_reviews_pkey PRIMARY KEY (review_id);
+
+
+--
+-- Name: system_settings system_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.system_settings
+    ADD CONSTRAINT system_settings_pkey PRIMARY KEY (key);
 
 
 --
@@ -2192,30 +2185,6 @@ ALTER TABLE ONLY public.user_sleep_logs
 
 
 --
--- Name: users_auth users_auth_email_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.users_auth
-    ADD CONSTRAINT users_auth_email_key UNIQUE (email);
-
-
---
--- Name: users_auth users_auth_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.users_auth
-    ADD CONSTRAINT users_auth_pkey PRIMARY KEY (id);
-
-
---
--- Name: users_auth users_auth_provider_provider_user_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.users_auth
-    ADD CONSTRAINT users_auth_provider_provider_user_id_key UNIQUE (provider, provider_user_id);
-
-
---
 -- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -2237,6 +2206,14 @@ ALTER TABLE ONLY public.users_refresh_tokens
 
 ALTER TABLE ONLY public.users_refresh_tokens
     ADD CONSTRAINT users_refresh_tokens_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: users users_user_email_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_user_email_key UNIQUE (user_email);
 
 
 --
@@ -2871,13 +2848,6 @@ CREATE INDEX idx_user_roles_role_id ON public.user_roles USING btree (role_id);
 
 
 --
--- Name: idx_users_email; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_users_email ON public.users_auth USING btree (email);
-
-
---
 -- Name: idx_users_email_auth; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -2889,13 +2859,6 @@ CREATE INDEX idx_users_email_auth ON public.users USING btree (user_email_auth);
 --
 
 CREATE INDEX idx_users_provider ON public.users USING btree (user_provider, user_provider_user_id);
-
-
---
--- Name: idx_users_provider_user_id; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_users_provider_user_id ON public.users_auth USING btree (provider, provider_user_id);
 
 
 --
@@ -2920,6 +2883,20 @@ CREATE TRIGGER "Trigger_Ensure_One_Default_Address" BEFORE INSERT OR UPDATE ON p
 
 
 --
+-- Name: seller_profiles Update_update_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "Update_update_at_column()" BEFORE UPDATE ON public.seller_profiles FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: seller_reviews Update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "Update_updated_at_column()" BEFORE UPDATE ON public.seller_reviews FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
 -- Name: user_glucose_readings trigger_calculate_glucose_trend; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -2934,13 +2911,6 @@ CREATE TRIGGER trigger_calculate_hba1c_metrics BEFORE INSERT OR UPDATE ON public
 
 
 --
--- Name: seller_profiles trigger_seller_profiles_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER trigger_seller_profiles_updated_at BEFORE UPDATE ON public.seller_profiles FOR EACH ROW EXECUTE FUNCTION public.update_seller_profiles_updated_at();
-
-
---
 -- Name: user_hba1c_records trigger_update_profile_after_hba1c; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -2948,10 +2918,10 @@ CREATE TRIGGER trigger_update_profile_after_hba1c AFTER INSERT OR UPDATE ON publ
 
 
 --
--- Name: user_addresses trigger_user_addresses_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: seller_reviews trigger_update_seller_rating; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trigger_user_addresses_updated_at BEFORE UPDATE ON public.user_addresses FOR EACH ROW EXECUTE FUNCTION public.update_user_addresses_updated_at();
+CREATE TRIGGER trigger_update_seller_rating AFTER INSERT OR DELETE OR UPDATE OF rating ON public.seller_reviews FOR EACH ROW EXECUTE FUNCTION public.update_seller_rating_stats();
 
 
 --
@@ -3001,6 +2971,13 @@ CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.foods FOR EA
 --
 
 CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_activity_logs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: user_addresses update_updated_at_column(); Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER "update_updated_at_column()" BEFORE UPDATE ON public.user_addresses FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
 --
@@ -3060,13 +3037,6 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON public.users FOR EACH RO
 
 
 --
--- Name: users_auth update_users_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON public.users_auth FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
-
-
---
 -- Name: activities activities_activity_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -3088,6 +3058,14 @@ ALTER TABLE ONLY public.user_cart_items
 
 ALTER TABLE ONLY public.user_cart_items
     ADD CONSTRAINT cart_items_food_id_fkey FOREIGN KEY (food_id) REFERENCES public.foods(food_id) ON DELETE CASCADE;
+
+
+--
+-- Name: admin_refresh_tokens fk_admin_refresh_token; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.admin_refresh_tokens
+    ADD CONSTRAINT fk_admin_refresh_token FOREIGN KEY (admin_id) REFERENCES public.admins(admin_id) ON DELETE CASCADE;
 
 
 --

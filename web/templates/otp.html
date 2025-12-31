@@ -252,6 +252,13 @@
                 });
 
                 const data = await response.json();
+                if (response.status === 403 && data.error === 'store_blacklisted') {
+                    showToast("Akses Ditolak: Toko diblacklist", "error");
+                    setTimeout(() => {
+                        window.location.href = data.redirect; // Redirect manually
+                    }, 1500);
+                    return;
+                }
 
                 if (response.ok) {
                     showToast('Verifikasi Berhasil!', 'success');

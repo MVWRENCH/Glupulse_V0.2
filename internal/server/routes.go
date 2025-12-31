@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	user "Glupulse_V0.2/internal/User"
+	"Glupulse_V0.2/internal/admin"
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
 	"Glupulse_V0.2/internal/seller"
@@ -51,14 +52,22 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	// Traditional Auth Routes
 	e.POST("/signup", auth.SignupHandler)
-	e.POST("/auth/seller/signup", auth.SellerSignupHandler)
 	e.POST("/login", auth.LoginHandler)
 	e.POST("/verify-otp", auth.VerifyOTPHandler)
-	e.POST("/auth/seller/verify-otp", auth.VerifySellerOTPHandler)
 	e.POST("/resend-otp", auth.ResendOTPHandler)
 	e.POST("/password/reset/request", auth.RequestPasswordResetHandler)
 	e.POST("/password/reset/complete", auth.ResetPasswordHandler)
 	e.GET("/auth/verify-email-change", user.VerifyEmailChangeHandler)
+
+	// Traditional Seller Dedicated Auth Routes
+	e.POST("/auth/seller/signup", auth.SellerSignupHandler)
+	e.POST("/auth/seller/verify-otp", auth.VerifySellerOTPHandler)
+
+	// Traditional Admin Dedicated Auth Routes
+	e.POST("/auth/admin/login", auth.AdminLoginHandler)
+	e.POST("/auth/admin/register", auth.AdminRegisterHandler)
+	e.POST("/auth/admin/logout", auth.AdminLogoutHandler)
+	e.POST("/auth/admin/refresh", auth.AdminRefreshTokenHandler)
 
 	// Seller Web pages routes
 	e.GET("/health", s.healthHandler)
@@ -66,6 +75,10 @@ func (s *Server) RegisterRoutes() http.Handler {
 	e.GET("/seller/register", s.renderRegisterHandler)              // Serves the register.html page
 	e.GET("/seller/verify-otp", s.RenderOTPHandler)                 // Serves the otp.html page
 	e.GET("/seller/forgot_password", s.RenderForgotPasswordHandler) // Serves the forgot_password.html page
+
+	//Admin Web Pages routes
+	e.GET("/admin/login", s.renderAdminLoginHandler)
+	e.GET("/admin/dashboard", s.RenderAdminHandler)
 
 	// Seller Web OAuth routes
 	e.GET("/auth/:provider", auth.ProviderHandler)
@@ -109,6 +122,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.POST("/cart/remove", user.RemoveItemFromCartHandler) // Use POST to support a body
 	protected.POST("/checkout", user.CheckoutHandler)
 	protected.GET("/foods", user.ListAllFoodsHandler)
+	protected.GET("/foods/:seller_id", user.ListPublicSellerMenuHandler)
 	protected.GET("/food/categories", user.ListAllFoodCategoriesHandler)
 	protected.GET("/order/history", user.GetUserOrderHistoryHandler)
 	protected.GET("/order/active", user.TrackUserActiveOrdersHandler)
@@ -166,34 +180,81 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.POST("/recommendation/feedback/activity/view/:session_id", user.MarkActivityViewedHandler)
 	protected.POST("/recommendation/feedback/activity/completed/:session_id", user.MarkActivityCompletedHandler)
 
+	sellerGroup := e.Group("")
+	sellerGroup.Use(auth.JwtAuthMiddleware)
+	sellerGroup.Use(auth.SellerActionGuard)
+
 	//Seller Protected Web Page
-	protected.GET("/seller/dashboard", s.RenderSellerDashboardHandler)
-	protected.GET("/seller/orders", s.RenderSellerDashboardHandler)
-	protected.GET("/seller/menu", s.RenderSellerDashboardHandler)
-	protected.GET("/seller/reports", s.RenderSellerDashboardHandler)
-	protected.GET("/seller/store-reviews", s.RenderSellerDashboardHandler)
-	protected.GET("/seller/store-profile", s.RenderSellerDashboardHandler)
+	sellerGroup.GET("/seller/dashboard", s.RenderSellerDashboardHandler)
+	sellerGroup.GET("/seller/orders", s.RenderSellerDashboardHandler)
+	sellerGroup.GET("/seller/menu", s.RenderSellerDashboardHandler)
+	sellerGroup.GET("/seller/reports", s.RenderSellerDashboardHandler)
+	sellerGroup.GET("/seller/store-reviews", s.RenderSellerDashboardHandler)
+	sellerGroup.GET("/seller/store-profile", s.RenderSellerDashboardHandler)
 
-	//Websocket for seller dashboard website client
-	protected.GET("/seller/ws", seller.DashboardSocketHandler)
+	// Websocket for seller dashboard website client
+	sellerGroup.GET("/seller/ws", seller.DashboardSocketHandler)
 
-	//Seller Functions Routes
-	protected.GET("seller/menus", seller.ListSellerFoodsHandler)
-	protected.GET("seller/menu/:food_id", seller.GetFoodDetailHandler)
-	protected.POST("seller/menu", seller.CreateFoodHandler)
-	protected.PUT("seller/menu/:food_id", seller.UpdateFoodHandler)
-	protected.DELETE("seller/menu/:food_id", seller.DeleteFoodHandler)
-	protected.GET("/seller/profile", seller.GetSellerProfileByIDHandler)
-	protected.GET("/seller/profile/:seller_id", seller.GetPublicSellerProfileHandler)
-	protected.GET("/seller/orders/incoming", seller.GetIncomingOrdersHandler)
-	protected.GET("/seller/orders/active", seller.GetActiveOrdersHandler)
-	protected.GET("/seller/orders/history", seller.GetOrderHistoryHandler)
-	protected.PUT("/seller/orders/status/:order_id", seller.UpdateOrderStatusHandler)
-	protected.GET("/seller/stats", seller.GetSellerDashboardStatsHandler)
-	protected.GET("/seller/stats/chart", seller.GetSellerSalesChartHandler)
-	protected.PUT("/seller/profile", seller.UpdateSellerProfileHandler)
-	protected.GET("/seller/reviews", seller.GetSellerReviewsHandler)
-	protected.POST("/seller/reviews/reply/:review_id", seller.ReplyToReviewHandler)
+	// Seller Functions Routes
+	sellerGroup.GET("/seller/menus", seller.ListSellerInventoryHandler)
+	sellerGroup.GET("/seller/menu/:food_id", seller.GetFoodDetailHandler)
+	sellerGroup.POST("/seller/menu", seller.CreateFoodHandler)
+	sellerGroup.PUT("/seller/menu/:food_id", seller.UpdateFoodHandler)
+	sellerGroup.DELETE("/seller/menu/:food_id", seller.DeleteFoodHandler)
+
+	sellerGroup.GET("/seller/profile", seller.GetSellerProfileByIDHandler)
+	sellerGroup.GET("/seller/profile/:seller_id", seller.GetPublicSellerProfileHandler)
+	sellerGroup.PUT("/seller/profile", seller.UpdateSellerProfileHandler)
+
+	sellerGroup.GET("/seller/orders/incoming", seller.GetIncomingOrdersHandler)
+	sellerGroup.GET("/seller/orders/active", seller.GetActiveOrdersHandler)
+	sellerGroup.GET("/seller/orders/history", seller.GetOrderHistoryHandler)
+	sellerGroup.PUT("/seller/orders/status/:order_id", seller.UpdateOrderStatusHandler)
+
+	sellerGroup.GET("/seller/stats", seller.GetSellerDashboardStatsHandler)
+	sellerGroup.GET("/seller/stats/chart", seller.GetSellerSalesChartHandler)
+
+	sellerGroup.GET("/seller/reviews", seller.GetSellerReviewsHandler)
+	sellerGroup.POST("/seller/reviews/reply/:review_id", seller.ReplyToReviewHandler)
+
+	// --- ADMIN PROTECTED ROUTES ---
+	adminGroup := e.Group("/admin")
+	adminGroup.Use(auth.AdminJwtAuthMiddleware)
+
+	// SelAdminler Functions Routes
+	adminGroup.GET("/ws", admin.AdminWebSocketHandler)
+	adminGroup.GET("/dashboard/stats", admin.GetAdminDashboardHandler)
+	adminGroup.PUT("/verify-seller/:seller_id", admin.VerifySellerHandler)
+	adminGroup.PUT("/verify-food/:food_id", admin.ApproveFoodHandler)
+	adminGroup.GET("/pending-food/:food_id", admin.GetPendingFoodDetailHandler)
+	adminGroup.GET("/pending-sellerprofile/:seller_id", admin.GetPendingSellerProfileHandler)
+	adminGroup.GET("/pending-seller", admin.GetPendingSellersHandler)
+	adminGroup.GET("/pending-food", admin.GetPendingFoodsHandler)
+	adminGroup.GET("/users", admin.AdminListUsersHandler)
+	adminGroup.GET("/users/:user_id", admin.AdminGetUserOverviewHandler)
+	adminGroup.PUT("/users/status/:user_id", admin.AdminUpdateUserStatusHandler)
+	adminGroup.PUT("/users/notes/:user_id", admin.AdminUpdateNotesHandler)
+	adminGroup.POST("/users/force-reset/:user_id", admin.AdminForceResetHandler)
+	adminGroup.GET("/sellers", admin.AdminListSellersHandler)
+	adminGroup.GET("/seller/:seller_id", admin.AdminGetSellerDetailHandler)
+	adminGroup.PUT("/seller/status/:seller_id", admin.AdminUpdateSellerStatusHandler)
+	adminGroup.PUT("/seller/notes/:seller_id", admin.AdminUpdateSellerNotesHandler)
+	adminGroup.GET("/seller/reviews/:seller_id", admin.AdminGetSellerReviewsHandler)
+	adminGroup.DELETE("/seller/reviews/:review_id", admin.AdminDeleteReviewHandler)
+	adminGroup.GET("/seller/menu/:seller_id", admin.AdminGetSellerMenuHandler)
+	adminGroup.GET("/foods", admin.AdminListAllFoodsHandler)
+	adminGroup.GET("/food/:food_id", admin.AdminGetFoodDetailHandler)
+	adminGroup.PUT("/food/visibility/:food_id", admin.AdminToggleFoodActiveHandler)
+	adminGroup.DELETE("/food/:food_id", admin.AdminDeleteFoodHandler)
+	adminGroup.GET("/ai/dashboard", admin.GetAIAnalyticsDashboardHandler)
+	adminGroup.GET("/ai/sessions", admin.AdminListAllSessionsHandler)
+	adminGroup.GET("/ai/sessions/:session_id", admin.GetSessionAuditHandler)
+	adminGroup.GET("/logs/auth", admin.AdminListAuthLogsHandler)
+	adminGroup.GET("/access/admins", admin.ListAdminsHandler)
+	adminGroup.POST("/access/admin", admin.CreateAdminHandler)
+	adminGroup.PATCH("/access/admin/role/:admin_id", admin.UpdateAdminRoleHandler)
+	adminGroup.DELETE("/access/admin/:admin_id", admin.DeleteAdminHandler)
+	adminGroup.GET("/server/health", admin.GetServerHealthHandler)
 
 	return e
 }
@@ -311,4 +372,16 @@ func (s *Server) RenderSellerDashboardHandler(c echo.Context) error {
 
 	// 5. Render
 	return c.Render(http.StatusOK, "index.html", data)
+}
+
+/* ====================================================================
+                   		Admin Web Handler
+==================================================================== */
+
+func (s *Server) renderAdminLoginHandler(c echo.Context) error {
+	return c.Render(http.StatusOK, "admin_login.html", nil)
+}
+
+func (s *Server) RenderAdminHandler(c echo.Context) error {
+	return c.Render(http.StatusOK, "admin_index.html", map[string]interface{}{})
 }

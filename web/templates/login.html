@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
         tailwind.config = {
@@ -178,9 +179,57 @@
 
     <script>
         // --- CONFIGURATION ---
-        // IMPORTANT: Change this to match your Go Backend URL
         const API_BASE_URL = window.location.origin;
         
+        // --- HANDLE URL ERRORS (NEW LOGIC ADDED HERE) ---
+        document.addEventListener('DOMContentLoaded', () => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const errorType = urlParams.get('error');
+
+                if (errorType) {
+                    let title = "Login Gagal";
+                    let text = "Terjadi kesalahan saat mencoba masuk.";
+                    let icon = "error";
+
+                    // --- USER STATUS ERRORS ---
+                    if (errorType === 'account_suspended') {
+                        title = "Akun Ditangguhkan";
+                        text = "Akun Anda sedang ditangguhkan sementara (Suspended). Silakan hubungi admin untuk informasi lebih lanjut.";
+                        icon = "warning";
+                    } 
+                    else if (errorType === 'account_banned') {
+                        title = "Akun Diblokir";
+                        text = "Akun Anda telah diblokir secara permanen (Banned) karena pelanggaran kebijakan.";
+                    } 
+                    else if (errorType === 'account_deactivated') {
+                        title = "Akun Nonaktif";
+                        text = "Akun ini telah dinonaktifkan. Jika ini kesalahan, silakan hubungi support untuk mengaktifkan kembali.";
+                        icon = "info";
+                    }
+                    // --- SELLER STATUS ERRORS ---
+                    else if (errorType === 'store_blacklisted') {
+                        title = "Toko Diberhentikan";
+                        text = "Akses Ditolak: Toko ini telah di-blacklist secara permanen.";
+                    }
+                    // --- GENERIC ---
+                    else if (errorType === 'access_denied') {
+                        title = "Akses Ditolak";
+                        text = "Anda tidak memiliki izin untuk mengakses halaman ini.";
+                    }
+
+                    // Show SweetAlert
+                    Swal.fire({
+                        icon: icon,
+                        title: title,
+                        text: text,
+                        confirmButtonColor: '#0ea5e9',
+                        confirmButtonText: 'Mengerti',
+                        allowOutsideClick: false
+                    }).then(() => {
+                        window.history.replaceState({}, document.title, window.location.pathname);
+                    });
+                }
+            });
         // --- UI UTILS ---
         function togglePassword() {
             const passwordInput = document.getElementById('password');
@@ -250,8 +299,6 @@
             btn.classList.add('opacity-75', 'cursor-not-allowed');
 
             try {
-                console.log(`Sending request to: ${API_BASE_URL}/login`); // Debug log
-
                 const response = await fetch(`${API_BASE_URL}/login`, {
                     method: 'POST',
                     headers: { 
@@ -261,11 +308,17 @@
                     body: JSON.stringify({ username, password })
                 });
 
-                // Handle Non-JSON responses (Debug help)
+                // Check for redirects manually if fetch followed it (usually browser handles redirects)
+                // If fetch was redirected to ?error=..., the page will reload or we handle it here if it's an AJAX redirect response
+                if (response.redirected) {
+                    window.location.href = response.url;
+                    return;
+                }
+
                 const contentType = response.headers.get("content-type");
                 if (!contentType || !contentType.includes("application/json")) {
                     const text = await response.text();
-                    console.error("Server Response (Not JSON):", text); // See console for the HTML error
+                    console.error("Server Response (Not JSON):", text);
                     throw new Error(`Server Error: Endpoint not found or Server Crash (${response.status})`);
                 }
 
@@ -274,6 +327,7 @@
                 if (response.status === 202) {
                     showToast('Kode OTP dikirim ke email Anda', 'success');
                     localStorage.setItem('user_id', data.user_id);
+                    localStorage.setItem('temp_email', username);
                     localStorage.setItem('otp_expires_in', data.expires_in || 60);
                     setTimeout(() => window.location.href = '/seller/verify-otp', 1000);
                 } else if (response.ok) {

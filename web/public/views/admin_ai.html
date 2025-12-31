@@ -1,0 +1,152 @@
+<div class="space-y-6 animate-fade-in">
+    
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-bold text-white tracking-tight">AI Analytics</h2>
+            <p class="text-sm text-gray-400 mt-1">Monitor AI model performance, usage trends, and session quality.</p>
+        </div>
+        <div class="flex items-center gap-2">
+             <button onclick="initAIPage()" class="bg-gray-800 hover:bg-gray-700 text-white p-2.5 rounded-xl border border-gray-700 transition shadow-sm group">
+                <i class="fas fa-sync-alt group-hover:rotate-180 transition-transform duration-500"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold"><i class="fas fa-brain"></i></div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Total Sessions</p>
+                    <p class="text-xl font-bold text-white" id="ai_stat_sessions">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold"><i class="fas fa-check-double"></i></div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Avg. Confidence</p>
+                    <p class="text-xl font-bold text-white" id="ai_stat_confidence">0%</p>
+                </div>
+            </div>
+        </div>
+         <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold"><i class="fas fa-thumbs-up"></i></div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Helpfulness Rate</p>
+                    <p class="text-xl font-bold text-white" id="ai_stat_helpful">0%</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold"><i class="fas fa-bolt"></i></div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Peak Daily Requests</p>
+                    <p class="text-xl font-bold text-white" id="ai_stat_peak">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 bg-gray-800 rounded-2xl border border-gray-700 p-5 shadow-lg">
+            <h3 class="text-sm font-bold text-white mb-4">Request Volume (Last 30 Days)</h3>
+            <div id="aiUsageChart" class="w-full h-64"></div>
+        </div>
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 p-5 shadow-lg">
+            <h3 class="text-sm font-bold text-white mb-4">User Feedback Distribution</h3>
+            <div id="aiFeedbackChart" class="w-full h-64 flex items-center justify-center"></div>
+        </div>
+    </div>
+
+    <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-xl overflow-hidden">
+        <div class="p-4 border-b border-gray-700 flex flex-col sm:flex-row gap-3 bg-gray-900/50 items-center">
+            <div class="relative flex-1 w-full">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+                <input type="text" id="aiSessionSearch" oninput="filterAISessions()" placeholder="Search session ID or user email..." 
+                    class="w-full bg-gray-800/50 border border-gray-600 text-white text-sm rounded-xl py-2.5 pl-9 pr-4 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all placeholder-gray-500 hover:bg-gray-800">
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-gray-900/80 text-xs uppercase text-gray-400 font-bold tracking-wider">
+                    <tr>
+                        <th class="p-4 border-b border-gray-700">User</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Req. Types</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Model</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Confidence</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Date</th>
+                        <th class="p-4 border-b border-gray-700 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="aiSessionsTableBody" class="divide-y divide-gray-700 text-sm bg-gray-800/20">
+                    </tbody>
+            </table>
+        </div>
+        
+        <div class="p-4 border-t border-gray-700 bg-gray-900/50 flex justify-between items-center text-xs text-gray-500">
+            <span id="aiSessionCount">Showing 0 sessions</span>
+        </div>
+    </div>
+</div>
+
+<div id="aiSessionModal" class="fixed inset-0 z-[120] hidden flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+    <div class="bg-gray-800 w-full max-w-5xl h-[85vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden animate-pop-in">
+        <div class="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-900">
+            <div>
+                <h2 class="text-xl font-bold text-white flex items-center gap-2"><i class="fas fa-robot text-indigo-500"></i> AI Session Analysis</h2>
+                <p class="text-xs text-gray-500 mt-1 font-mono" id="ai_modal_session_id">Session ID: ...</p>
+            </div>
+            <button onclick="closeModal('aiSessionModal')" class="text-gray-400 hover:text-red-500 text-2xl transition">&times;</button>
+        </div>
+        <div class="flex-1 flex overflow-hidden">
+            <div class="w-80 bg-gray-900/50 border-r border-gray-700 p-6 overflow-y-auto custom-scroll flex-shrink-0">
+                <div class="text-center mb-6">
+                    <img id="ai_modal_avatar" src="" class="w-16 h-16 rounded-full mx-auto mb-3 border-2 border-gray-700">
+                    <h3 id="ai_modal_username" class="text-sm font-bold text-white">...</h3>
+                    <p id="ai_modal_email" class="text-xs text-gray-500">...</p>
+                </div>
+                <div class="space-y-4">
+                    <div class="bg-gray-800 p-3 rounded-xl border border-gray-700">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase">Model Used</p>
+                        <p id="ai_modal_model" class="text-sm text-indigo-300 font-mono mt-1 break-all">...</p>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-gray-800 p-3 rounded-xl border border-gray-700 text-center">
+                            <p class="text-[10px] font-bold text-gray-500 uppercase">Glucose</p>
+                            <p id="ai_modal_glucose" class="text-lg font-bold text-white mt-1">...</p>
+                        </div>
+                        <div class="bg-gray-800 p-3 rounded-xl border border-gray-700 text-center">
+                            <p class="text-[10px] font-bold text-gray-500 uppercase">HbA1c</p>
+                            <p id="ai_modal_hba1c" class="text-lg font-bold text-white mt-1">...</p>
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 p-3 rounded-xl border border-gray-700">
+                        <p class="text-[10px] font-bold text-gray-500 uppercase mb-2">Confidence Score</p>
+                        <div class="w-full bg-gray-700 rounded-full h-2">
+                            <div id="ai_modal_confidence_bar" class="bg-emerald-500 h-2 rounded-full" style="width: 0%"></div>
+                        </div>
+                        <p id="ai_modal_confidence_text" class="text-right text-xs font-bold text-emerald-400 mt-1">0%</p>
+                    </div>
+                </div>
+            </div>
+            <div class="flex-1 overflow-y-auto custom-scroll p-6 bg-gray-900">
+                <div class="mb-8">
+                    <h3 class="text-sm font-bold text-gray-300 uppercase tracking-wider mb-3 border-b border-gray-700 pb-2">AI Analysis & Summary</h3>
+                    <div class="bg-gray-800 p-5 rounded-2xl border border-gray-700 text-gray-300 text-sm leading-relaxed whitespace-pre-wrap font-sans" id="ai_modal_response">Loading analysis...</div>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-gray-300 uppercase tracking-wider mb-4 border-b border-gray-700 pb-2">Recommendations</h3>
+                    <div class="space-y-6">
+                        <div><h4 class="text-xs font-bold text-green-400 uppercase mb-3">Food</h4><div id="ai_modal_foods_list" class="grid grid-cols-1 gap-3"></div></div>
+                        <div><h4 class="text-xs font-bold text-orange-400 uppercase mb-3">Activity</h4><div id="ai_modal_activities_list" class="grid grid-cols-1 gap-3"></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

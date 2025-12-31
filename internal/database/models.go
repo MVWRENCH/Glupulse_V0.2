@@ -55,309 +55,47 @@ func (ns NullActivityActivityIntensity) Value() (driver.Value, error) {
 	return string(ns.ActivityActivityIntensity), nil
 }
 
-type ChatConversationsParticipant1Type string
+type SellerAdminStatus string
 
 const (
-	ChatConversationsParticipant1TypeUser   ChatConversationsParticipant1Type = "user"
-	ChatConversationsParticipant1TypeSeller ChatConversationsParticipant1Type = "seller"
-	ChatConversationsParticipant1TypeDoctor ChatConversationsParticipant1Type = "doctor"
+	SellerAdminStatusActive      SellerAdminStatus = "active"
+	SellerAdminStatusSuspended   SellerAdminStatus = "suspended"
+	SellerAdminStatusBlacklisted SellerAdminStatus = "blacklisted"
 )
 
-func (e *ChatConversationsParticipant1Type) Scan(src interface{}) error {
+func (e *SellerAdminStatus) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = ChatConversationsParticipant1Type(s)
+		*e = SellerAdminStatus(s)
 	case string:
-		*e = ChatConversationsParticipant1Type(s)
+		*e = SellerAdminStatus(s)
 	default:
-		return fmt.Errorf("unsupported scan type for ChatConversationsParticipant1Type: %T", src)
+		return fmt.Errorf("unsupported scan type for SellerAdminStatus: %T", src)
 	}
 	return nil
 }
 
-type NullChatConversationsParticipant1Type struct {
-	ChatConversationsParticipant1Type ChatConversationsParticipant1Type `json:"chat_conversations_participant1_type"`
-	Valid                             bool                              `json:"valid"` // Valid is true if ChatConversationsParticipant1Type is not NULL
+type NullSellerAdminStatus struct {
+	SellerAdminStatus SellerAdminStatus `json:"seller_admin_status"`
+	Valid             bool              `json:"valid"` // Valid is true if SellerAdminStatus is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullChatConversationsParticipant1Type) Scan(value interface{}) error {
+func (ns *NullSellerAdminStatus) Scan(value interface{}) error {
 	if value == nil {
-		ns.ChatConversationsParticipant1Type, ns.Valid = "", false
+		ns.SellerAdminStatus, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.ChatConversationsParticipant1Type.Scan(value)
+	return ns.SellerAdminStatus.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullChatConversationsParticipant1Type) Value() (driver.Value, error) {
+func (ns NullSellerAdminStatus) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.ChatConversationsParticipant1Type), nil
-}
-
-type ChatConversationsParticipant2Type string
-
-const (
-	ChatConversationsParticipant2TypeUser   ChatConversationsParticipant2Type = "user"
-	ChatConversationsParticipant2TypeSeller ChatConversationsParticipant2Type = "seller"
-	ChatConversationsParticipant2TypeDoctor ChatConversationsParticipant2Type = "doctor"
-)
-
-func (e *ChatConversationsParticipant2Type) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = ChatConversationsParticipant2Type(s)
-	case string:
-		*e = ChatConversationsParticipant2Type(s)
-	default:
-		return fmt.Errorf("unsupported scan type for ChatConversationsParticipant2Type: %T", src)
-	}
-	return nil
-}
-
-type NullChatConversationsParticipant2Type struct {
-	ChatConversationsParticipant2Type ChatConversationsParticipant2Type `json:"chat_conversations_participant2_type"`
-	Valid                             bool                              `json:"valid"` // Valid is true if ChatConversationsParticipant2Type is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullChatConversationsParticipant2Type) Scan(value interface{}) error {
-	if value == nil {
-		ns.ChatConversationsParticipant2Type, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.ChatConversationsParticipant2Type.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullChatConversationsParticipant2Type) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.ChatConversationsParticipant2Type), nil
-}
-
-type ChatMessagesSenderType string
-
-const (
-	ChatMessagesSenderTypeUser   ChatMessagesSenderType = "user"
-	ChatMessagesSenderTypeSeller ChatMessagesSenderType = "seller"
-	ChatMessagesSenderTypeDoctor ChatMessagesSenderType = "doctor"
-)
-
-func (e *ChatMessagesSenderType) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = ChatMessagesSenderType(s)
-	case string:
-		*e = ChatMessagesSenderType(s)
-	default:
-		return fmt.Errorf("unsupported scan type for ChatMessagesSenderType: %T", src)
-	}
-	return nil
-}
-
-type NullChatMessagesSenderType struct {
-	ChatMessagesSenderType ChatMessagesSenderType `json:"chat_messages_sender_type"`
-	Valid                  bool                   `json:"valid"` // Valid is true if ChatMessagesSenderType is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullChatMessagesSenderType) Scan(value interface{}) error {
-	if value == nil {
-		ns.ChatMessagesSenderType, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.ChatMessagesSenderType.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullChatMessagesSenderType) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.ChatMessagesSenderType), nil
-}
-
-type DoctorAppointmentsAppointmentStatus string
-
-const (
-	DoctorAppointmentsAppointmentStatusScheduled   DoctorAppointmentsAppointmentStatus = "scheduled"
-	DoctorAppointmentsAppointmentStatusConfirmed   DoctorAppointmentsAppointmentStatus = "confirmed"
-	DoctorAppointmentsAppointmentStatusCompleted   DoctorAppointmentsAppointmentStatus = "completed"
-	DoctorAppointmentsAppointmentStatusCancelled   DoctorAppointmentsAppointmentStatus = "cancelled"
-	DoctorAppointmentsAppointmentStatusRescheduled DoctorAppointmentsAppointmentStatus = "rescheduled"
-	DoctorAppointmentsAppointmentStatusNoShow      DoctorAppointmentsAppointmentStatus = "no_show"
-)
-
-func (e *DoctorAppointmentsAppointmentStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = DoctorAppointmentsAppointmentStatus(s)
-	case string:
-		*e = DoctorAppointmentsAppointmentStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for DoctorAppointmentsAppointmentStatus: %T", src)
-	}
-	return nil
-}
-
-type NullDoctorAppointmentsAppointmentStatus struct {
-	DoctorAppointmentsAppointmentStatus DoctorAppointmentsAppointmentStatus `json:"doctor_appointments_appointment_status"`
-	Valid                               bool                                `json:"valid"` // Valid is true if DoctorAppointmentsAppointmentStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullDoctorAppointmentsAppointmentStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.DoctorAppointmentsAppointmentStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.DoctorAppointmentsAppointmentStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullDoctorAppointmentsAppointmentStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.DoctorAppointmentsAppointmentStatus), nil
-}
-
-type DoctorAppointmentsAppointmentType string
-
-const (
-	DoctorAppointmentsAppointmentTypeVideoCall DoctorAppointmentsAppointmentType = "video_call"
-	DoctorAppointmentsAppointmentTypeChat      DoctorAppointmentsAppointmentType = "chat"
-	DoctorAppointmentsAppointmentTypeInPerson  DoctorAppointmentsAppointmentType = "in_person"
-	DoctorAppointmentsAppointmentTypePhoneCall DoctorAppointmentsAppointmentType = "phone_call"
-)
-
-func (e *DoctorAppointmentsAppointmentType) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = DoctorAppointmentsAppointmentType(s)
-	case string:
-		*e = DoctorAppointmentsAppointmentType(s)
-	default:
-		return fmt.Errorf("unsupported scan type for DoctorAppointmentsAppointmentType: %T", src)
-	}
-	return nil
-}
-
-type NullDoctorAppointmentsAppointmentType struct {
-	DoctorAppointmentsAppointmentType DoctorAppointmentsAppointmentType `json:"doctor_appointments_appointment_type"`
-	Valid                             bool                              `json:"valid"` // Valid is true if DoctorAppointmentsAppointmentType is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullDoctorAppointmentsAppointmentType) Scan(value interface{}) error {
-	if value == nil {
-		ns.DoctorAppointmentsAppointmentType, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.DoctorAppointmentsAppointmentType.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullDoctorAppointmentsAppointmentType) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.DoctorAppointmentsAppointmentType), nil
-}
-
-type SellerPromotionsPromotionType string
-
-const (
-	SellerPromotionsPromotionTypePercentage  SellerPromotionsPromotionType = "percentage"
-	SellerPromotionsPromotionTypeFixedAmount SellerPromotionsPromotionType = "fixed_amount"
-)
-
-func (e *SellerPromotionsPromotionType) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = SellerPromotionsPromotionType(s)
-	case string:
-		*e = SellerPromotionsPromotionType(s)
-	default:
-		return fmt.Errorf("unsupported scan type for SellerPromotionsPromotionType: %T", src)
-	}
-	return nil
-}
-
-type NullSellerPromotionsPromotionType struct {
-	SellerPromotionsPromotionType SellerPromotionsPromotionType `json:"seller_promotions_promotion_type"`
-	Valid                         bool                          `json:"valid"` // Valid is true if SellerPromotionsPromotionType is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullSellerPromotionsPromotionType) Scan(value interface{}) error {
-	if value == nil {
-		ns.SellerPromotionsPromotionType, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.SellerPromotionsPromotionType.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullSellerPromotionsPromotionType) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.SellerPromotionsPromotionType), nil
-}
-
-type SellerSellerStatus string
-
-const (
-	SellerSellerStatusActive    SellerSellerStatus = "active"
-	SellerSellerStatusInactive  SellerSellerStatus = "inactive"
-	SellerSellerStatusSuspended SellerSellerStatus = "suspended"
-	SellerSellerStatusPending   SellerSellerStatus = "pending"
-)
-
-func (e *SellerSellerStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = SellerSellerStatus(s)
-	case string:
-		*e = SellerSellerStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for SellerSellerStatus: %T", src)
-	}
-	return nil
-}
-
-type NullSellerSellerStatus struct {
-	SellerSellerStatus SellerSellerStatus `json:"seller_seller_status"`
-	Valid              bool               `json:"valid"` // Valid is true if SellerSellerStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullSellerSellerStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.SellerSellerStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.SellerSellerStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullSellerSellerStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.SellerSellerStatus), nil
+	return string(ns.SellerAdminStatus), nil
 }
 
 type SellerVerificationStatus string
@@ -489,6 +227,50 @@ func (ns NullUserOrderPaymentStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.UserOrderPaymentStatus), nil
+}
+
+type UserStatus string
+
+const (
+	UserStatusActive      UserStatus = "active"
+	UserStatusSuspended   UserStatus = "suspended"
+	UserStatusBanned      UserStatus = "banned"
+	UserStatusDeactivated UserStatus = "deactivated"
+)
+
+func (e *UserStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = UserStatus(s)
+	case string:
+		*e = UserStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for UserStatus: %T", src)
+	}
+	return nil
+}
+
+type NullUserStatus struct {
+	UserStatus UserStatus `json:"user_status"`
+	Valid      bool       `json:"valid"` // Valid is true if UserStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullUserStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.UserStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.UserStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullUserStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.UserStatus), nil
 }
 
 type UserTransactionPaymentStatus string
@@ -638,6 +420,27 @@ type ActivityType struct {
 	IntensityLevel pgtype.Text `json:"intensity_level"`
 }
 
+type Admin struct {
+	AdminID      pgtype.UUID        `json:"admin_id"`
+	Username     string             `json:"username"`
+	PasswordHash string             `json:"password_hash"`
+	Role         string             `json:"role"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	LastLoginAt  pgtype.Timestamptz `json:"last_login_at"`
+}
+
+type AdminRefreshToken struct {
+	ID           pgtype.UUID        `json:"id"`
+	AdminID      pgtype.UUID        `json:"admin_id"`
+	RefreshToken string             `json:"refresh_token"`
+	UserAgent    string             `json:"user_agent"`
+	ClientIp     string             `json:"client_ip"`
+	IsBlocked    pgtype.Bool        `json:"is_blocked"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type Food struct {
 	FoodID                  pgtype.UUID        `json:"food_id"`
 	SellerID                pgtype.UUID        `json:"seller_id"`
@@ -670,6 +473,8 @@ type Food struct {
 	PolyunsaturatedFatGrams pgtype.Numeric     `json:"polyunsaturated_fat_grams"`
 	CholesterolMg           pgtype.Numeric     `json:"cholesterol_mg"`
 	IsActive                pgtype.Bool        `json:"is_active"`
+	IsApproved              pgtype.Text        `json:"is_approved"`
+	RejectionReason         pgtype.Text        `json:"rejection_reason"`
 }
 
 type FoodCategory struct {
@@ -815,38 +620,41 @@ type Role struct {
 }
 
 type SellerProfile struct {
-	SellerID           pgtype.UUID        `json:"seller_id"`
-	UserID             string             `json:"user_id"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	StoreName          string             `json:"store_name"`
-	StoreDescription   pgtype.Text        `json:"store_description"`
-	StorePhoneNumber   pgtype.Text        `json:"store_phone_number"`
-	IsOpen             bool               `json:"is_open"`
-	BusinessHours      []byte             `json:"business_hours"`
-	VerificationStatus string             `json:"verification_status"`
-	LogoUrl            pgtype.Text        `json:"logo_url"`
-	BannerUrl          pgtype.Text        `json:"banner_url"`
-	AddressLine1       pgtype.Text        `json:"address_line1"`
-	AddressLine2       pgtype.Text        `json:"address_line2"`
-	District           pgtype.Text        `json:"district"`
-	City               pgtype.Text        `json:"city"`
-	Province           pgtype.Text        `json:"province"`
-	PostalCode         pgtype.Text        `json:"postal_code"`
-	Latitude           pgtype.Numeric     `json:"latitude"`
-	Longitude          pgtype.Numeric     `json:"longitude"`
-	GmapsLink          pgtype.Text        `json:"gmaps_link"`
-	StoreSlug          string             `json:"store_slug"`
-	StoreEmail         pgtype.Text        `json:"store_email"`
-	WebsiteUrl         pgtype.Text        `json:"website_url"`
-	SocialMediaLinks   []byte             `json:"social_media_links"`
-	IsActive           pgtype.Bool        `json:"is_active"`
-	CuisineType        []string           `json:"cuisine_type"`
-	PriceRange         pgtype.Int4        `json:"price_range"`
-	RejectionReason    pgtype.Text        `json:"rejection_reason"`
-	VerifiedAt         pgtype.Timestamptz `json:"verified_at"`
-	AverageRating      pgtype.Numeric     `json:"average_rating"`
-	ReviewCount        pgtype.Int4        `json:"review_count"`
+	SellerID           pgtype.UUID           `json:"seller_id"`
+	UserID             string                `json:"user_id"`
+	CreatedAt          pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz    `json:"updated_at"`
+	StoreName          string                `json:"store_name"`
+	StoreDescription   pgtype.Text           `json:"store_description"`
+	StorePhoneNumber   pgtype.Text           `json:"store_phone_number"`
+	IsOpen             bool                  `json:"is_open"`
+	BusinessHours      []byte                `json:"business_hours"`
+	VerificationStatus string                `json:"verification_status"`
+	LogoUrl            pgtype.Text           `json:"logo_url"`
+	BannerUrl          pgtype.Text           `json:"banner_url"`
+	AddressLine1       pgtype.Text           `json:"address_line1"`
+	AddressLine2       pgtype.Text           `json:"address_line2"`
+	District           pgtype.Text           `json:"district"`
+	City               pgtype.Text           `json:"city"`
+	Province           pgtype.Text           `json:"province"`
+	PostalCode         pgtype.Text           `json:"postal_code"`
+	Latitude           pgtype.Numeric        `json:"latitude"`
+	Longitude          pgtype.Numeric        `json:"longitude"`
+	GmapsLink          pgtype.Text           `json:"gmaps_link"`
+	StoreSlug          string                `json:"store_slug"`
+	StoreEmail         pgtype.Text           `json:"store_email"`
+	WebsiteUrl         pgtype.Text           `json:"website_url"`
+	SocialMediaLinks   []byte                `json:"social_media_links"`
+	IsActive           pgtype.Bool           `json:"is_active"`
+	CuisineType        []string              `json:"cuisine_type"`
+	PriceRange         pgtype.Int4           `json:"price_range"`
+	RejectionReason    pgtype.Text           `json:"rejection_reason"`
+	VerifiedAt         pgtype.Timestamptz    `json:"verified_at"`
+	AverageRating      pgtype.Numeric        `json:"average_rating"`
+	ReviewCount        pgtype.Int4           `json:"review_count"`
+	AdminStatus        NullSellerAdminStatus `json:"admin_status"`
+	SuspensionReason   pgtype.Text           `json:"suspension_reason"`
+	AdminNotes         pgtype.Text           `json:"admin_notes"`
 }
 
 type SellerReview struct {
@@ -859,6 +667,12 @@ type SellerReview struct {
 	SellerReply pgtype.Text        `json:"seller_reply"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SystemSetting struct {
+	Key       string             `json:"key"`
+	Value     bool               `json:"value"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 // Unified user table supporting both traditional username/password and OAuth authentication
@@ -890,6 +704,10 @@ type User struct {
 	// Whether user has verified their email via OTP
 	IsEmailVerified pgtype.Bool        `json:"is_email_verified"`
 	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
+	Status          NullUserStatus     `json:"status"`
+	StatusReason    pgtype.Text        `json:"status_reason"`
+	StatusUpdatedAt pgtype.Timestamptz `json:"status_updated_at"`
+	AdminNotes      pgtype.Text        `json:"admin_notes"`
 }
 
 type UserActivityLog struct {
@@ -1200,19 +1018,6 @@ type UserSleepLog struct {
 	Notes             pgtype.Text        `json:"notes"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-}
-
-type UsersAuth struct {
-	ID             pgtype.UUID        `json:"id"`
-	Email          string             `json:"email"`
-	Name           pgtype.Text        `json:"name"`
-	AvatarUrl      pgtype.Text        `json:"avatar_url"`
-	Provider       string             `json:"provider"`
-	ProviderUserID string             `json:"provider_user_id"`
-	RawData        []byte             `json:"raw_data"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	LastLoginAt    pgtype.Timestamptz `json:"last_login_at"`
 }
 
 type UsersRefreshToken struct {
