@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"Glupulse_V0.2/internal/database"
@@ -17,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -1294,116 +1292,82 @@ func StartServerHealthBroadcaster() {
 	}
 }
 
-// UpdateProfileHandler now only updates the logged-in admin's username
 func UpdateProfileHandler(c echo.Context) error {
-    // 1. Extract Admin ID from middleware context
-    adminID, ok := c.Get("admin_id").(uuid.UUID)
-    if !ok {
-        return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized access"})
-    }
+	ctx := c.Request().Context()
 
-    // 2. Bind only the username from the request body
-    var req struct {
-        Username string `json:"username" validate:"required"`
-    }
-    if err := c.Bind(&req); err != nil {
-        return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid input format"})
-    }
+	// 1. Get ID string from context and parse to UUID
+	adminIDRaw := c.Get("admin_id").(string)
+	parsedUUID, err := uuid.Parse(adminIDRaw)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized access"})
+	}
 
-    // 3. Execute the specific Username update query
-    updated, err := queries.UpdateAdminUsername(c.Request().Context(), database.UpdateAdminUsernameParams{
-        AdminID:  pgtype.UUID{Bytes: adminID, Valid: true},
-        Username: req.Username,
-    })
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid input"})
+	}
 
-    if err != nil {
-        // Handle unique constraint violations if username is taken
-        log.Error().Err(err).Msg("Failed to update admin username")
-        return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists or update failed"})
-    }
+	// 2. Execute with proper pgtype.UUID type
+	updated, err := queries.UpdateAdminUsername(ctx, database.UpdateAdminUsernameParams{
+		AdminID:  pgtype.UUID{Bytes: parsedUUID, Valid: true},
+		Username: req.Username,
+	})
 
-    // 4. Return the updated record
-    return c.JSON(http.StatusOK, updated)
+	if err != nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already taken"})
+	}
+
+	return c.JSON(http.StatusOK, updated)
 }
 
-// ChangePasswordHandler validates current password before updating to new one
 func ChangePasswordHandler(c echo.Context) error {
-    adminID := c.Get("admin_id").(uuid.UUID)
-    var req struct {
-        CurrentPassword string `json:"current_password"`
-        NewPassword     string `json:"new_password"`
-    }
-    c.Bind(&req)
+	ctx := c.Request().Context()
 
-    // 1. Fetch current hash from DB
-    admin, _ := queries.GetAdminByID(c.Request().Context(), pgtype.UUID{Bytes: adminID, Valid: true})
-
-    // 2. Compare current password
-    err := bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.CurrentPassword))
-    if err != nil { return c.JSON(401, "Current password incorrect") }
-
-    // 3. Hash new password
-    newHash, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-    
-    queries.UpdateAdminPassword(c.Request().Context(), database.UpdateAdminPasswordParams{
-        AdminID:      pgtype.UUID{Bytes: adminID, Valid: true},
-        PasswordHash: string(newHash),
-    })
-
-    return c.JSON(200, map[string]string{"message": "Password changed successfully"})
-}
-
-// MaintenanceMiddleware blocks all non-admin traffic
-func MaintenanceMiddleware(queries *database.Queries) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			// Skip check for admin-related paths
-			if strings.HasPrefix(c.Path(), "/admin") {
-				return next(c)
-			}
-
-			ctx := c.Request().Context()
-			// Query the database directly for the toggle
-			isEnabled, err := queries.GetSystemSetting(ctx, "maintenance_mode")
-
-			if err == nil && isEnabled {
-				return c.JSON(http.StatusServiceUnavailable, map[string]string{
-					"message": "Glupulse is currently under maintenance. Please try again later.",
-				})
-			}
-			return next(c)
-		}
+	// 1. Extract ID from context (Stored as string in your Middleware)
+	adminIDRaw := c.Get("admin_id").(string)
+	parsedUUID, err := uuid.Parse(adminIDRaw)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid session ID"})
 	}
-}
 
-// RegistrationGuard prevents new users from signing up
-func RegistrationGuard(queries *database.Queries) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			ctx := c.Request().Context()
-			allow, err := queries.GetSystemSetting(ctx, "allow_user_registration")
+	// Convert to pgtype.UUID for SQLC compatibility
+	adminID := pgtype.UUID{Bytes: parsedUUID, Valid: true}
 
-			if err == nil && !allow {
-				return c.JSON(http.StatusForbidden, map[string]string{
-					"error": "New user registrations are currently disabled.",
-				})
-			}
-			return next(c)
-		}
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
 	}
-}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid input"})
+	}
 
-// SyncLogLevel matches the DB setting to the actual zerolog level
-func SyncLogLevel(queries *database.Queries) {
-	go func() {
-		ticker := time.NewTicker(30 * time.Second) // Check every 30s
-		for range ticker.C {
-			verbose, _ := queries.GetSystemSetting(context.Background(), "verbose_logging")
-			if verbose {
-				zerolog.SetGlobalLevel(zerolog.DebugLevel)
-			} else {
-				zerolog.SetGlobalLevel(zerolog.InfoLevel)
-			}
-		}
-	}()
+	// 2. Fetch Admin
+	admin, err := queries.GetAdminByID(ctx, adminID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Account fetch failed"})
+	}
+
+	// 3. Compare Password
+	if err := bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Current password incorrect"})
+	}
+
+	// 4. Hash NEW Password (Fixed 'undefined: newHash' error)
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Encryption failed"})
+	}
+
+	// 5. Update DB
+	err = queries.UpdateAdminPassword(ctx, database.UpdateAdminPasswordParams{
+		AdminID:      adminID,
+		PasswordHash: string(newHash),
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Update failed"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Password changed successfully"})
 }

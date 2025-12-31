@@ -79,6 +79,17 @@ func (s *Server) RegisterRoutes() http.Handler {
 	//Admin Web Pages routes
 	e.GET("/admin/login", s.renderAdminLoginHandler)
 	e.GET("/admin/dashboard", s.RenderAdminHandler)
+	e.GET("/admin/dashboard", s.RenderAdminHandler)
+	e.GET("/admin/verifications/seller", s.RenderAdminHandler)
+	e.GET("/admin/verifications/menu", s.RenderAdminHandler)
+	e.GET("/admin/list/users", s.RenderAdminHandler)
+	e.GET("/admin/list/sellers", s.RenderAdminHandler)
+	e.GET("/admin/data/foods", s.RenderAdminHandler)
+	e.GET("/admin/data/ai-analytics", s.RenderAdminHandler)
+	e.GET("/admin/security/logs", s.RenderAdminHandler)
+	e.GET("/admin/system/access", s.RenderAdminHandler)
+	e.GET("/admin/system/health", s.RenderAdminHandler)
+	e.GET("/admin/system/settings", s.RenderAdminHandler)
 
 	// Seller Web OAuth routes
 	e.GET("/auth/:provider", auth.ProviderHandler)
@@ -255,6 +266,8 @@ func (s *Server) RegisterRoutes() http.Handler {
 	adminGroup.PATCH("/access/admin/role/:admin_id", admin.UpdateAdminRoleHandler)
 	adminGroup.DELETE("/access/admin/:admin_id", admin.DeleteAdminHandler)
 	adminGroup.GET("/server/health", admin.GetServerHealthHandler)
+	adminGroup.PATCH("/update/username", admin.UpdateProfileHandler)
+	adminGroup.PATCH("/update/password", admin.ChangePasswordHandler)
 
 	return e
 }

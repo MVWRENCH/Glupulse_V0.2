@@ -22,8 +22,8 @@ const routes = {
     '/admin/dashboard': '/static/views/admin_dashboard.html',
     '/admin/verifications/seller': '/static/views/admin_verification_seller.html',
     '/admin/verifications/menu':    '/static/views/admin_verification_menu.html',
-    '/admin/users': '/static/views/admin_users.html',
-    '/admin/sellers': '/static/views/admin_sellers.html',
+    '/admin/list/users': '/static/views/admin_users.html',
+    '/admin/list/sellers': '/static/views/admin_sellers.html',
     '/admin/data/foods': '/static/views/admin_foods.html',
     '/admin/data/ai-analytics': '/static/views/admin_ai.html',
     '/admin/security/logs': '/static/views/admin_auth_logs.html',
@@ -94,8 +94,8 @@ const router = async () => {
         else if (path === '/admin/dashboard') initAdminDashboard();
         else if (path === '/admin/verifications/seller') initSellerRequestsPage();
         else if (path === '/admin/verifications/menu') initMenuRequestsPage();
-        else if (path === '/admin/users') initUserManagement();
-        else if (path === '/admin/sellers') initSellerManagement();
+        else if (path === '/admin/list/users') initUserManagement();
+        else if (path === '/admin/list/sellers') initSellerManagement();
         else if (path === '/admin/data/foods') initFoodDatabase();
         else if (path === '/admin/data/ai-analytics') initAIPage();
         else if (path === '/admin/security/logs') initAuthLogsPage();
@@ -5379,47 +5379,26 @@ async function initSettingsPage() {
     const titleEl = document.getElementById('page-title');
     if(titleEl) titleEl.innerText = 'Settings';
 
-    // 1. Load Profile Data (Simulated from localStorage if API unavailable)
+    // 1. Load Profile Data from LocalStorage (Source of Truth for display)
     const storedUser = localStorage.getItem('admin_username') || 'Admin';
     const storedRole = localStorage.getItem('admin_role') || 'ADMIN';
     
     setText('settingsName', storedUser);
     setText('settingsRole', storedRole.toUpperCase());
-    document.getElementById('set_username').value = storedUser;
-    document.getElementById('settingsAvatar').src = `https://ui-avatars.com/api/?name=${storedUser}&background=random&color=fff`;
+    
+    // Set input value
+    const inputUser = document.getElementById('set_username');
+    if(inputUser) inputUser.value = storedUser;
+    
+    // Avatar
+    const avatar = document.getElementById('settingsAvatar');
+    if(avatar) avatar.src = `https://ui-avatars.com/api/?name=${storedUser}&background=random&color=fff`;
 
-    // 2. Load System Config (Assuming GET /admin/system/config)
-    await loadSystemConfig();
+    // 2. Dummy System Config Load (Just Visual)
+    console.log("Dummy System Config Loaded");
 }
 
-async function loadSystemConfig() {
-    try {
-        // NOTE: Ensure you have this endpoint or similar
-        const res = await adminFetch('/admin/system/config');
-        
-        // Fallback for UI demonstration if endpoint 404s
-        if(!res.ok) {
-            console.warn("Config API not found, using defaults.");
-            // Default UI states
-            document.getElementById('sys_maintenance').checked = false;
-            document.getElementById('sys_registration').checked = true;
-            document.getElementById('sys_debug').checked = false;
-            return;
-        }
-
-        const data = await res.json();
-        
-        document.getElementById('sys_maintenance').checked = data.maintenance_mode || false;
-        document.getElementById('sys_registration').checked = data.allow_registration !== false; // Default true
-        document.getElementById('sys_debug').checked = data.debug_mode || false;
-
-    } catch(e) {
-        console.error("Settings Load Error:", e);
-    }
-}
-
-// --- PROFILE ACTIONS ---
-
+// --- PROFILE UPDATE (Username) ---
 window.updateAdminProfile = async function() {
     const btn = document.getElementById('btnSaveProfile');
     const newUsername = document.getElementById('set_username').value;
@@ -5429,26 +5408,36 @@ window.updateAdminProfile = async function() {
     setLoading(btn, true);
 
     try {
-        const res = await adminFetch('/admin/profile', {
-            method: 'PUT',
+        // MATCHING GO HANDLER: PATCH /admin/update/username
+        const res = await adminFetch('/admin/update/username', {
+            method: 'PATCH', // Changed to PATCH
             body: JSON.stringify({ username: newUsername })
         });
 
         if(res.ok) {
-            alert("Profile updated successfully!");
+            // Update LocalStorage and UI
             localStorage.setItem('admin_username', newUsername);
-            initSettingsPage(); // Refresh UI
+            setText('settingsName', newUsername);
+            document.getElementById('settingsAvatar').src = `https://ui-avatars.com/api/?name=${newUsername}&background=random&color=fff`;
+            
+            // Update the Sidebar name immediately if possible
+            const sidebarName = document.querySelector('.sidebar-username');
+            if(sidebarName) sidebarName.innerText = newUsername;
+
+            alert("Username updated successfully!");
         } else {
             const err = await res.json();
             alert("Error: " + (err.error || "Update failed"));
         }
     } catch(e) {
+        console.error(e);
         alert("Connection error");
     } finally {
-        setLoading(btn, false, "Update Profile");
+        setLoading(btn, false, "Update Username");
     }
 }
 
+// --- PASSWORD UPDATE ---
 window.updateAdminPassword = async function() {
     const btn = document.getElementById('btnSavePass');
     const currentPass = document.getElementById('set_curr_pass').value;
@@ -5461,8 +5450,9 @@ window.updateAdminPassword = async function() {
     setLoading(btn, true);
 
     try {
-        const res = await adminFetch('/admin/profile/password', {
-            method: 'PUT',
+        // MATCHING GO HANDLER: PATCH /admin/update/password
+        const res = await adminFetch('/admin/update/password', {
+            method: 'PATCH', // Changed to PATCH
             body: JSON.stringify({ 
                 current_password: currentPass,
                 new_password: newPass
@@ -5476,50 +5466,37 @@ window.updateAdminPassword = async function() {
             document.getElementById('set_new_pass').value = '';
             document.getElementById('set_confirm_pass').value = '';
         } else {
-            const err = await res.json();
-            alert("Error: " + (err.error || "Failed to change password"));
+            const txt = await res.text(); 
+            let errMsg = "Failed to change password";
+            try {
+                const jsonErr = JSON.parse(txt);
+                errMsg = jsonErr.error || jsonErr.message || errMsg;
+            } catch(e) {
+                errMsg = txt; 
+            }
+            alert("Error: " + errMsg);
         }
     } catch(e) {
+        console.error(e);
         alert("Connection error");
     } finally {
         setLoading(btn, false, "Change Password");
     }
 }
 
-// --- SYSTEM ACTIONS ---
+// --- DUMMY FEATURES ---
 
-window.toggleSystemConfig = async function(key) {
-    const el = document.getElementById(`sys_${key}`);
-    const value = el.checked;
-
-    try {
-        const res = await adminFetch('/admin/system/config', {
-            method: 'PATCH',
-            body: JSON.stringify({ [key]: value })
-        });
-
-        if(!res.ok) {
-            // Revert UI if failed
-            el.checked = !value;
-            alert("Failed to update setting");
-        } else {
-            // Optional: Toast notification
-            console.log(`${key} updated to ${value}`);
-        }
-    } catch(e) {
-        el.checked = !value;
-        alert("Connection error");
-    }
+window.toggleDummyFeature = function(featureName) {
+    // Just a visual toggle with alert
+    setTimeout(() => {
+        alert(`[DUMMY FEATURE] \n${featureName} setting toggled visually.\nNo backend logic implemented yet.`);
+    }, 100);
 }
 
-window.clearSystemCache = async function() {
-    if(!confirm("Are you sure? This might affect active users.")) return;
-
-    try {
-        const res = await adminFetch('/admin/system/cache', { method: 'DELETE' });
-        if(res.ok) alert("System cache cleared.");
-        else alert("Failed to clear cache.");
-    } catch(e) {
-        alert("Connection error");
-    }
+window.clearSystemCache = function() {
+    if(!confirm("Are you sure you want to clear the system cache?")) return;
+    
+    setTimeout(() => {
+        alert(`[DUMMY FEATURE] \nSystem cache clear request sent.\n(This is a simulation)`);
+    }, 500);
 }
