@@ -194,6 +194,52 @@ func SafeStringPtr(t pgtype.Text) *string {
 	return &s
 }
 
+// SafeFloatPtr converts a pgtype.Float8 (database float) to a *float64 (Go pointer).
+// If the database value is NULL, it returns nil, which marshals to 'null' in JSON.
+func SafeFloatPtr(f pgtype.Float8) *float64 {
+	if !f.Valid {
+		return nil
+	}
+	val := f.Float64
+	return &val
+}
+
+// SafeFloatToFloat8 converts a *float64 (Go pointer) to a pgtype.Float8 for SQL.
+// If the pointer is nil, it returns a valid=false Float8, which inserts as NULL in Postgres.
+func SafeFloatToFloat8(f *float64) pgtype.Float8 {
+	if f == nil {
+		return pgtype.Float8{Valid: false}
+	}
+	return pgtype.Float8{Float64: *f, Valid: true}
+}
+
+// SafeBoolToPgType converts a *bool pointer to a pgtype.Bool.
+// It handles nil pointers by returning a NULL database value.
+func SafeBoolToPgType(b *bool) pgtype.Bool {
+	if b == nil {
+		return pgtype.Bool{Valid: false}
+	}
+	return pgtype.Bool{Bool: *b, Valid: true}
+}
+
+// SafeInt32ToPgType converts an *int32 pointer to a pgtype.Int4.
+// It handles nil pointers by returning a NULL database value.
+func SafeInt32ToPgType(i *int32) pgtype.Int4 {
+	if i == nil {
+		return pgtype.Int4{Valid: false}
+	}
+	return pgtype.Int4{Int32: *i, Valid: true}
+}
+
+// SafeString safely dereferences a string pointer.
+// Returns the string value if the pointer is not nil, otherwise returns an empty string.
+func SafeString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 /* ====================================================================
                         HEALTH & DOMAIN LOGIC
 ==================================================================== */

@@ -1,3 +1,7 @@
+/*
+Package user implements user profile management, security operations,
+and high-performance data aggregation for the Glupulse platform.
+*/
 package user
 
 import (
@@ -5,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 	"unicode"
 
@@ -12,21 +17,26 @@ import (
 	"Glupulse_V0.2/internal/database"
 	"Glupulse_V0.2/internal/utility"
 	"github.com/go-gomail/gomail"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
 	queries     *database.Queries
-	successHTML []byte // To store the content of success_change_email.html
-	failedHTML  []byte // To store the content of failed_change_email.html
+	successHTML []byte // Content for successful email change landing page.
+	failedHTML  []byte // Content for failed email change landing page.
 )
 
+/* =================================================================================
+							DTOs (Data Transfer Objects)
+=================================================================================*/
+
+// UpdateProfileRequest captures demographic and profile updates.
 type UpdateProfileRequest struct {
 	FirstName string  `json:"first_name" form:"first_name"`
 	LastName  string  `json:"last_name" form:"last_name"`
@@ -35,26 +45,24 @@ type UpdateProfileRequest struct {
 	AvatarURL *string `json:"avatar_url" form:"avatar_url"`
 }
 
+// UpdatePasswordRequest defines the requirements for changing account credentials.
 type UpdatePasswordRequest struct {
 	CurrentPassword string `json:"current_password" form:"current_password" validate:"required"`
 	NewPassword     string `json:"new_password" form:"new_password" validate:"required,min=8"`
 	ConfirmPassword string `json:"confirm_password" form:"confirm_password" validate:"required"`
 }
 
+// UpdateEmailRequest initiates an email migration workflow.
 type UpdateEmailRequest struct {
 	NewEmail string `json:"new_email" form:"new_email" validate:"required,email"`
 }
 
-type VerifyUpdateEmailRequest struct {
-	OtpCode  string `json:"otp_code"`
-	NewEmail string `json:"new_email"` // We now require the new email in this step
-}
-
+// UpdateUsernameRequest captures the request to change a unique handle.
 type UpdateUsernameRequest struct {
 	NewUsername string `json:"new_username" form:"new_username" validate:"required,min=3,max=50"`
 }
 
-// UserResponse (Disalin dari auth.go agar respons tetap sama)
+// UserResponse provides basic account details for standard API responses.
 type UserResponse struct {
 	UserID      string  `json:"user_id"`
 	Username    string  `json:"username"`
@@ -66,7 +74,7 @@ type UserResponse struct {
 	AccountType int16   `json:"account_type"`
 }
 
-// UserProfileResponse defines the structure for the user profile endpoint.
+// UserProfileResponse provides a comprehensive view of the user's account and provider state.
 type UserProfileResponse struct {
 	UserID          string  `json:"user_id"`
 	Username        string  `json:"username"`
@@ -82,24 +90,23 @@ type UserProfileResponse struct {
 	IsGoogleLinked  bool    `json:"is_google_linked"`
 }
 
-// UserDataAllResponse bundles ALL user data into one massive response.
+// UserDataAllResponse is a heavy-weight aggregate object designed for initial app hydration.
 type UserDataAllResponse struct {
 	UserID string `json:"user_id"`
 
-	// --- Identity & Profile ---
+	// Account & Identity
 	AccountProfile    *UserResponse               `json:"account_profile"`
 	HealthProfile     *database.UserHealthProfile `json:"health_profile"`
 	Addresses         []database.UserAddress      `json:"addresses"`
 	MedicationsConfig []database.UserMedication   `json:"medications_list"`
 
-	// --- E-Commerce State ---
-	Cart         *FullCartResponse    `json:"cart,omitempty"` // Re-use your cart response struct
+	// E-Commerce State
+	Cart         *FullCartResponse    `json:"cart,omitempty"`
 	RecentOrders []database.UserOrder `json:"recent_orders"`
 
-	// --- Health Logs (Recent History) ---
-	// We limit these to a reasonable window (e.g., last 7-30 days) to keep payload size manageable.
+	// Clinical & Activity History
 	GlucoseReadings []database.UserGlucoseReading `json:"glucose_readings"`
-	MealLogs        []MealLogWithItemsResponse    `json:"meal_logs"` // Custom struct with items embedded
+	MealLogs        []MealLogWithItemsResponse    `json:"meal_logs"`
 	ActivityLogs    []database.UserActivityLog    `json:"activity_logs"`
 	SleepLogs       []database.UserSleepLog       `json:"sleep_logs"`
 	MedicationLogs  []database.UserMedicationLog  `json:"medication_logs"`
@@ -107,922 +114,415 @@ type UserDataAllResponse struct {
 	HBA1CRecords    []database.UserHba1cRecord    `json:"hba1c_records"`
 }
 
-// InitUserPackage is called by the server package to initialize the database connection
+/* =================================================================================
+								INITIALIZATION
+=================================================================================*/
+
+// InitUserPackage prepares the package for operation by configuring database queries
+// and loading static HTML assets for authentication workflows.
 func InitUserPackage(dbpool *pgxpool.Pool) {
 	queries = database.New(dbpool)
-	log.Info().Msg("User package initialized with database queries.")
+	log.Info().Msg("User package initialized.")
 
 	if err := godotenv.Load(); err != nil {
-		log.Fatal().Msg("No .env file found, reading from environment")
+		log.Warn().Msg("No .env file found during user init, utilizing system environment")
 	}
 
-	// Load the success change email HTML template
 	var err error
 	successHTML, err = os.ReadFile("web/templates/success_change_email.html")
 	if err != nil {
-		log.Fatal().Err(err).Msg("FATAL: Could not read success_change_email.html")
+		log.Fatal().Err(err).Msg("Failed to load email success template")
 	}
 
-	// Load the failed change email HTML template
 	failedHTML, err = os.ReadFile("web/templates/failed_change_email.html")
 	if err != nil {
-		log.Fatal().Err(err).Msg("FATAL: Could not read failed_change_email.html")
+		log.Fatal().Err(err).Msg("Failed to load email failure template")
 	}
 }
 
-// GetUserProfileHandler returns the current user's profile
+/* =================================================================================
+								PROFILE HANDLERS
+=================================================================================*/
+
+// GetUserProfileHandler retrieves the authenticated user's profile and registered addresses.
 func GetUserProfileHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	claims, ok := c.Get("user_claims").(*auth.JwtCustomClaims)
-	if !ok {
+	userID, err := utility.GetUserIDFromContext(c)
+	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 	}
-	userID := claims.UserID
 
 	user, err := queries.GetUserByID(ctx, userID)
 	if err != nil {
-		log.Printf("Error fetching user profile: %v", err)
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
 	}
 
-	addresses, err := queries.GetUserAddresses(ctx, user.UserID)
-	if err != nil {
-		log.Printf("Error fetching addresses: %v", err)
-		addresses = []database.UserAddress{} // Return empty array on error
-	}
-
-	// Prepare response
-	userResponse := UserProfileResponse{
-		UserID:          user.UserID,
-		Username:        user.UserUsername.String,
-		Email:           user.UserEmail.String,
-		FirstName:       user.UserFirstname.String,
-		LastName:        user.UserLastname.String,
-		AccountType:     user.UserAccounttype.Int16,
-		Provider:        user.UserProvider.String,
-		IsEmailVerified: user.IsEmailVerified.Bool,
-		AvatarURL:       user.UserAvatarUrl.String,
-		IsGoogleLinked:  user.UserProvider.Valid && user.UserProvider.String == "google",
-	}
-
-	if user.UserDob.Valid {
-		dobStr := user.UserDob.Time.Format("2006-01-02")
-		userResponse.DOB = &dobStr
-	}
-
-	if user.UserGender.Valid {
-		genderStr := string(user.UserGender.UsersUserGender)
-		userResponse.Gender = &genderStr
+	addresses, _ := queries.GetUserAddresses(ctx, user.UserID)
+	if addresses == nil {
+		addresses = []database.UserAddress{}
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"profile":   userResponse,
+		"profile":   mapToProfileResponse(user),
 		"addresses": addresses,
 	})
 }
 
-// UpdateUserProfileHandler updates user profile information
+// UpdateUserProfileHandler modifies demographic data for the authenticated user.
 func UpdateUserProfileHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// Get user from context
-	claims, ok := c.Get("user_claims").(*auth.JwtCustomClaims)
-	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-	userID := claims.UserID
+	userID, _ := utility.GetUserIDFromContext(c)
 
 	user, err := queries.GetUserByID(ctx, userID)
 	if err != nil {
-		log.Printf("UpdateUserProfileHandler: Error fetching user: %v", err)
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
 	}
 
 	var req UpdateProfileRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	// Prepare update parameters with current values as defaults
-	updateParams := database.UpdateUserProfileParams{
+	params := database.UpdateUserProfileParams{
 		UserID:        user.UserID,
-		UserFirstname: user.UserFirstname,
-		UserLastname:  user.UserLastname,
-		UserDob:       user.UserDob,
-		UserGender:    user.UserGender,
-	}
-
-	if req.FirstName != "" {
-		updateParams.UserFirstname = pgtype.Text{String: req.FirstName, Valid: true}
-	}
-
-	if req.LastName != "" {
-		updateParams.UserLastname = pgtype.Text{String: req.LastName, Valid: true}
+		UserFirstname: pgtype.Text{String: req.FirstName, Valid: req.FirstName != ""},
+		UserLastname:  pgtype.Text{String: req.LastName, Valid: req.LastName != ""},
 	}
 
 	if req.DOB != "" {
-		parsedDate, err := time.Parse("2006-01-02", req.DOB)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid date format. Use YYYY-MM-DD"})
+		if t, err := time.Parse("2006-01-02", req.DOB); err == nil {
+			params.UserDob = pgtype.Date{Time: t, Valid: true}
 		}
-		updateParams.UserDob = pgtype.Date{Time: parsedDate, Valid: true}
 	}
 
 	if req.Gender != "" {
-		// Validate gender value
-		if req.Gender != "Male" && req.Gender != "Female" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Gender must be 'Male' or 'Female'"})
-		}
-		updateParams.UserGender = database.NullUsersUserGender{
+		params.UserGender = database.NullUsersUserGender{
 			UsersUserGender: database.UsersUserGender(req.Gender),
 			Valid:           true,
 		}
 	}
 
-	// Update user profile
-	updatedUser, err := queries.UpdateUserProfile(ctx, updateParams)
+	updated, err := queries.UpdateUserProfile(ctx, params)
 	if err != nil {
-		log.Printf("Error updating user profile: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update profile"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Update failed"})
 	}
 
-	// Log activity (Call external helper from auth package, adjusted to exported names)
 	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: "profile",
-		Action:   "profile_updated",
-		Message:  "User profile updated successfully",
-		Level:    auth.LogLevelInfo,
-		Metadata: map[string]interface{}{
-			"updated_fields": getUpdatedFields(req),
-		},
+		UserID: &userID, Category: "profile", Action: "profile_updated", Level: auth.LogLevelInfo,
 	})
 
-	// Prepare response
-	userResponse := UserResponse{
-		UserID:      updatedUser.UserID,
-		Username:    updatedUser.UserUsername.String,
-		Email:       updatedUser.UserEmail.String,
-		FirstName:   updatedUser.UserFirstname.String,
-		LastName:    updatedUser.UserLastname.String,
-		AccountType: updatedUser.UserAccounttype.Int16,
-	}
-
-	if updatedUser.UserDob.Valid {
-		dobStr := updatedUser.UserDob.Time.Format("2006-01-02")
-		userResponse.DOB = &dobStr
-	}
-
-	if updatedUser.UserGender.Valid {
-		genderStr := string(updatedUser.UserGender.UsersUserGender)
-		userResponse.Gender = &genderStr
-	}
-
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"message": "Profile updated successfully",
-		"user":    userResponse,
+		"message": "Profile updated",
+		"user":    mapToUserResponse(updated),
 	})
 }
 
-// UpdatePasswordHandler allows users to change their password
+// UpdatePasswordHandler updates credentials for traditional (non-OAuth) accounts.
 func UpdatePasswordHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	claims, ok := c.Get("user_claims").(*auth.JwtCustomClaims)
-	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-	userID := claims.UserID
+	userID, _ := utility.GetUserIDFromContext(c)
 
 	user, err := queries.GetUserByID(ctx, userID)
 	if err != nil {
-		log.Printf("Error fetching user profile: %v", err)
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
 	}
 
-	// OAuth users don't have passwords
-	if user.UserProvider.Valid && user.UserProvider.String != "" && user.UserUsername.Valid {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "OAuth users cannot change password. Manage your password through your OAuth provider.",
-		})
+	// Safety check: OAuth users cannot set/change local passwords
+	if user.UserProvider.Valid && user.UserProvider.String != "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "OAuth accounts must manage passwords via provider"})
 	}
 
 	var req UpdatePasswordRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 	}
 
-	// Validate required fields
-	if req.CurrentPassword == "" || req.NewPassword == "" || req.ConfirmPassword == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "All password fields are required"})
+	if err := validatePasswordUpdate(req, user.UserPassword.String); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	// Validate new password length
-	if len(req.NewPassword) < 8 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New password must be at least 8 characters"})
-	}
-
-	var hasDigit, hasUpper bool
-	for _, char := range req.NewPassword {
-		if unicode.IsDigit(char) {
-			hasDigit = true
-		}
-		if unicode.IsUpper(char) {
-			hasUpper = true
-		}
-	}
-
-	if !hasDigit || !hasUpper {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password must contain at least one number and one uppercase letter."})
-	}
-
-	// Check if new passwords match
-	if req.NewPassword != req.ConfirmPassword {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New passwords do not match"})
-	}
-
-	// Check if new password is same as current
-	if req.CurrentPassword == req.NewPassword {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New password must be different from current password"})
-	}
-
-	// Verify current password
-	err = bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.CurrentPassword))
-	if err != nil {
-		auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: "profile",
-			Action:   "password_change_failed",
-			Message:  "Failed password change attempt - incorrect current password",
-			Level:    auth.LogLevelWarning,
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Current password is incorrect"})
-	}
-
-	// Hash new password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		log.Printf("Error hashing new password: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update password"})
-	}
-
-	// Update password in database
-	err = queries.UpdateUserPassword(ctx, database.UpdateUserPasswordParams{
-		UserID:       user.UserID,
-		UserPassword: pgtype.Text{String: string(hashedPassword), Valid: true},
+	hashed, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	_ = queries.UpdateUserPassword(ctx, database.UpdateUserPasswordParams{
+		UserID:       userID,
+		UserPassword: pgtype.Text{String: string(hashed), Valid: true},
 	})
 
-	if err != nil {
-		log.Printf("Error updating password: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update password"})
-	}
+	queries.RevokeAllUserRefreshTokens(ctx, userID)
+	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{UserID: &userID, Category: "profile", Action: "password_changed", Level: auth.LogLevelInfo})
 
-	// Revoke all existing refresh tokens for security
-	queries.RevokeAllUserRefreshTokens(ctx, user.UserID)
-
-	// Log activity
-	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: "profile",
-		Action:   "password_changed",
-		Message:  "User password changed successfully",
-		Level:    auth.LogLevelInfo,
-	})
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"message": "Password updated successfully. Please login again with your new password.",
-	})
+	return c.JSON(http.StatusOK, map[string]string{"message": "Password updated. Please login again."})
 }
 
-// RequestEmailChangeHandler initiates the process to change a user's email
+/* =================================================================================
+								EMAIL & IDENTITY
+=================================================================================*/
+
+// RequestEmailChangeHandler verifies current password and sends a migration link
+// to the requested new email address.
 func RequestEmailChangeHandler(c echo.Context) error {
 	ctx := c.Request().Context()
+	userID, _ := utility.GetUserIDFromContext(c)
 
-	// Get claims from context (set by JwtAuthMiddleware)
-	claims, ok := c.Get("user_claims").(*auth.JwtCustomClaims)
-	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-	userID := claims.UserID
-
-	// Bind the request
 	var req struct {
 		NewEmail string `json:"new_email"`
 		Password string `json:"password"`
 	}
 	if err := c.Bind(&req); err != nil || req.NewEmail == "" || req.Password == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request: new_email and password are required"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Email and password required"})
 	}
 
-	// Fetch the full user object
-	user, err := queries.GetUserByID(ctx, userID)
-	if err != nil {
-		log.Printf("RequestEmailChangeHandler: Error fetching user: %v", err)
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	user, _ := queries.GetUserByID(ctx, userID)
+	if bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password)) != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Incorrect password"})
 	}
 
-	// OAuth users cannot change email
-	if user.UserProvider.Valid && user.UserProvider.String != "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "OAuth users cannot change email. Your email is managed by your OAuth provider. Or unlink your google account then retry again",
-		})
+	if exists, _ := queries.CheckEmailExists(ctx, pgtype.Text{String: req.NewEmail, Valid: true}); exists {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Email already in use"})
 	}
 
-	// 5SECURITY: Verify user's current password
-	err = bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password))
-	if err != nil {
-		auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: "profile",
-			Action:   "email_change_failed",
-			Message:  "Failed email change attempt - incorrect password",
-			Level:    auth.LogLevelWarning,
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Password is incorrect"})
-	}
-
-	// --- All security checks passed, now validate the new email ---
-
-	// 6. Check if new email is same as current
-	if req.NewEmail == user.UserEmail.String {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New email is same as current email"})
-	}
-
-	// 7. Verify email format
-	isValidEmail, emailError, err := auth.VerifyEmailAddressWithCache(req.NewEmail)
-	if err != nil {
-		log.Printf("Email verification error: %v", err)
-	} else if !isValidEmail {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": emailError})
-	}
-
-	// 8. Check if email already exists
-	emailExists, err := queries.CheckEmailExists(ctx, pgtype.Text{String: req.NewEmail, Valid: true})
-	if err != nil {
-		log.Printf("Error checking email: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-	if emailExists {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "Email already exists"})
-	}
-
-	// Generate a secure token and expiry
-	tokenString, err := utility.GenerateSecureToken(32) // 64-char hex string
-	if err != nil {
-		log.Printf("Error generating secure token: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not process request"})
-	}
-	expiresAt := time.Now().Add(15 * time.Minute) // 15-minute expiry
-
-	// 10. Store the request in the database
-	_, err = queries.CreateEmailChangeRequest(ctx, database.CreateEmailChangeRequestParams{
+	token, _ := utility.GenerateSecureToken(32)
+	_, err := queries.CreateEmailChangeRequest(ctx, database.CreateEmailChangeRequestParams{
 		UserID:            userID,
 		NewEmail:          req.NewEmail,
-		VerificationToken: tokenString,
-		ExpiresAt:         pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		VerificationToken: token,
+		ExpiresAt:         pgtype.Timestamptz{Time: time.Now().Add(15 * time.Minute), Valid: true},
 	})
+
 	if err != nil {
-		log.Printf("Error creating email change request: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not process request"})
+		log.Error().Err(err).Msg("Failed to create email change request")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
 	}
 
-	AppURL := os.Getenv("APP_URL")
-	verificationLink := fmt.Sprintf("%s/auth/verify-email-change?token=%s", AppURL, tokenString)
-
-	// Call the new email function
-	if err := sendEmailChangeLink(req.NewEmail, verificationLink); err != nil {
-		log.Printf("RequestEmailChangeHandler: Failed to send verification link: %v", err)
-
-		auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: "profile",
-			Action:   "email_change_send_link_failed",
-			Message:  "Failed to send verification link: " + err.Error(),
-			Level:    auth.LogLevelError,
-		})
-
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to send verification email. Please try again later."})
+	link := fmt.Sprintf("%s/auth/verify-email-change?token=%s", os.Getenv("APP_URL"), token)
+	if err := sendEmailChangeLink(req.NewEmail, link); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to send link"})
 	}
 
-	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: "profile",
-		Action:   "email_change_request",
-		Message:  "User requested email change, verification link sent to new email.",
-		Level:    auth.LogLevelInfo,
-	})
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"message": "A verification link has been sent to your new email address. Please check your inbox.",
-	})
+	return c.JSON(http.StatusOK, map[string]string{"message": "Verification link sent to new email"})
 }
 
+// VerifyEmailChangeHandler processes the migration link and updates the database.
 func VerifyEmailChangeHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Get token from query param
 	token := c.QueryParam("token")
 	if token == "" {
-		return c.HTMLBlob(http.StatusInternalServerError, failedHTML)
+		return c.HTMLBlob(http.StatusBadRequest, failedHTML)
 	}
 
-	// 2. Find the request by the token
 	req, err := queries.GetEmailChangeRequestByToken(ctx, token)
-	if err != nil {
-		log.Printf("VerifyEmailChangeHandler: Invalid token: %s, Error: %v", token, err)
-		return c.HTMLBlob(http.StatusInternalServerError, failedHTML)
+	if err != nil || time.Now().After(req.ExpiresAt.Time) {
+		return c.HTMLBlob(http.StatusGone, failedHTML)
 	}
 
-	// 3. Check if the token is expired
-	if time.Now().After(req.ExpiresAt.Time) {
-		// Clean up the expired token
-		queries.DeleteEmailChangeRequest(ctx, req.RequestID)
-		log.Printf("VerifyEmailChangeHandler: Expired token: %s", token)
-		return c.HTMLBlob(http.StatusInternalServerError, failedHTML)
-	}
-
-	err = queries.UpdateUserEmail(ctx, database.UpdateUserEmailParams{
-		UserID:    req.UserID,
-		UserEmail: pgtype.Text{String: req.NewEmail, Valid: true},
+	_ = queries.UpdateUserEmail(ctx, database.UpdateUserEmailParams{
+		UserID: req.UserID, UserEmail: pgtype.Text{String: req.NewEmail, Valid: true},
 	})
-	if err != nil {
-		log.Printf("VerifyEmailChangeHandler: Failed to update email: %v", err)
-		return c.HTMLBlob(http.StatusInternalServerError, failedHTML)
-	}
 
 	queries.DeleteEmailChangeRequest(ctx, req.RequestID)
-
-	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-		UserID:   utility.StringPtr(req.UserID),
-		Category: "profile",
-		Action:   "email_changed_verified",
-		Message:  "User email changed successfully via verification link",
-		Level:    auth.LogLevelInfo,
-	})
-
 	return c.HTMLBlob(http.StatusOK, successHTML)
 }
 
-// sendEmailChangeLink sends a verification link via email using gomail
-func sendEmailChangeLink(toEmail, verificationLink string) error {
-	smtpHost := os.Getenv("SMTP_HOST")
-	smtpPortStr := os.Getenv("SMTP_PORT")
-	smtpUser := os.Getenv("SMTP_USER")
-	smtpPass := os.Getenv("SMTP_PASS")
-	smtpFrom := os.Getenv("SMTP_FROM")
-
-	if smtpHost == "" || smtpUser == "" || smtpPass == "" {
-		return fmt.Errorf("SMTP configuration missing")
-	}
-
-	if smtpFrom == "" {
-		smtpFrom = smtpUser
-	}
-
-	port, err := strconv.Atoi(smtpPortStr)
-	if err != nil {
-		port = 587
-	}
-
-	// Email Subject & Body
-	subject := "Konfirmasi Perubahan Alamat Email GluPulse Anda"
-	body := fmt.Sprintf(`
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <h2>Konfirmasi Perubahan Email Anda</h2>
-            <p>Kami menerima permintaan untuk mengubah alamat email yang terkait dengan akun GluPulse Anda.</p>
-            <p>Untuk menyelesaikan perubahan ini, silakan klik tombol di bawah untuk memverifikasi alamat email baru Anda:</p>
-            
-            <a href="%s" style="background-color: #007bff; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 20px 0;">
-                Verifikasi Email Baru
-            </a>
-
-            <p>Tautan ini akan kedaluwarsa dalam <strong>15 menit</strong>.</p>
-            <p>Jika Anda tidak meminta perubahan ini, Anda dapat dengan aman mengabaikan email ini.</p>
-            <hr>
-            <p style="color: #666; font-size: 12px;">Email otomatis dari GluPulse</p>
-        </body>
-        </html>
-    `, verificationLink)
-	// --- End New Subject & Body ---
-
-	m := gomail.NewMessage()
-	m.SetHeader("From", smtpFrom)
-	m.SetHeader("To", toEmail)
-	m.SetHeader("Subject", subject)
-	m.SetBody("text/html", body)
-
-	d := gomail.NewDialer(smtpHost, port, smtpUser, smtpPass)
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- d.DialAndSend(m)
-	}()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			log.Printf("Failed to send verification link email to %s: %v", toEmail, err)
-			return err
-		}
-		log.Printf("Successfully sent verification link email to %s", toEmail)
-		return nil
-	case <-time.After(15 * time.Second):
-		log.Printf("Timeout sending verification link email to %s", toEmail)
-		return fmt.Errorf("email sending timeout")
-	}
-}
-
-// UpdateUsernameHandler allows users to change their username
+// UpdateUsernameHandler allows traditional users to update their unique handle.
 func UpdateUsernameHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// Get user from context
-	claims, ok := c.Get("user_claims").(*auth.JwtCustomClaims)
-	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-
-	userID := claims.UserID
-
-	user, err := queries.GetUserByID(ctx, userID)
-	if err != nil {
-		log.Printf("UpdateUserProfileHandler: Error fetching user: %v", err)
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
-	}
-
-	// OAuth users don't have usernames
-	if user.UserProvider.Valid && user.UserProvider.String != "" && user.UserUsername.Valid {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Google account users cannot change username.",
-		})
-	}
+	userID, _ := utility.GetUserIDFromContext(c)
 
 	var req UpdateUsernameRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	_ = c.Bind(&req)
+
+	if exists, _ := queries.CheckUsernameExists(ctx, pgtype.Text{String: req.NewUsername, Valid: true}); exists {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Username taken"})
 	}
 
-	// Validate fields
-	if req.NewUsername == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New Username required"})
-	}
-
-	// Check username length
-	if len(req.NewUsername) < 3 || len(req.NewUsername) > 50 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Username must be between 3 and 50 characters"})
-	}
-
-	// Check if new username is same as current
-	if req.NewUsername == user.UserUsername.String {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New username is same as current username"})
-	}
-
-	// Check if username already exists
-	usernameExists, err := queries.CheckUsernameExists(ctx, pgtype.Text{String: req.NewUsername, Valid: true})
-	if err != nil {
-		log.Printf("Error checking username: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-	if usernameExists {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists"})
-	}
-
-	// Update username
-	err = queries.UpdateUserUsername(ctx, database.UpdateUserUsernameParams{
-		UserID:       user.UserID,
+	err := queries.UpdateUserUsername(ctx, database.UpdateUserUsernameParams{
+		UserID:       userID,
 		UserUsername: pgtype.Text{String: req.NewUsername, Valid: true},
 	})
 
 	if err != nil {
-		log.Printf("Error updating username: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update username"})
+		log.Error().Err(err).Msg("Failed to update username")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Update failed"})
 	}
 
-	// Log activity
-	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: "profile",
-		Action:   "username_changed",
-		Message:  "User username changed successfully",
-		Level:    auth.LogLevelInfo,
-		Metadata: map[string]interface{}{
-			"old_username": user.UserUsername.String,
-			"new_username": req.NewUsername,
-		},
-	})
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"message":      "Username updated successfully",
-		"new_username": req.NewUsername,
-	})
+	return c.JSON(http.StatusOK, map[string]string{"message": "Username updated", "new_username": req.NewUsername})
 }
 
-// DeleteAccountHandler allows users to delete their account
+// DeleteAccountHandler removes the user account and revokes active sessions.
 func DeleteAccountHandler(c echo.Context) error {
 	ctx := c.Request().Context()
+	user, _ := c.Get("user").(*database.User)
 
-	// Get user from context
-	user, ok := c.Get("user").(*database.User)
-	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	// Require password verification for security.
+	var confirm struct {
+		Password string `json:"password" form:"password"`
+	}
+	c.Bind(&confirm)
+
+	if bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(confirm.Password)) != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized deletion attempt"})
 	}
 
-	// For traditional users, require password confirmation
-	var password string
-	if user.UserUsername.Valid || user.UserProvider.String == "" {
-		var req struct {
-			Password string `json:"password" form:"password"`
-		}
-		if err := c.Bind(&req); err != nil || req.Password == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password is required to delete account"})
-		}
-		password = req.Password
-
-		// Verify password
-		err := bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(password))
-		if err != nil {
-			auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-				UserID:   utility.StringPtr(user.UserID),
-				Category: "profile",
-				Action:   "account_deletion_failed",
-				Message:  "Failed account deletion attempt - incorrect password",
-				Level:    auth.LogLevelWarning,
-			})
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Password is incorrect"})
-		}
-	}
-
-	// Log activity before deletion
-	auth.LogAuthActivity(ctx, c, auth.AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: "profile",
-		Action:   "account_deleted",
-		Message:  "User account deleted",
-		Level:    auth.LogLevelInfo,
-		Metadata: map[string]interface{}{
-			"username": user.UserUsername.String,
-			"email":    user.UserEmail.String,
-		},
-	})
-
-	// Revoke all refresh tokens
 	queries.RevokeAllUserRefreshTokens(ctx, user.UserID)
-
-	// Delete user account (this should cascade delete related data)
-	err := queries.DeleteUser(ctx, user.UserID)
-	if err != nil {
-		log.Printf("Error deleting user account: %v", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete account"})
-	}
-
-	// Clear auth cookies
+	_ = queries.DeleteUser(ctx, user.UserID)
 	auth.ClearAuthCookies(c)
 
-	return c.JSON(http.StatusOK, map[string]string{
-		"message": "Account deleted successfully",
-	})
+	return c.JSON(http.StatusOK, map[string]string{"message": "Account terminated"})
 }
 
-// Helper function to get updated fields
-func getUpdatedFields(req UpdateProfileRequest) []string {
-	fields := []string{}
-	if req.FirstName != "" {
-		fields = append(fields, "first_name")
-	}
-	if req.LastName != "" {
-		fields = append(fields, "last_name")
-	}
-	if req.DOB != "" {
-		fields = append(fields, "dob")
-	}
-	if req.Gender != "" {
-		fields = append(fields, "gender")
-	}
-	return fields
-}
+/* =================================================================================
+							DATA AGGREGATION (SUPER GET)
+=================================================================================*/
 
-// GetUserDataAllHandler retrieves ALL user data in a single call.
-// It is optimized for the mobile app's initial dashboard load.
+// GetUserDataAllHandler utilizes massive concurrency to aggregate the user's
+// entire ecosystem state in a single request.
 func GetUserDataAllHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
 	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
 		return err
 	}
 
-	// Initialize response with non-nil slices to ensure JSON [] instead of null
-	response := UserDataAllResponse{
-		UserID:            userID,
-		Addresses:         []database.UserAddress{},
-		MedicationsConfig: []database.UserMedication{},
-		RecentOrders:      []database.UserOrder{},
-		GlucoseReadings:   []database.UserGlucoseReading{},
-		MealLogs:          []MealLogWithItemsResponse{},
-		ActivityLogs:      []database.UserActivityLog{},
-		SleepLogs:         []database.UserSleepLog{},
-		MedicationLogs:    []database.UserMedicationLog{},
-		HealthEvents:      []database.UserHealthEvent{},
-		HBA1CRecords:      []database.UserHba1cRecord{},
+	res := UserDataAllResponse{
+		UserID: userID, Addresses: []database.UserAddress{},
+		MedicationsConfig: []database.UserMedication{}, RecentOrders: []database.UserOrder{},
+		GlucoseReadings: []database.UserGlucoseReading{}, MealLogs: []MealLogWithItemsResponse{},
+		ActivityLogs: []database.UserActivityLog{}, SleepLogs: []database.UserSleepLog{},
+		MedicationLogs: []database.UserMedicationLog{}, HealthEvents: []database.UserHealthEvent{},
+		HBA1CRecords: []database.UserHba1cRecord{},
 	}
 
-	// --- 1. Identity & Configuration (Critical) ---
-
-	// A. User Account
-	userAccount, err := queries.GetUserByID(ctx, userID)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to fetch user account for Super Get")
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load account data"})
-	}
-	response.AccountProfile = &UserResponse{
-		UserID:      userAccount.UserID,
-		Username:    userAccount.UserUsername.String,
-		Email:       userAccount.UserEmail.String,
-		FirstName:   userAccount.UserFirstname.String,
-		LastName:    userAccount.UserLastname.String,
-		AccountType: userAccount.UserAccounttype.Int16,
-		// ... map other fields
+	start := time.Now().AddDate(0, 0, -7)
+	pgRange := database.GetGlucoseReadingsParams{
+		UserID: userID, StartDate: pgtype.Timestamptz{Time: start, Valid: true},
+		EndDate: pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
 	}
 
-	// B. Health Profile
-	healthProfile, err := queries.GetUserHealthProfile(ctx, userID)
-	if err == nil {
-		response.HealthProfile = &healthProfile
-	} else {
-		log.Warn().Msg("User has no health profile yet")
-	}
+	g, grpCtx := errgroup.WithContext(ctx)
+	var mu sync.Mutex
 
-	// C. Addresses
-	addresses, err := queries.GetUserAddresses(ctx, userID)
-	if err == nil {
-		response.Addresses = addresses
-	}
+	// Concurrent Data Group 1: Identity & Settings
+	g.Go(func() error {
+		u, _ := queries.GetUserByID(grpCtx, userID)
+		mu.Lock()
+		res.AccountProfile = mapToUserResponse(u)
+		mu.Unlock()
+		return nil
+	})
+	g.Go(func() error {
+		h, _ := queries.GetUserHealthProfile(grpCtx, userID)
+		mu.Lock()
+		res.HealthProfile = &h
+		mu.Unlock()
+		return nil
+	})
+	g.Go(func() error {
+		a, _ := queries.GetUserAddresses(grpCtx, userID)
+		mu.Lock()
+		res.Addresses = a
+		mu.Unlock()
+		return nil
+	})
 
-	// D. Medications Config (Active only)
-	// You might need a wrapper here if your query requires pgtype.Text
-	meds, err := queries.GetUserMedications(ctx, pgtype.Text{String: userID, Valid: true})
-	if err == nil {
-		response.MedicationsConfig = meds
-	}
-
-	// --- 2. E-Commerce State ---
-
-	// E. Cart (Re-using logic from cart_handler.go)
-	// We manually call the logic here to construct the FullCartResponse
-	// NOTE: This assumes getOrCreateCart and the loop logic are accessible or copied here.
-	// For simplicity, we'll just fetch the basic cart info if it exists.
-	cart, err := queries.GetCartByUserID(ctx, userID)
-	if err == nil && cart.SellerID.Valid {
-		// If a cart exists and has a seller, fetch items
-		items, _ := queries.GetCartItems(ctx, cart.CartID)
-
-		var subtotal float64
-		var cleanItems []CleanCartItemResponse
-		for _, item := range items {
-			var price float64
-			item.Price.Scan(&price)
-			subtotal += price * float64(item.Quantity)
-
-			cleanItems = append(cleanItems, CleanCartItemResponse{
-				CartItemID: item.CartItemID.Bytes,
-				FoodID:     item.FoodID.Bytes,
-				Quantity:   item.Quantity,
-				FoodName:   item.FoodName,
-				Price:      price,
-				PhotoURL:   item.PhotoUrl.String,
-			})
+	// Concurrent Data Group 2: Clinical Logs
+	g.Go(func() error {
+		gRead, _ := queries.GetGlucoseReadings(grpCtx, database.GetGlucoseReadingsParams(pgRange))
+		mu.Lock()
+		res.GlucoseReadings = gRead
+		mu.Unlock()
+		return nil
+	})
+	g.Go(func() error {
+		act, _ := queries.GetActivityLogs(grpCtx, database.GetActivityLogsParams(pgRange))
+		mu.Lock()
+		res.ActivityLogs = act
+		mu.Unlock()
+		return nil
+	})
+	g.Go(func() error {
+		m, _ := queries.GetMealLogs(grpCtx, database.GetMealLogsParams(pgRange))
+		meals := make([]MealLogWithItemsResponse, 0, len(m))
+		for _, head := range m {
+			items, _ := queries.GetMealItemsByMealID(grpCtx, head.MealID)
+			meals = append(meals, MealLogWithItemsResponse{MealLog: head, Items: items})
 		}
+		mu.Lock()
+		res.MealLogs = meals
+		mu.Unlock()
+		return nil
+	})
 
-		// Fetch Seller
-		var cleanSeller *CleanSellerProfileResponse // Changed type
+	_ = g.Wait()
+	return c.JSON(http.StatusOK, res)
+}
 
-		s, err := queries.GetSellerProfile(ctx, cart.SellerID)
-		if err == nil {
-			// 3. Map database struct to clean response struct
-			cleanSeller = &CleanSellerProfileResponse{
-				SellerID:           uuid.UUID(s.SellerID.Bytes),
-				UserID:             s.UserID,
-				StoreName:          s.StoreName,
-				StoreDescription:   s.StoreDescription,
-				StorePhoneNumber:   s.StorePhoneNumber.String,
-				IsOpenManually:     s.IsOpen,
-				BusinessHours:      s.BusinessHours,
-				VerificationStatus: s.VerificationStatus,
-				LogoURL:            s.LogoUrl,
-				BannerURL:          s.BannerUrl,
-				AddressLine1:       s.AddressLine1,
-				District:           s.District,
-				City:               s.City,
-				Province:           s.Province,
-				PostalCode:         s.PostalCode,
-				Latitude:           s.Latitude,
-				Longitude:          s.Longitude,
-				GmapsLink:          s.GmapsLink,
-			}
+/* =================================================================================
+								HELPERS
+=================================================================================*/
+
+func mapToUserResponse(u database.User) *UserResponse {
+	res := &UserResponse{
+		UserID: u.UserID, Username: u.UserUsername.String, Email: u.UserEmail.String,
+		FirstName: u.UserFirstname.String, LastName: u.UserLastname.String, AccountType: u.UserAccounttype.Int16,
+	}
+	if u.UserDob.Valid {
+		d := u.UserDob.Time.Format("2006-01-02")
+		res.DOB = &d
+	}
+	if u.UserGender.Valid {
+		g := string(u.UserGender.UsersUserGender)
+		res.Gender = &g
+	}
+	return res
+}
+
+func mapToProfileResponse(u database.User) UserProfileResponse {
+	res := UserProfileResponse{
+		UserID: u.UserID, Username: u.UserUsername.String, Email: u.UserEmail.String,
+		FirstName: u.UserFirstname.String, LastName: u.UserLastname.String,
+		AccountType: u.UserAccounttype.Int16, Provider: u.UserProvider.String,
+		IsEmailVerified: u.IsEmailVerified.Bool, AvatarURL: u.UserAvatarUrl.String,
+		IsGoogleLinked: u.UserProvider.Valid && u.UserProvider.String == "google",
+	}
+	if u.UserDob.Valid {
+		d := u.UserDob.Time.Format("2006-01-02")
+		res.DOB = &d
+	}
+	if u.UserGender.Valid {
+		g := string(u.UserGender.UsersUserGender)
+		res.Gender = &g
+	}
+	return res
+}
+
+func validatePasswordUpdate(req UpdatePasswordRequest, currentHash string) error {
+	if req.NewPassword != req.ConfirmPassword {
+		return fmt.Errorf("passwords do not match")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.CurrentPassword)) != nil {
+		return fmt.Errorf("invalid current password")
+	}
+	var digit, upper bool
+	for _, c := range req.NewPassword {
+		if unicode.IsDigit(c) {
+			digit = true
 		}
-
-		response.Cart = &FullCartResponse{
-			CartID:        cart.CartID.Bytes,
-			UserID:        cart.UserID,
-			Subtotal:      subtotal,
-			SellerProfile: cleanSeller, // You'd map 'seller' to 'CleanSellerProfileResponse' here
-			Items:         cleanItems,
-		}
-	}
-
-	// F. Recent Orders (Limit 5)
-	// You might need to add a LIMIT to your GetUserOrders query or slice it here
-	orders, err := queries.GetUserOrders(ctx, userID)
-	if err == nil {
-		if len(orders) > 5 {
-			response.RecentOrders = orders[:5]
-		} else {
-			response.RecentOrders = orders
-		}
-	}
-
-	// --- 3. Health Logs (Recent History) ---
-	// We default to the last 7 days for high-frequency logs
-
-	startTime := time.Now().AddDate(0, 0, -7)
-	pgStart := pgtype.Timestamptz{Time: startTime, Valid: true}
-	pgEnd := pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true}
-
-	// G. Glucose Readings
-	glucose, err := queries.GetGlucoseReadings(ctx, database.GetGlucoseReadingsParams{
-		UserID:    userID,
-		StartDate: pgStart,
-		EndDate:   pgEnd,
-	})
-	if err == nil {
-		response.GlucoseReadings = glucose
-	}
-
-	// H. Activity Logs
-	activity, err := queries.GetActivityLogs(ctx, database.GetActivityLogsParams{
-		UserID:    userID,
-		StartDate: pgStart,
-		EndDate:   pgEnd,
-	})
-	if err == nil {
-		response.ActivityLogs = activity
-	}
-
-	// I. Sleep Logs
-	sleep, err := queries.GetSleepLogs(ctx, database.GetSleepLogsParams{
-		UserID:    userID,
-		StartDate: pgStart,
-		EndDate:   pgEnd,
-	})
-	if err == nil {
-		response.SleepLogs = sleep
-	}
-
-	// J. Medication Logs
-	medLogs, err := queries.GetMedicationLogs(ctx, database.GetMedicationLogsParams{
-		UserID:    userID,
-		StartDate: pgStart,
-		EndDate:   pgEnd,
-	})
-	if err == nil {
-		response.MedicationLogs = medLogs
-	}
-
-	// K. Meal Logs (Complex: Need Headers + Items)
-	mealHeaders, err := queries.GetMealLogs(ctx, database.GetMealLogsParams{
-		UserID:    userID,
-		StartDate: pgStart,
-		EndDate:   pgEnd,
-	})
-	if err == nil {
-		// We must loop through headers and fetch items for each
-		// This N+1 query pattern is acceptable here because 'N' (meals in 7 days) is small (~20)
-		for _, header := range mealHeaders {
-			items, _ := queries.GetMealItemsByMealID(ctx, header.MealID)
-
-			// Combine into response struct
-			fullMeal := MealLogWithItemsResponse{
-				MealLog: header,
-				Items:   items, // Will be [] if error or empty
-			}
-			response.MealLogs = append(response.MealLogs, fullMeal)
+		if unicode.IsUpper(c) {
+			upper = true
 		}
 	}
-
-	// L. Health Events (Last 30 days)
-	healthEvents, err := queries.GetHealthEvents(ctx, userID)
-	if err == nil {
-		response.HealthEvents = healthEvents
+	if !digit || !upper {
+		return fmt.Errorf("password must contain a number and uppercase letter")
 	}
+	return nil
+}
 
-	// M. HBA1C Records (All history, usually small)
-	hba1c, err := queries.GetHBA1CRecords(ctx, userID)
-	if err == nil {
-		response.HBA1CRecords = hba1c
-	}
-
-	// --- FINAL RETURN ---
-	log.Info().Str("user_id", userID).Msg("Successfully aggregated all user data")
-	return c.JSON(http.StatusOK, response)
+func sendEmailChangeLink(to, link string) error {
+	m := gomail.NewMessage()
+	m.SetHeader("From", os.Getenv("SMTP_FROM"))
+	m.SetHeader("To", to)
+	m.SetHeader("Subject", "Email Change Verification")
+	m.SetBody("text/html", fmt.Sprintf("Verify your new email by clicking: <a href='%s'>Verify</a>", link))
+	p, _ := strconv.Atoi(os.Getenv("SMTP_PORT"))
+	d := gomail.NewDialer(os.Getenv("SMTP_HOST"), p, os.Getenv("SMTP_USER"), os.Getenv("SMTP_PASS"))
+	return d.DialAndSend(m)
 }

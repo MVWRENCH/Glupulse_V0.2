@@ -26,7 +26,7 @@ var (
 )
 
 /* =================================================================================
-                           REQUEST & RESPONSE MODELS
+							DTOs (Data Transfer Objects)
 =================================================================================*/
 
 // FoodRequest represents the payload for creating or updating a menu item.
@@ -177,7 +177,7 @@ type ReplyReviewRequest struct {
 // InitSellerPackage injects the database connection pool into the package queries.
 func InitSellerPackage(dbpool *pgxpool.Pool) {
 	queries = database.New(dbpool)
-	log.Info().Msg("Seller package initialized with database queries.")
+	log.Info().Msg("Seller package initialized.")
 }
 
 // getSellerID retrieves the Seller UUID associated with the authenticated user in the context.

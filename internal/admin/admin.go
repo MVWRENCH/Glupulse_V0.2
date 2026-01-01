@@ -37,8 +37,8 @@ var (
 	StartTime = time.Now()
 )
 
-/*=================================================================================
-                         	REQUEST/RESPONSE MODELS
+/* =================================================================================
+							DTOs (Data Transfer Objects)
 =================================================================================*/
 
 // VerificationRequest defines the structure for approving or rejecting registration requests.
