@@ -2905,45 +2905,65 @@ window.openSellerReview = async function(id) {
 };
 
 // 2. OPEN FOOD MODAL
-window.openFoodInspect = async function(id) {
-    currentVerificationId = id;
+window.openFoodInspect = async function(foodId) {
+    if (!foodId) return;
+
+    // 1. Show Modal & Loading
     openModal('foodInspectModal');
     setText('modal_food_name', 'Loading...');
     
+    // Reset Image State
+    const imgEl = document.getElementById('modal_food_img');
+    const noPhotoEl = document.getElementById('modal_food_no_photo');
+    if(imgEl) imgEl.classList.add('hidden');
+    if(noPhotoEl) noPhotoEl.classList.remove('hidden');
+
     try {
-        const res = await adminFetch(`/admin/pending-food/${id}`);
-        if(!res.ok) throw new Error("Failed");
+        // 2. Fetch Data
+        const res = await adminFetch(`/admin/food/${foodId}`);
+        if(!res.ok) throw new Error("Failed to fetch food details");
+        
         const f = await res.json();
 
-        // Basic Info
-        setText('modal_food_name', f.food_name);
-        setText('modal_food_price', formatRupiah(f.price));
-        setText('modal_food_stock', `Stock: ${f.stock_count}`);
-        setText('modal_food_cat', (f.food_category || ['General'])[0]);
-        setText('modal_food_desc', f.description || 'No description.');
+        // 3. Populate Basic Info
+        setText('modal_food_name', f.food_name || 'Unnamed Food');
+        setText('modal_food_price', formatRupiah(f.price || 0));
+        setText('modal_food_stock', `Stock: ${f.stock_count ?? 0}`);
         
-        // --- FIX: PHOTO LOGIC ---
-        const imgEl = document.getElementById('modal_food_img');
-        const noPhotoEl = document.getElementById('modal_food_no_photo');
-        const photoUrl = f.photo_url || f.thumbnail_url;
+        // Handle Category (Array or String)
+        let cat = 'General';
+        if (Array.isArray(f.food_category) && f.food_category.length > 0) {
+            cat = f.food_category[0];
+        } else if (typeof f.food_category === 'string') {
+            cat = f.food_category;
+        }
+        setText('modal_food_cat', cat);
+        
+        setText('modal_food_desc', f.description || 'No description provided.');
 
-        if (photoUrl) {
+        // 4. Handle Image
+        const photoUrl = f.photo_url || f.thumbnail_url;
+        if (photoUrl && imgEl && noPhotoEl) {
             imgEl.src = photoUrl;
             imgEl.classList.remove('hidden');
             noPhotoEl.classList.add('hidden');
-        } else {
-            imgEl.classList.add('hidden');
-            noPhotoEl.classList.remove('hidden');
         }
 
-        // Tags
+        // 5. Populate Tags
         const tagsContainer = document.getElementById('modal_food_tags');
-        tagsContainer.innerHTML = (f.tags || []).map(t => 
-            `<span class="text-[9px] font-bold uppercase text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded border border-gray-700">#${t}</span>`
-        ).join('');
+        if (tagsContainer) {
+            const tags = Array.isArray(f.tags) ? f.tags : [];
+            if (tags.length > 0) {
+                tagsContainer.innerHTML = tags.map(t => 
+                    `<span class="text-[9px] font-bold uppercase text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded border border-gray-700">#${t}</span>`
+                ).join('');
+            } else {
+                tagsContainer.innerHTML = '<span class="text-xs text-gray-600">No tags</span>';
+            }
+        }
 
-        // Nutrition Facts
-        setText('modal_food_serving_size', `${f.serving_size || '1 srv'} (${f.serving_size_grams || '-'}g)`);
+        // 6. Populate Nutrition Facts
+        setText('modal_food_serving_size', `${f.serving_size || '-'} (${f.serving_size_grams || 0}g)`);
         
         setText('modal_val_cal', (f.calories || 0) + ' kcal');
         setText('modal_val_pro', (f.protein_grams || 0) + 'g');
@@ -2956,13 +2976,20 @@ window.openFoodInspect = async function(id) {
         setText('modal_val_chol', (f.cholesterol_mg || 0) + 'mg');
         
         // Diabetic Specific
-        setText('modal_val_gi', f.glycemic_index || 0);
-        setText('modal_val_gl', f.glycemic_load || 0);
+        setText('modal_val_gi', f.glycemic_index ?? '-');
+        setText('modal_val_gl', f.glycemic_load ?? '-');
 
-        resetVerificationUI('food');
+        // 7. Update UI Buttons based on approval status
+        // If it's the "Pending Food" context, we show approve/reject.
+        // If it's just viewing details, we might hide actions.
+        // For now, we reset to default view.
+        if (document.getElementById('foodActionsDefault')) {
+            document.getElementById('foodActionsDefault').classList.remove('hidden');
+            document.getElementById('foodActionsReject').classList.add('hidden');
+        }
 
     } catch(e) {
-        console.error(e);
+        console.error("Food Detail Error:", e);
         alert("Gagal memuat detail makanan.");
         closeModal('foodInspectModal');
     }
@@ -3707,14 +3734,15 @@ async function confirmPasswordReset() {
 }
 
 // =========================================================
-//  SECTION: ADMIN SELLER MANAGEMENT (NEW)
+//  SECTION: ADMIN SELLER MANAGEMENT
 // =========================================================
 
 let globalSellersList = [];
+let currentSellerMenu = [];
 
 async function initSellerManagement() {
     console.log("Init Seller Management");
-    loadSellersList();
+    await loadSellersList();
 }
 
 async function loadSellersList() {
@@ -3727,10 +3755,7 @@ async function loadSellersList() {
         
         globalSellersList = await res.json();
         
-        // Update Summary Stats
         updateSellerStats(globalSellersList);
-        
-        // Initial Render
         filterSellersList();
 
     } catch (error) {
@@ -3757,7 +3782,7 @@ window.filterSellersList = function() {
     const sortVal = document.getElementById('sellerMgmtSort').value;
 
     let filtered = globalSellersList.filter(s => {
-        const matchesSearch = s.store_name.toLowerCase().includes(search) || (s.city || '').toLowerCase().includes(search);
+        const matchesSearch = (s.store_name || '').toLowerCase().includes(search) || (s.city || '').toLowerCase().includes(search);
         const status = s.admin_status?.seller_admin_status || 'active';
         const matchesStatus = statusFilter === 'all' || status === statusFilter;
         return matchesSearch && matchesStatus;
@@ -3766,7 +3791,7 @@ window.filterSellersList = function() {
     filtered.sort((a, b) => {
         if(sortVal === 'newest') return new Date(b.created_at) - new Date(a.created_at);
         if(sortVal === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
-        if(sortVal === 'az') return a.store_name.localeCompare(b.store_name);
+        if(sortVal === 'az') return (a.store_name || '').localeCompare(b.store_name || '');
         return 0;
     });
 
@@ -3786,8 +3811,9 @@ function renderSellersTable(sellers) {
     }
 
     tbody.innerHTML = sellers.map(s => {
-        // Status Badges
+        const id = s.seller_id; // Explicit ID extraction
         const status = s.admin_status?.seller_admin_status || 'active';
+        
         let statusClass = "bg-green-500/10 text-green-400 border-green-500/20";
         if(status === 'suspended') statusClass = "bg-orange-500/10 text-orange-400 border-orange-500/20";
         if(status === 'blacklisted') statusClass = "bg-red-500/10 text-red-400 border-red-500/20";
@@ -3798,21 +3824,21 @@ function renderSellersTable(sellers) {
         return `
             <tr class="border-b border-gray-700/50 hover:bg-gray-800/50 transition">
                 <td class="p-4">
-                    <div class="font-bold text-white">${s.store_name}</div>
-                    <div class="text-xs text-gray-500 font-mono">${s.store_slug}</div>
+                    <div class="font-bold text-white">${s.store_name || 'Unknown Store'}</div>
+                    <div class="text-xs text-gray-500 font-mono">${s.store_slug || '-'}</div>
                 </td>
                 <td class="p-4 text-gray-300">${s.city || '-'}</td>
-                <td class="p-4 text-center text-xs ${verifClass} uppercase tracking-wide">${s.verification_status}</td>
+                <td class="p-4 text-center text-xs ${verifClass} uppercase tracking-wide">${s.verification_status || '-'}</td>
                 <td class="p-4 text-center">
                     <span class="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide border ${statusClass}">${status}</span>
                 </td>
-                <td class="p-4 text-center text-sm text-gray-400">${new Date(s.created_at).toLocaleDateString()}</td>
+                <td class="p-4 text-center text-sm text-gray-400">${s.created_at ? new Date(s.created_at).toLocaleDateString() : '-'}</td>
                 <td class="p-4 text-right">
                     <div class="flex items-center justify-end gap-2">
-                        <button onclick="viewSellerDetail('${s.seller_id}')" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition" title="View Details">
+                        <button onclick="viewSellerDetail('${id}')" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition" title="View Details">
                             <i class="fas fa-eye"></i>
                         </button>
-                        <button onclick="viewSellerReviews('${s.seller_id}')" class="bg-purple-600 hover:bg-purple-500 text-white p-2 rounded-lg transition" title="Reviews">
+                        <button onclick="viewSellerReviews('${id}')" class="bg-purple-600 hover:bg-purple-500 text-white p-2 rounded-lg transition" title="Reviews">
                             <i class="fas fa-comment-dots"></i>
                         </button>
                     </div>
@@ -3822,59 +3848,181 @@ function renderSellersTable(sellers) {
     }).join('');
 }
 
-// GLOBAL VARIABLES FOR SELLER DETAIL
-let currentSellerMenu = [];
+// --- SELLER DETAIL MODAL LOGIC ---
 
-// 1. SWITCH TABS LOGIC
+window.viewSellerDetail = async function(sellerId) {
+    if (!sellerId) { console.error("Missing Seller ID"); return; }
+
+    try {
+        // 1. Fetch Full Details
+        const res = await adminFetch(`/admin/seller/${sellerId}`);
+        if(!res.ok) throw new Error("Fetch failed");
+        
+        const data = await res.json();
+        const p = data.profile?.details || {}; // Handle nested profile
+        const stats = data.statistics || {};
+        const orders = data.order_history || [];
+
+        // 2. Reset UI State
+        currentSellerMenu = []; // Clear old menu
+        document.getElementById('sellerMenuGrid').innerHTML = '';
+        document.getElementById('menuSearch').value = '';
+        switchSellerTab('overview'); // Default Tab
+        
+        // 3. Populate Header & Basic Info
+        document.getElementById('detailSellerId').value = p.seller_id;
+        document.getElementById('detailStoreNameHeader').innerText = p.store_name || 'Unknown Store';
+        document.getElementById('detailOwnerNameHeader').innerText = p.user_id ? 'User ID: ' + p.user_id.substring(0,8) : 'Unknown Owner';
+
+        // Overview Tab Fields
+        document.getElementById('detailStoreName').innerText = p.store_name || '-';
+        document.getElementById('detailOwnerName').innerText = p.user_id || '-';
+        document.getElementById('detailPhone').innerText = p.store_phone_number || '-';
+        document.getElementById('detailEmail').innerText = p.store_email || '-';
+        document.getElementById('detailAddress').innerText = `${p.address_line1 || ''}, ${p.city || ''}`;
+        
+        // Populate Stats
+        document.getElementById('statTotalRev').innerText = formatRupiah(stats.total_revenue || 0);
+        document.getElementById('statTotalOrd').innerText = stats.total_orders || 0;
+        document.getElementById('statMonthRev').innerText = formatRupiah(stats.this_month_revenue || 0);
+        document.getElementById('statMonthOrd').innerText = stats.this_month_orders || 0;
+
+        // Admin Actions Form
+        const adminStatus = p.admin_status?.seller_admin_status || 'active';
+        const statusSelect = document.getElementById('detailAdminStatus');
+        if(statusSelect) statusSelect.value = adminStatus;
+        
+        const notesInput = document.getElementById('detailAdminNotes');
+        if(notesInput) notesInput.value = p.admin_notes || '';
+
+        // Render Business Hours
+        const hoursContainer = document.getElementById('detailBusinessHours');
+        if(hoursContainer) {
+            hoursContainer.innerHTML = '';
+            let bHours = p.business_hours;
+            
+            // Handle if it's a JSON string
+            if (typeof bHours === 'string') { try { bHours = JSON.parse(bHours); } catch(e){} }
+            // Handle if it's base64 encoded JSON (common in JWT/DB)
+            if (typeof bHours === 'string') { try { bHours = JSON.parse(atob(bHours)); } catch(e){} }
+
+            if (bHours && typeof bHours === 'object') {
+                Object.entries(bHours).forEach(([day, times]) => {
+                    if(!times) return;
+                    const text = times.closed ? `<span class="text-red-400 font-bold">Closed</span>` : `<span class="text-white">${times.open} - ${times.close}</span>`;
+                    hoursContainer.innerHTML += `<div class="bg-gray-900/50 p-2 rounded border border-gray-700/50"><div class="capitalize text-xs font-bold text-gray-500 mb-1">${day}</div>${text}</div>`;
+                });
+            } else {
+                hoursContainer.innerHTML = '<span class="text-gray-500 text-xs col-span-full">No hours set.</span>';
+            }
+        }
+
+        // 4. Populate Order History Tab
+        const orderBody = document.getElementById('detailOrderTableBody');
+        if(orderBody) {
+            orderBody.innerHTML = '';
+            if(orders.length === 0) {
+                orderBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">No orders found.</td></tr>';
+            } else {
+                orders.slice(0, 10).forEach(o => { 
+                    orderBody.innerHTML += `
+                        <tr class="border-b border-gray-700/50 last:border-0 hover:bg-gray-700/30">
+                            <td class="p-3 font-mono text-xs text-blue-300">#${(o.order_id || '').substring(0,8)}</td>
+                            <td class="p-3 text-gray-300">${o.user_firstname} ${o.user_lastname}</td>
+                            <td class="p-3 text-green-400 font-bold">${formatRupiah(o.total_price)}</td>
+                            <td class="p-3 text-xs text-gray-400">${o.status}</td>
+                            <td class="p-3 text-xs text-gray-500">${new Date(o.created_at).toLocaleDateString()}</td>
+                        </tr>
+                    `;
+                });
+            }
+        }
+
+        openModal('sellerDetailModal');
+
+    } catch (e) {
+        console.error("View Detail Error:", e);
+        alert("Failed to load seller details.");
+    }
+}
+
+// --- TABS & MENU LOADING ---
+
 window.switchSellerTab = function(tab) {
-    // Button Styles & Content Visibility
+    // 1. Update UI Tabs
     ['overview', 'menu', 'orders'].forEach(t => {
         const btn = document.getElementById(`tab_s_${t}`);
         const content = document.getElementById(`content_s_${t}`);
         
         if (t === tab) {
-            btn.classList.add('border-blue-500', 'text-blue-400');
-            btn.classList.remove('border-transparent', 'text-gray-400');
-            content.classList.remove('hidden');
+            if(btn) {
+                btn.classList.add('border-blue-500', 'text-blue-400');
+                btn.classList.remove('border-transparent', 'text-gray-400');
+            }
+            if(content) content.classList.remove('hidden');
         } else {
-            btn.classList.remove('border-blue-500', 'text-blue-400');
-            btn.classList.add('border-transparent', 'text-gray-400');
-            content.classList.add('hidden');
+            if(btn) {
+                btn.classList.remove('border-blue-500', 'text-blue-400');
+                btn.classList.add('border-transparent', 'text-gray-400');
+            }
+            if(content) content.classList.add('hidden');
         }
     });
 
-    // Lazy Load Menu if clicking menu tab and it's empty
+    // 2. Lazy Load Menu Logic
     if (tab === 'menu' && currentSellerMenu.length === 0) {
         const sellerId = document.getElementById('detailSellerId').value;
         if(sellerId) loadSellerMenu(sellerId);
     }
 };
 
-// 2. FETCH MENU (From new API)
 async function loadSellerMenu(sellerId) {
+    if (!sellerId || sellerId === 'undefined') {
+        console.error("loadSellerMenu called with invalid ID");
+        return; 
+    }
+
     const grid = document.getElementById('sellerMenuGrid');
-    grid.innerHTML = `<div class="col-span-full text-center py-10"><i class="fas fa-circle-notch fa-spin text-blue-500 text-2xl"></i><p class="text-gray-500 text-xs mt-2">Loading menu...</p></div>`;
+    if(!grid) return;
+    
+    grid.innerHTML = `<div class="col-span-full text-center py-10"><i class="fas fa-circle-notch fa-spin text-blue-500"></i> Loading menu...</div>`;
 
     try {
         const res = await adminFetch(`/admin/seller/menu/${sellerId}`);
-        if(res.ok) {
-            const data = await res.json();
-            // The API returns { count: 99, menu: [...] }
-            currentSellerMenu = data.menu || []; 
-            renderSellerMenu(currentSellerMenu);
-        } else {
-            grid.innerHTML = `<div class="col-span-full text-center text-red-400 text-xs py-10">Failed to load menu.</div>`;
+        if(!res.ok) throw new Error(`HTTP Error ${res.status}`);
+        
+        const rawData = await res.json();
+        console.log("Menu Data:", rawData); // For debugging
+
+        // --- KEY FIX: Detect if data is Array or Object wrapped ---
+        let items = [];
+        if (Array.isArray(rawData)) {
+            items = rawData;
+        } else if (rawData && typeof rawData === 'object') {
+            // Check common wrapper property names
+            if (Array.isArray(rawData.data)) items = rawData.data;
+            else if (Array.isArray(rawData.foods)) items = rawData.foods;
+            else if (Array.isArray(rawData.menu)) items = rawData.menu;
+            else if (Array.isArray(rawData.items)) items = rawData.items;
         }
+        
+        currentSellerMenu = items;
+        renderSellerMenu(currentSellerMenu);
+
     } catch(e) {
-        console.error(e);
-        grid.innerHTML = `<div class="col-span-full text-center text-red-400 text-xs py-10">Network error.</div>`;
+        console.error("Menu Load Error:", e);
+        // Show actual error message on UI
+        grid.innerHTML = `<div class="col-span-full text-center py-10 text-red-400 text-xs">
+            Failed to load menu.<br>
+            <span class="text-gray-500">${e.message}</span>
+        </div>`;
     }
 }
 
-// 3. RENDER MENU GRID
 function renderSellerMenu(items) {
     const grid = document.getElementById('sellerMenuGrid');
-    
+    if (!grid) return;
+
     if (!items || items.length === 0) {
         grid.innerHTML = `<div class="col-span-full text-center text-gray-500 text-xs py-20 bg-gray-800/50 rounded-xl border border-gray-700 border-dashed">No menu items found.</div>`;
         return;
@@ -3882,18 +4030,18 @@ function renderSellerMenu(items) {
 
     grid.innerHTML = items.map(item => {
         const img = item.photo_url || item.thumbnail_url;
-        // Status: Available (Green), Unavailable (Red), Pending Approval (Yellow)
         let statusBadge = '';
+        
         if (item.is_approved === 'pending') {
             statusBadge = `<span class="text-[9px] font-bold text-yellow-400 bg-yellow-900/30 px-1.5 py-0.5 rounded border border-yellow-700 uppercase">Pending</span>`;
-        } else if (!item.is_available) {
-            statusBadge = `<span class="text-[9px] font-bold text-red-400 bg-red-900/30 px-1.5 py-0.5 rounded border border-red-700 uppercase">Empty</span>`;
+        } else if (!item.is_active) {
+            statusBadge = `<span class="text-[9px] font-bold text-red-400 bg-red-900/30 px-1.5 py-0.5 rounded border border-red-700 uppercase">Inactive</span>`;
         } else {
-            statusBadge = `<span class="text-[9px] font-bold text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded border border-green-700 uppercase">Ready</span>`;
+            statusBadge = `<span class="text-[9px] font-bold text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded border border-green-700 uppercase">Active</span>`;
         }
 
         return `
-        <div class="flex gap-3 bg-gray-800 p-3 rounded-xl border border-gray-700 hover:border-gray-600 transition group h-24">
+        <div class="flex gap-3 bg-gray-800 p-3 rounded-xl border border-gray-700 hover:border-gray-600 transition h-24">
             <div class="w-16 h-16 rounded-lg bg-gray-700 overflow-hidden flex-shrink-0 relative">
                 ${img ? `<img src="${img}" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-gray-600"><i class="fas fa-utensils"></i></div>`}
             </div>
@@ -3915,95 +4063,14 @@ function renderSellerMenu(items) {
     }).join('');
 }
 
-// 4. CLIENT-SIDE FILTER
 window.filterSellerMenu = function() {
     const term = document.getElementById('menuSearch').value.toLowerCase();
-    const filtered = currentSellerMenu.filter(i => i.food_name.toLowerCase().includes(term));
+    const filtered = currentSellerMenu.filter(i => (i.food_name || '').toLowerCase().includes(term));
     renderSellerMenu(filtered);
 }
 
-// 5. UPDATE EXISTING viewSellerDetail (To reset state)
-const oldViewSellerDetail = window.viewSellerDetail; // Backup if needed
+// --- ADMIN ACTIONS (Update Status / Notes) ---
 
-window.viewSellerDetail = async function(sellerId) {
-    try {
-        const res = await adminFetch(`/admin/seller/${sellerId}`);
-        if(!res.ok) throw new Error("Fetch failed");
-        const data = await res.json();
-        
-        const p = data.profile; 
-        const stats = data.statistics || {};
-        const orders = data.order_history || [];
-
-        // --- RESET TABS ---
-        currentSellerMenu = [];
-        document.getElementById('sellerMenuGrid').innerHTML = '';
-        document.getElementById('menuSearch').value = '';
-        switchSellerTab('overview'); // Default to Overview
-
-        // --- POPULATE HEADER ---
-        document.getElementById('detailStoreNameHeader').innerText = p.store_name || 'Unknown Store';
-        document.getElementById('detailOwnerNameHeader').innerText = p.user_id ? 'Seller ID: ' + p.user_id.substring(0,8) : 'Unknown Owner';
-
-        // --- POPULATE OVERVIEW TAB (Same as before) ---
-        document.getElementById('detailSellerId').value = p.seller_id;
-        document.getElementById('detailStoreName').innerText = p.store_name;
-        document.getElementById('detailOwnerName').innerText = p.user_id ? 'User ID: ' + p.user_id.substring(0,8) : 'Unknown';
-        document.getElementById('detailPhone').innerText = p.store_phone_number || '-';
-        document.getElementById('detailEmail').innerText = p.store_email || '-';
-        document.getElementById('detailAddress').innerText = p.address_line1 || '-';
-        
-        // Stats
-        document.getElementById('statTotalRev').innerText = formatRupiah(stats.total_revenue || 0);
-        document.getElementById('statTotalOrd').innerText = stats.total_orders || 0;
-        document.getElementById('statMonthRev').innerText = formatRupiah(stats.this_month_revenue || 0);
-        document.getElementById('statMonthOrd').innerText = stats.this_month_orders || 0;
-
-        // Business Hours Logic (with null check)
-        const hoursContainer = document.getElementById('detailBusinessHours');
-        hoursContainer.innerHTML = '';
-        if (p.business_hours) {
-            let bHours = p.business_hours;
-            if (typeof bHours === 'string') { try { bHours = JSON.parse(bHours); } catch(e){} }
-            if (bHours && typeof bHours === 'object') {
-                Object.entries(bHours).forEach(([day, times]) => {
-                    if(!times) return;
-                    const text = times.closed ? `<span class="text-red-400 font-bold">Closed</span>` : `<span class="text-white">${times.open} - ${times.close}</span>`;
-                    hoursContainer.innerHTML += `<div class="bg-gray-900/50 p-2 rounded border border-gray-700/50"><div class="capitalize text-xs font-bold text-gray-500 mb-1">${day}</div>${text}</div>`;
-                });
-            }
-        } else {
-            hoursContainer.innerHTML = '<span class="text-gray-500 text-xs col-span-full">No hours set.</span>';
-        }
-
-        // --- POPULATE ORDER HISTORY TAB ---
-        const orderBody = document.getElementById('detailOrderTableBody');
-        orderBody.innerHTML = '';
-        if(orders.length === 0) {
-            orderBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">No orders found.</td></tr>';
-        } else {
-            orders.slice(0, 10).forEach(o => { 
-                orderBody.innerHTML += `
-                    <tr class="border-b border-gray-700/50 last:border-0 hover:bg-gray-700/30">
-                        <td class="p-3 font-mono text-xs text-blue-300">#${(o.order_id || '').substring(0,8)}</td>
-                        <td class="p-3 text-gray-300">${o.user_firstname} ${o.user_lastname}</td>
-                        <td class="p-3 text-green-400 font-bold">${formatRupiah(o.total_price)}</td>
-                        <td class="p-3 text-xs text-gray-400">${o.status}</td>
-                        <td class="p-3 text-xs text-gray-500">${new Date(o.created_at).toLocaleDateString()}</td>
-                    </tr>
-                `;
-            });
-        }
-
-        openModal('sellerDetailModal');
-
-    } catch (e) {
-        console.error("View Detail Error:", e);
-        alert("Failed to load seller details.");
-    }
-}
-
-// 2. UPDATE STATUS
 window.updateSellerStatus = async function() {
     const sellerId = document.getElementById('detailSellerId').value;
     const status = document.getElementById('detailAdminStatus').value;
@@ -4022,14 +4089,13 @@ window.updateSellerStatus = async function() {
         
         if(res.ok) {
             alert("Status updated successfully");
-            loadSellersList(); // Refresh background list
+            loadSellersList(); // Refresh main list
         } else {
             alert("Failed to update status");
         }
     } catch(e) { console.error(e); }
 }
 
-// 3. UPDATE NOTES
 window.updateSellerNotes = async function() {
     const sellerId = document.getElementById('detailSellerId').value;
     const notes = document.getElementById('detailAdminNotes').value;
@@ -4045,61 +4111,57 @@ window.updateSellerNotes = async function() {
     } catch(e) { console.error(e); }
 }
 
-// 4. VIEW REVIEWS
+// --- REVIEWS LOGIC ---
+
 window.viewSellerReviews = async function(sellerId) {
     try {
         const res = await adminFetch(`/admin/seller/reviews/${sellerId}`);
-        
         if(!res.ok) throw new Error("Fetch failed");
         
-        // FIX: Handle null response by defaulting to empty array
         const responseData = await res.json();
         const reviews = responseData || []; 
 
         const container = document.getElementById('reviewsContainer');
-        container.innerHTML = '';
+        if(container) {
+            container.innerHTML = '';
 
-        if(reviews.length === 0) {
-            // RENDER "NO REVIEWS" STATE
-            container.innerHTML = `
-                <div class="flex flex-col items-center justify-center h-full py-12 text-gray-500">
-                    <div class="bg-gray-700/30 p-4 rounded-full mb-3 border border-gray-600">
-                        <i class="fas fa-comment-slash text-2xl text-gray-400"></i>
-                    </div>
-                    <p class="text-sm font-bold text-gray-300">No reviews yet</p>
-                    <p class="text-xs text-gray-500 mt-1">This seller hasn't received any feedback.</p>
-                </div>
-            `;
-        } else {
-            // RENDER REVIEWS LIST
-            reviews.forEach(r => {
-                let stars = '';
-                // Safety check for rating
-                const rating = r.rating || 0;
-                for(let i=0; i<5; i++) {
-                    stars += `<i class="fas fa-star ${i < rating ? 'text-yellow-400' : 'text-gray-600'} text-xs"></i>`;
-                }
-
-                container.innerHTML += `
-                    <div id="review-${r.review_id}" class="border border-gray-700 bg-gray-900/50 rounded-xl p-4 flex justify-between items-start animate-fade-in mb-3 last:mb-0">
-                        <div class="flex-1">
-                            <div class="flex items-center gap-2 mb-1">
-                                <span class="font-bold text-sm text-gray-200">${r.user_firstname || 'User'} ${r.user_lastname || ''}</span>
-                                <span class="text-xs text-gray-500">(${r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A'})</span>
-                            </div>
-                            <div class="mb-2">${stars}</div>
-                            <p class="text-gray-300 text-sm italic">"${r.review_text || ''}"</p>
-                            ${r.seller_reply ? `<div class="mt-3 text-xs text-blue-400 pl-3 border-l-2 border-blue-500/30"><strong>Store Reply:</strong> ${r.seller_reply}</div>` : ''}
+            if(reviews.length === 0) {
+                container.innerHTML = `
+                    <div class="flex flex-col items-center justify-center h-full py-12 text-gray-500">
+                        <div class="bg-gray-700/30 p-4 rounded-full mb-3 border border-gray-600">
+                            <i class="fas fa-comment-slash text-2xl text-gray-400"></i>
                         </div>
-                        <button onclick="deleteReview('${r.review_id}')" class="text-gray-500 hover:text-red-500 transition ml-3 bg-gray-800 hover:bg-gray-700 p-2 rounded-lg" title="Delete Review">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <p class="text-sm font-bold text-gray-300">No reviews yet</p>
+                        <p class="text-xs text-gray-500 mt-1">This seller hasn't received any feedback.</p>
                     </div>
                 `;
-            });
-        }
+            } else {
+                reviews.forEach(r => {
+                    let stars = '';
+                    const rating = r.rating || 0;
+                    for(let i=0; i<5; i++) {
+                        stars += `<i class="fas fa-star ${i < rating ? 'text-yellow-400' : 'text-gray-600'} text-xs"></i>`;
+                    }
 
-        // OPEN MODAL (Now guaranteed to open even if empty)
+                    container.innerHTML += `
+                        <div id="review-${r.review_id}" class="border border-gray-700 bg-gray-900/50 rounded-xl p-4 flex justify-between items-start animate-fade-in mb-3 last:mb-0">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="font-bold text-sm text-gray-200">${r.user_firstname || 'User'} ${r.user_lastname || ''}</span>
+                                    <span class="text-xs text-gray-500">(${r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A'})</span>
+                                </div>
+                                <div class="mb-2">${stars}</div>
+                                <p class="text-gray-300 text-sm italic">"${r.review_text || ''}"</p>
+                                ${r.seller_reply ? `<div class="mt-3 text-xs text-blue-400 pl-3 border-l-2 border-blue-500/30"><strong>Store Reply:</strong> ${r.seller_reply}</div>` : ''}
+                            </div>
+                            <button onclick="deleteReview('${r.review_id}')" class="text-gray-500 hover:text-red-500 transition ml-3 bg-gray-800 hover:bg-gray-700 p-2 rounded-lg" title="Delete Review">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    `;
+                });
+            }
+        }
         openModal('sellerReviewsModal');
 
     } catch(e) { 
@@ -4108,14 +4170,14 @@ window.viewSellerReviews = async function(sellerId) {
     }
 }
 
-// 5. DELETE REVIEW
 window.deleteReview = async function(reviewId) {
     if(!confirm("Are you sure you want to delete this review?")) return;
 
     try {
         const res = await adminFetch(`/admin/seller/reviews/${reviewId}`, { method: 'DELETE' });
         if(res.ok) {
-            document.getElementById(`review-${reviewId}`).remove();
+            const el = document.getElementById(`review-${reviewId}`);
+            if(el) el.remove();
         } else {
             alert("Failed to delete review");
         }

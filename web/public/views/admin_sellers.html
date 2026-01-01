@@ -1,129 +1,278 @@
 <div class="space-y-6 animate-fade-in">
+    
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-            <h2 class="text-2xl font-bold text-white tracking-tight">Seller Management</h2>
-            <p class="text-sm text-gray-400 mt-1">Monitor, manage, and audit all registered store partners.</p>
+            <h2 class="text-2xl font-extrabold text-white tracking-tight">Seller Management</h2>
+            <p class="text-sm text-gray-400 mt-1">Monitor partners, manage approvals, and track performance.</p>
         </div>
-        <div class="flex items-center gap-2">
-             <button onclick="loadSellersList()" class="bg-gray-800 hover:bg-gray-700 text-white p-2.5 rounded-xl border border-gray-700 transition shadow-sm group">
-                <i class="fas fa-sync-alt group-hover:rotate-180 transition-transform duration-500"></i>
+        <div class="flex gap-2">
+            <button onclick="initSellerManagement()" class="bg-gray-800 hover:bg-gray-700 text-white p-2.5 rounded-xl border border-gray-700 transition">
+                <i class="fas fa-sync-alt"></i>
             </button>
         </div>
     </div>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
-                    <i class="fas fa-store"></i>
-                </div>
-                <div>
-                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Total Sellers</p>
-                    <p class="text-xl font-bold text-white" id="m_total_sellers">0</p>
-                </div>
-            </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700">
+            <p class="text-[10px] font-bold text-gray-500 uppercase">Total Sellers</p>
+            <p class="text-xl font-bold text-white" id="m_total_sellers">0</p>
         </div>
-        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-green-500/20 text-green-400 flex items-center justify-center font-bold">
-                    <i class="fas fa-check-circle"></i>
-                </div>
-                <div>
-                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Active</p>
-                    <p class="text-xl font-bold text-white" id="m_active_sellers">0</p>
-                </div>
-            </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700">
+            <p class="text-[10px] font-bold text-gray-500 uppercase">Active</p>
+            <p class="text-xl font-bold text-green-400" id="m_active_sellers">0</p>
         </div>
-         <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-orange-500/20 text-orange-400 flex items-center justify-center font-bold">
-                    <i class="fas fa-pause-circle"></i>
-                </div>
-                <div>
-                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Suspended</p>
-                    <p class="text-xl font-bold text-white" id="m_suspended_sellers">0</p>
-                </div>
-            </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700">
+            <p class="text-[10px] font-bold text-gray-500 uppercase">Pending</p>
+            <p class="text-xl font-bold text-yellow-400" id="m_pending_sellers">0</p>
         </div>
-        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 shadow-lg">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-yellow-500/20 text-yellow-400 flex items-center justify-center font-bold">
-                    <i class="fas fa-clock"></i>
-                </div>
-                <div>
-                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Verification Pending</p>
-                    <p class="text-xl font-bold text-white" id="m_pending_sellers">0</p>
-                </div>
-            </div>
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700">
+            <p class="text-[10px] font-bold text-gray-500 uppercase">Suspended</p>
+            <p class="text-xl font-bold text-red-400" id="m_suspended_sellers">0</p>
         </div>
     </div>
 
     <div class="bg-gray-800 rounded-2xl border border-gray-700 shadow-xl overflow-hidden">
         
-        <div class="p-4 border-b border-gray-700 flex flex-col sm:flex-row gap-3 bg-gray-900/50 items-center">
-            
-            <div class="relative flex-1 w-full">
+        <div class="p-4 border-b border-gray-700 flex flex-col md:flex-row gap-3 bg-gray-900/50">
+            <div class="relative flex-1">
                 <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
-                <input type="text" id="sellerMgmtSearch" oninput="filterSellersList()" placeholder="Search by store name or city..." 
-                    class="w-full bg-gray-800/50 border border-gray-600 text-white text-sm rounded-xl py-2.5 pl-9 pr-4 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all placeholder-gray-500 hover:bg-gray-800">
+                <input type="text" id="sellerMgmtSearch" oninput="filterSellersList()" placeholder="Search store name or city..." 
+                    class="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded-xl py-2.5 pl-9 pr-4 focus:border-blue-500 outline-none">
             </div>
-
-            <div class="relative group w-full sm:w-auto">
-                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-400 transition-colors">
-                    <i class="fas fa-filter text-xs"></i>
-                </div>
-                <select id="sellerMgmtStatusFilter" onchange="filterSellersList()" 
-                    class="appearance-none w-full sm:w-40 bg-gray-800 border border-gray-600 text-gray-200 text-sm font-medium rounded-xl py-2.5 pl-9 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 cursor-pointer hover:bg-gray-750 transition-all">
-                    <option value="all">All Status</option>
-                    <option value="active">Active</option>
-                    <option value="suspended">Suspended</option>
-                    <option value="blacklisted">Blacklisted</option>
-                </select>
-                <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-                    <i class="fas fa-chevron-down text-[10px]"></i>
-                </div>
-            </div>
-
-            <div class="relative group w-full sm:w-auto">
-                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-400 transition-colors">
-                    <i class="fas fa-sort-amount-down text-xs"></i>
-                </div>
-                <select id="sellerMgmtSort" onchange="filterSellersList()" 
-                    class="appearance-none w-full sm:w-40 bg-gray-800 border border-gray-600 text-gray-200 text-sm font-medium rounded-xl py-2.5 pl-9 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 cursor-pointer hover:bg-gray-750 transition-all">
-                    <option value="newest">Newest First</option>
-                    <option value="oldest">Oldest First</option>
-                    <option value="az">Name A-Z</option>
-                </select>
-                <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-                    <i class="fas fa-chevron-down text-[10px]"></i>
-                </div>
-            </div>
-
+            <select id="sellerMgmtStatusFilter" onchange="filterSellersList()" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-xl py-2.5 px-4 outline-none">
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="pending">Pending</option>
+                <option value="suspended">Suspended</option>
+            </select>
+            <select id="sellerMgmtSort" onchange="filterSellersList()" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-xl py-2.5 px-4 outline-none">
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="az">Name A-Z</option>
+            </select>
         </div>
 
         <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse">
-                <thead class="bg-gray-900/80 text-xs uppercase text-gray-400 font-bold tracking-wider">
+                <thead class="bg-gray-900/80 text-xs uppercase text-gray-400 font-bold">
                     <tr>
-                        <th class="p-4 border-b border-gray-700">Store</th>
+                        <th class="p-4 border-b border-gray-700">Store Info</th>
                         <th class="p-4 border-b border-gray-700">Location</th>
                         <th class="p-4 border-b border-gray-700 text-center">Verification</th>
-                        <th class="p-4 border-b border-gray-700 text-center">Admin Status</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Status</th>
                         <th class="p-4 border-b border-gray-700 text-center">Joined</th>
                         <th class="p-4 border-b border-gray-700 text-right">Actions</th>
                     </tr>
                 </thead>
-                <tbody id="sellersMgmtTableBody" class="divide-y divide-gray-700 text-sm bg-gray-800/20">
-                    <tr><td colspan="6" class="p-8 text-center text-gray-500">Loading sellers...</td></tr>
-                </tbody>
+                <tbody id="sellersMgmtTableBody" class="text-sm divide-y divide-gray-700">
+                    </tbody>
             </table>
         </div>
         
         <div class="p-4 border-t border-gray-700 bg-gray-900/50 flex justify-between items-center text-xs text-gray-500">
             <span id="sellerCountDisplay">Showing 0 sellers</span>
-            <div class="flex gap-2">
-                <button class="px-3 py-1.5 bg-gray-800 rounded-lg border border-gray-700 hover:text-white hover:border-gray-500 disabled:opacity-50 transition-colors" disabled>Prev</button>
-                <button class="px-3 py-1.5 bg-gray-800 rounded-lg border border-gray-700 hover:text-white hover:border-gray-500 disabled:opacity-50 transition-colors" disabled>Next</button>
+        </div>
+    </div>
+</div>
+
+<div id="sellerDetailModal" class="fixed inset-0 z-[100] hidden bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-gray-900 w-full max-w-5xl h-[90vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden animate-pop-in">
+        
+        <div class="p-5 border-b border-gray-700 bg-gray-800 flex justify-between items-start">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center text-white text-xl font-bold shadow-lg">
+                    <i class="fas fa-store"></i>
+                </div>
+                <div>
+                    <h3 class="text-xl font-bold text-white leading-tight" id="detailStoreNameHeader">Loading...</h3>
+                    <p class="text-sm text-gray-400" id="detailOwnerNameHeader">...</p>
+                </div>
+            </div>
+            <button onclick="closeModal('sellerDetailModal')" class="w-8 h-8 rounded-full bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition flex items-center justify-center">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <div class="flex border-b border-gray-700 bg-gray-800/50 px-6 gap-6">
+            <button onclick="switchSellerTab('overview')" id="tab_s_overview" class="py-3 text-sm font-bold text-blue-400 border-b-2 border-blue-500 transition">Overview</button>
+            <button onclick="switchSellerTab('menu')" id="tab_s_menu" class="py-3 text-sm font-bold text-gray-400 border-b-2 border-transparent hover:text-white transition">Menu Items</button>
+            <button onclick="switchSellerTab('orders')" id="tab_s_orders" class="py-3 text-sm font-bold text-gray-400 border-b-2 border-transparent hover:text-white transition">Order History</button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-6 custom-scroll">
+            <input type="hidden" id="detailSellerId">
+
+            <div id="content_s_overview" class="space-y-6">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
+                        <p class="text-[10px] text-gray-500 uppercase font-bold">Total Revenue</p>
+                        <p class="text-lg font-bold text-green-400" id="statTotalRev">...</p>
+                    </div>
+                    <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
+                        <p class="text-[10px] text-gray-500 uppercase font-bold">Total Orders</p>
+                        <p class="text-lg font-bold text-white" id="statTotalOrd">...</p>
+                    </div>
+                    <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
+                        <p class="text-[10px] text-gray-500 uppercase font-bold">Month Revenue</p>
+                        <p class="text-lg font-bold text-green-400" id="statMonthRev">...</p>
+                    </div>
+                    <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
+                        <p class="text-[10px] text-gray-500 uppercase font-bold">Month Orders</p>
+                        <p class="text-lg font-bold text-white" id="statMonthOrd">...</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 space-y-4">
+                        <h4 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-700 pb-2">Store Profile</h4>
+                        <div class="grid grid-cols-1 gap-4 text-sm">
+                            <div><span class="block text-[10px] text-gray-500 uppercase font-bold">Store Name</span><span class="text-white" id="detailStoreName">...</span></div>
+                            <div><span class="block text-[10px] text-gray-500 uppercase font-bold">Owner</span><span class="text-white" id="detailOwnerName">...</span></div>
+                            <div><span class="block text-[10px] text-gray-500 uppercase font-bold">Phone</span><span class="text-gray-300 font-mono" id="detailPhone">...</span></div>
+                            <div><span class="block text-[10px] text-gray-500 uppercase font-bold">Email</span><span class="text-gray-300" id="detailEmail">...</span></div>
+                            <div><span class="block text-[10px] text-gray-500 uppercase font-bold">Address</span><span class="text-gray-300" id="detailAddress">...</span></div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div class="bg-gray-800 p-6 rounded-xl border border-blue-500/30 shadow-lg shadow-blue-500/5">
+                            <h4 class="text-sm font-bold text-blue-400 uppercase tracking-wider border-b border-gray-700 pb-2 mb-4">Admin Actions</h4>
+                            
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 mb-1">Account Status</label>
+                                    <div class="flex gap-2">
+                                        <select id="detailAdminStatus" class="bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 flex-1 outline-none">
+                                            <option value="active">Active</option>
+                                            <option value="suspended">Suspended</option>
+                                            <option value="blacklisted">Blacklisted</option>
+                                        </select>
+                                        <button onclick="updateSellerStatus()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition">Update</button>
+                                    </div>
+                                    <input type="text" id="detailStatusReason" placeholder="Reason for action..." class="mt-2 w-full bg-gray-900 border border-gray-600 text-white text-xs rounded-lg px-3 py-2 outline-none">
+                                </div>
+
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 mb-1">Internal Notes</label>
+                                    <textarea id="detailAdminNotes" rows="3" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg p-3 outline-none" placeholder="Notes for other admins..."></textarea>
+                                    <button onclick="updateSellerNotes()" class="mt-2 w-full bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-bold py-2 rounded-lg transition">Save Notes</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
+                            <h4 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Business Hours</h4>
+                            <div class="grid grid-cols-2 gap-2" id="detailBusinessHours">
+                                </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="content_s_menu" class="hidden space-y-4">
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+                    <input type="text" id="menuSearch" oninput="filterSellerMenu()" placeholder="Search menu..." class="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded-xl py-2.5 pl-9 pr-4 outline-none">
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="sellerMenuGrid">
+                    </div>
+            </div>
+
+            <div id="content_s_orders" class="hidden">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-800 text-xs text-gray-500 uppercase">
+                        <tr>
+                            <th class="p-3">Order ID</th>
+                            <th class="p-3">Customer</th>
+                            <th class="p-3">Total</th>
+                            <th class="p-3">Status</th>
+                            <th class="p-3">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detailOrderTableBody" class="text-sm">
+                        </tbody>
+                </table>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<div id="sellerReviewsModal" class="fixed inset-0 z-[110] hidden bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-gray-800 w-full max-w-lg rounded-2xl border border-gray-700 shadow-2xl flex flex-col h-[80vh] animate-pop-in">
+        <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+            <h3 class="font-bold text-white">Customer Reviews</h3>
+            <button onclick="closeModal('sellerReviewsModal')" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 custom-scroll" id="reviewsContainer">
+            </div>
+    </div>
+</div>
+
+<div id="foodInspectModal" class="fixed inset-0 z-[120] hidden bg-black/95 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-gray-900 w-full max-w-4xl h-[90vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col md:flex-row overflow-hidden animate-pop-in relative">
+        <button onclick="closeModal('foodInspectModal')" class="absolute top-4 right-4 z-50 w-8 h-8 rounded-full bg-black/50 text-white hover:bg-white hover:text-black transition flex items-center justify-center backdrop-blur-md">
+            <i class="fas fa-times"></i>
+        </button>
+
+        <div class="w-full md:w-1/2 bg-black flex items-center justify-center relative overflow-hidden">
+            <img id="modal_food_img" src="" class="w-full h-full object-cover opacity-90">
+            <div id="modal_food_no_photo" class="hidden flex flex-col items-center text-gray-500">
+                <i class="fas fa-image text-6xl mb-2 opacity-20"></i>
+                <span class="text-xs uppercase tracking-widest opacity-50">No Photo Available</span>
+            </div>
+        </div>
+
+        <div class="w-full md:w-1/2 flex flex-col h-full bg-gray-900 border-l border-gray-800">
+            <div class="flex-1 overflow-y-auto p-8 custom-scroll">
+                
+                <div class="mb-6">
+                    <span class="text-[10px] font-bold tracking-widest text-blue-400 uppercase bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20 mb-2 inline-block" id="modal_food_cat">Category</span>
+                    <h2 class="text-3xl font-extrabold text-white leading-tight mb-2" id="modal_food_name">Food Name</h2>
+                    <div class="flex items-center gap-3">
+                        <span class="text-2xl font-bold text-green-400" id="modal_food_price">Rp0</span>
+                        <span class="text-sm text-gray-500" id="modal_food_stock">Stock: -</span>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Description</h4>
+                    <p class="text-sm text-gray-300 leading-relaxed" id="modal_food_desc">...</p>
+                </div>
+
+                <div class="mb-6">
+                    <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
+                    <div class="flex flex-wrap gap-2" id="modal_food_tags"></div>
+                </div>
+
+                <div class="bg-gray-800 rounded-xl p-5 border border-gray-700">
+                    <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                        <h4 class="text-xs font-bold text-white uppercase flex items-center gap-2">
+                            <i class="fas fa-leaf text-green-500"></i> Nutrition Facts
+                        </h4>
+                        <span class="text-[10px] text-gray-400" id="modal_food_serving_size">Per Serving</span>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
+                        <div class="flex justify-between"><span class="text-gray-400">Calories</span><span class="font-bold text-white" id="modal_val_cal">-</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Protein</span><span class="font-bold text-white" id="modal_val_pro">-</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Carbs</span><span class="font-bold text-white" id="modal_val_carb">-</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Fats</span><span class="font-bold text-white" id="modal_val_fat">-</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Fiber</span><span class="font-bold text-white" id="modal_val_fib">-</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Sugar</span><span class="font-bold text-white" id="modal_val_sug">-</span></div>
+                    </div>
+
+                    <div class="mt-4 pt-4 border-t border-gray-700 grid grid-cols-2 gap-4">
+                        <div class="bg-gray-900/50 p-2 rounded text-center border border-gray-700">
+                            <div class="text-[10px] text-gray-500 uppercase">Glycemic Index</div>
+                            <div class="text-lg font-bold text-blue-400" id="modal_val_gi">-</div>
+                        </div>
+                        <div class="bg-gray-900/50 p-2 rounded text-center border border-gray-700">
+                            <div class="text-[10px] text-gray-500 uppercase">Glycemic Load</div>
+                            <div class="text-lg font-bold text-purple-400" id="modal_val_gl">-</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

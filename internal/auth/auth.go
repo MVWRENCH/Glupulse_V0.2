@@ -1,8 +1,3 @@
-/*
-Package auth provides the core authentication primitives for the Glupulse platform.
-It handles JWT management, OAuth integration (Google), OTP generation/verification,
-and session management using secure cookies.
-*/
 package auth
 
 import (
@@ -45,22 +40,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// --- Configuration Constants ---
-
 const (
-	// Token Durations
 	AccessTokenDuration  = 24 * time.Hour
 	RefreshTokenDuration = 30 * 24 * time.Hour
+	OtpExpiryDuration    = 60 * time.Second
+	OtpStoreRetention    = 30 * time.Minute
+	PendingRegExpiry     = 1 * time.Hour
+	OtpResendCooldown    = 1 * time.Minute
+	MaxOtpAttempts       = 3
+	MaxOTPStoreSize      = 10000
 
-	// OTP Configuration
-	OtpExpiryDuration = 60 * time.Second
-	OtpStoreRetention = 30 * time.Minute
-	PendingRegExpiry  = 1 * time.Hour
-	OtpResendCooldown = 1 * time.Minute
-	MaxOtpAttempts    = 3
-	MaxOTPStoreSize   = 10000
-
-	// Structured Logging Categories
+	// Log Categories
 	LogCategoryLogin    = "login"
 	LogCategoryRegister = "register"
 	LogCategoryOTP      = "otp"
@@ -69,53 +59,33 @@ const (
 	LogCategoryRefresh  = "refresh_token"
 	LogCategoryError    = "error"
 
-	// Structured Logging Levels
+	// Log Levels
 	LogLevelInfo     = "info"
 	LogLevelWarning  = "warning"
 	LogLevelError    = "error"
 	LogLevelCritical = "critical"
 
-	// OTP Lifecycle Status
+	// OTP Status
 	OTPStatusActive  = "active"
 	OTPStatusExpired = "expired"
 	OTPStatusUsed    = "used"
 )
 
-// --- Global State ---
-
 var (
-	// Database queries interface (initialized in InitAuth)
-	queries *database.Queries
-
-	// Email verifier instance for SMTP and syntax checking
+	queries  *database.Queries
 	verifier = emailverifier.
 			NewVerifier().
 			EnableSMTPCheck().
 			EnableAutoUpdateDisposable().
 			EnableDomainSuggest()
-
-	// LRU Cache for storing email verification results to reduce SMTP overhead
-	emailCache, _ = lru.New[string, emailVerificationResult](1000)
-
-	// Shutdown signals for background cleanup routines
-	otpCleanupShutdown = make(chan struct{})
-	pendingRegShutdown = make(chan struct{})
-
-	// Real-time authentication metrics
-	metrics AuthMetrics
-
-	// Session encryption key
-	sessionSecret []byte
-
-	// Whitelist of valid Google OAuth Client IDs (Web & Mobile)
+	emailCache, _        = lru.New[string, emailVerificationResult](1000)
+	otpCleanupShutdown   = make(chan struct{})
+	pendingRegShutdown   = make(chan struct{})
+	metrics              AuthMetrics
+	sessionSecret        []byte
 	validGoogleAudiences []string
 )
 
-/* =================================================================================
-							DTOs (Data Transfer Objects)
-=================================================================================*/
-
-// JwtCustomClaims extends standard JWT claims with application-specific user data.
 type JwtCustomClaims struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
@@ -123,7 +93,7 @@ type JwtCustomClaims struct {
 	jwt.RegisteredClaims
 }
 
-// AuthResponse represents the payload returned after a successful login/signup.
+// API Response for OAuth
 type AuthResponse struct {
 	AccessToken  string        `json:"access_token"`
 	RefreshToken string        `json:"refresh_token"`
@@ -132,12 +102,10 @@ type AuthResponse struct {
 	User         database.User `json:"user"`
 }
 
-// GoogleTokenRequest is the payload for mobile-to-backend ID Token verification.
 type GoogleTokenRequest struct {
 	IDToken string `json:"id_token" form:"id_token"`
 }
 
-// GoogleUserInfo captures the essential identity fields from Google's OpenID Connect.
 type GoogleUserInfo struct {
 	Sub           string `json:"sub"`
 	Email         string `json:"email"`
@@ -149,7 +117,6 @@ type GoogleUserInfo struct {
 	Aud           string `json:"aud"`
 }
 
-// SignupRequest defines the required data for a standard user registration.
 type SignupRequest struct {
 	Username  string `json:"username" form:"username" validate:"required,min=3,max=50"`
 	Password  string `json:"password" form:"password" validate:"required,min=8"`
@@ -159,7 +126,7 @@ type SignupRequest struct {
 	DOB       string `json:"dob" form:"dob"`
 	Gender    string `json:"gender" form:"gender"`
 
-	// Address Fields (Optional during initial signup)
+	// Optional address fields during signup
 	AddressLine1      *string  `json:"address_line1,omitempty" form:"address_line1"`
 	AddressLine2      *string  `json:"address_line2,omitempty" form:"address_line2"`
 	AddressCity       *string  `json:"address_city,omitempty" form:"address_city"`
@@ -169,13 +136,13 @@ type SignupRequest struct {
 	AddressLongitude  *float64 `json:"address_longitude,omitempty" form:"address_longitude"`
 	AddressLabel      *string  `json:"address_label,omitempty" form:"address_label"`
 
-	// Recipient Fields
+	// Optional recipient info
 	RecipientName  *string `json:"recipient_name,omitempty" form:"recipient_name"`
 	RecipientPhone *string `json:"recipient_phone,omitempty" form:"recipient_phone"`
 	DeliveryNotes  *string `json:"delivery_notes,omitempty" form:"delivery_notes"`
 }
 
-// SellerSignupRequest aggregates user credentials and business profile data for merchant onboarding.
+// SellerSignupRequest combines user auth and seller profile data
 type SellerSignupRequest struct {
 	// User Credentials
 	Username  string `json:"username" validate:"required,min=3,max=50"`
@@ -184,12 +151,12 @@ type SellerSignupRequest struct {
 	FirstName string `json:"first_name" validate:"required"`
 	LastName  string `json:"last_name"`
 
-	// Seller Profile
+	// Seller Details
 	StoreName        string `json:"store_name" validate:"required,min=3,max=100"`
 	StoreDescription string `json:"store_description" validate:"max=500"`
 	StorePhoneNumber string `json:"store_phone_number" validate:"required,min=8"`
 
-	// Physical Location
+	// Location (Required for sellers)
 	AddressLine1 string  `json:"address_line1" validate:"required"`
 	AddressLine2 string  `json:"address_line2"`
 	District     string  `json:"district" validate:"required"`
@@ -198,32 +165,30 @@ type SellerSignupRequest struct {
 	PostalCode   string  `json:"postal_code" validate:"required"`
 	Latitude     float64 `json:"latitude" validate:"required"`
 	Longitude    float64 `json:"longitude" validate:"required"`
-    GmapsLink    string  `json:"gmaps_link"`
+	GmapsLink    string  `json:"gmaps_link"`
 
-	// Business Configuration
+	// Business Details
 	CuisineType   []string               `json:"cuisine_type" validate:"required,min=1"`
 	PriceRange    int                    `json:"price_range" validate:"required,min=1,max=4"`
 	BusinessHours map[string]BusinessDay `json:"business_hours"`
 }
 
-// BusinessDay defines operating hours for a specific day of the week.
 type BusinessDay struct {
-	Open   string `json:"open"`  // Format: "HH:MM" (24h)
-	Close  string `json:"close"` // Format: "HH:MM" (24h)
+	Open   string `json:"open"`  // "09:00"
+	Close  string `json:"close"` // "21:00"
 	Closed bool   `json:"closed"`
 }
 
-// LoginRequest is the standard payload for username/password authentication.
 type LoginRequest struct {
 	Username string `json:"username" form:"username" validate:"required"`
 	Password string `json:"password" form:"password" validate:"required"`
 }
 
-// UserResponse provides a sanitized view of the user account for API responses.
+// UserResponse for API responses. Used in verify OTP Handler
 type UserResponse struct {
 	UserID      string  `json:"user_id"`
 	Username    string  `json:"username"`
-    Email       string  `json:"email"`
+	Email       string  `json:"email"`
 	FirstName   string  `json:"first_name"`
 	LastName    string  `json:"last_name"`
 	DOB         *string `json:"dob,omitempty"`
@@ -231,7 +196,7 @@ type UserResponse struct {
 	AccountType int16   `json:"account_type"`
 }
 
-// TraditionalAuthResponse wraps tokens and user data for non-OAuth logins.
+// TraditionalAuthResponse for username/password auth
 type TraditionalAuthResponse struct {
 	AccessToken  string       `json:"access_token"`
 	RefreshToken string       `json:"refresh_token"`
@@ -240,14 +205,13 @@ type TraditionalAuthResponse struct {
 	User         UserResponse `json:"user"`
 }
 
-// emailVerificationResult caches the outcome of expensive SMTP checks.
 type emailVerificationResult struct {
 	valid     bool
 	message   string
 	timestamp time.Time
 }
 
-// OtpEntry represents a temporary One-Time Password lifecycle.
+// OtpEntry stores OTP secret and metadata
 type OtpEntry struct {
 	UserID      string
 	Email       string
@@ -259,21 +223,20 @@ type OtpEntry struct {
 	Status      string // "active", "expired", "used"
 }
 
-// VerifyOTPRequest is used to confirm a code sent via email.
+// VerifyOTPRequest for OTP verification
 type VerifyOTPRequest struct {
-	PendingID string `json:"pending_id"` // Used during signup flow
-	UserID    string `json:"user_id"`    // Used during login flow
+	PendingID string `json:"pending_id"` // For signup flow
+	UserID    string `json:"user_id"`    // For login flow
 	OtpCode   string `json:"otp_code"`
 }
 
-// ResendOTPRequest triggers a new code generation for an existing flow.
 type ResendOTPRequest struct {
-	PendingID string `json:"pending_id"`
-	UserID    string `json:"user_id"`
-	Email     string `json:"email"`
+	PendingID string `json:"pending_id"` // For signup
+	UserID    string `json:"user_id"`    // For login
+	Email     string `json:"email"`      // Fallback lookup
 }
 
-// AuthLogEntry structures security audit logs.
+// AuthLogEntry represents a structured log entry
 type AuthLogEntry struct {
 	UserID    *string
 	Category  string
@@ -285,7 +248,7 @@ type AuthLogEntry struct {
 	Metadata  map[string]interface{}
 }
 
-// AddressData is a helper struct for serializing address info into JSONB columns.
+// AddressData stores user address information (for raw_data JSON storage)
 type AddressData struct {
 	AddressLine1   string   `json:"address_line1"`
 	AddressLine2   *string  `json:"address_line2,omitempty"`
@@ -300,17 +263,14 @@ type AddressData struct {
 	DeliveryNotes  *string  `json:"delivery_notes,omitempty"`
 }
 
-// LinkGoogleRequest connects an existing account to a Google Identity.
 type LinkGoogleRequest struct {
 	IDToken string `json:"id_token" validate:"required"`
 }
 
-// UnlinkGoogleRequest removes Google Identity connection (requires password confirmation).
 type UnlinkGoogleRequest struct {
 	Password string `json:"password"`
 }
 
-// AuthMetrics tracks authentication subsystem performance counters.
 type AuthMetrics struct {
 	OTPGenerated     int64
 	OTPVerified      int64
@@ -319,12 +279,12 @@ type AuthMetrics struct {
 	SignupsCompleted int64
 }
 
-// ResetRequest initiates the forgotten password flow.
+// ResetRequest used to initiate the password reset flow
 type ResetRequest struct {
 	Email string `json:"email" form:"email" validate:"required,email"`
 }
 
-// CompleteResetRequest finalizes the password reset using an OTP.
+// CompleteResetRequest used to confirm OTP and set new passwordAdminRegisterHandler
 type CompleteResetRequest struct {
 	UserID          string `json:"user_id" form:"user_id" validate:"required"`
 	OtpCode         string `json:"otp_code" form:"otp_code" validate:"required"`
@@ -332,39 +292,31 @@ type CompleteResetRequest struct {
 	ConfirmPassword string `json:"confirm_password" form:"confirm_password" validate:"required"`
 }
 
-// AdminLoginRequest for back-office authentication.
+// Structs for Request/Response
 type AdminLoginRequest struct {
 	Username string `json:"username" validate:"required"`
 	Password string `json:"password" validate:"required"`
 }
 
-// AdminRegisterRequest creates a new administrative user.
 type AdminRegisterRequest struct {
 	Username  string `json:"username" validate:"required,min=4,alphanum"`
 	Password  string `json:"password" validate:"required,min=8"`
-	Role      string `json:"role" validate:"required,oneof=super_admin moderator"`
-	SecretKey string `json:"secret_key" validate:"required"`
+	Role      string `json:"role" validate:"required,oneof=super_admin moderator"` // Enforce specific roles
+	SecretKey string `json:"secret_key" validate:"required"`                       // Security gate
 }
 
-// AdminCustomClaims defines the JWT payload for admin users.
+// AdminClaims extends standard claims to include Role
 type AdminCustomClaims struct {
 	AdminID  string `json:"admin_id"`
 	Username string `json:"username"`
-	Role     string `json:"role"`
+	Role     string `json:"role"` // e.g., 'super_admin', 'moderator'
 	jwt.RegisteredClaims
 }
 
-// RefreshTokenRequest is used to rotate access tokens.
 type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
-/* =================================================================================
-									Initialization
-=================================================================================*/
-
-// InitAuth configures the authentication service, connecting to the database,
-// setting up OAuth providers, and initializing session stores.
 func InitAuth(dbpool *pgxpool.Pool) error {
 	queries = database.New(dbpool)
 	verifier = emailverifier.NewVerifier()
@@ -373,14 +325,12 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 		log.Fatal().Err(err).Msg("No .env file found, reading from environment")
 	}
 
-	// 1. Session Security Configuration
 	sessionSecretStr := os.Getenv("SESSION_SECRET")
 	if sessionSecretStr == "" {
 		log.Fatal().Msg("FATAL: SESSION_SECRET environment variable is not set")
 	}
 	sessionSecret = []byte(sessionSecretStr)
 
-	// 2. OAuth Configuration
 	googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
 	googleAndroidClientId := os.Getenv("GOOGLE_CLIENT_ID_ANDROID")
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
@@ -390,8 +340,6 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 		return fmt.Errorf("GOOGLE_CLIENT_ID, GOOGLE_CLIENT_ID_ANDROID, GOOGLE_CLIENT_SECRET, and APP_URL must be set")
 	}
 
-	// Pre-allocate slice for known size
-	validGoogleAudiences = make([]string, 0, 2)
 	if googleClientId != "" {
 		validGoogleAudiences = append(validGoogleAudiences, googleClientId)
 	}
@@ -399,13 +347,11 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 		validGoogleAudiences = append(validGoogleAudiences, googleAndroidClientId)
 	}
 
-	// 3. Security Gates
 	otpDummySecret := os.Getenv("OTPDummySecret")
 	if otpDummySecret == "" {
 		log.Fatal().Msg("FATAL: OTPDummySecret must be set for security")
 	}
 
-	// 4. Session Store Setup
 	appEnv := os.Getenv("APP_ENV")
 	if appEnv == "" {
 		appEnv = "development"
@@ -418,7 +364,7 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 	store.Options.HttpOnly = true
 	store.Options.Secure = isProd
 
-	// Adjust cookie policies for tunnels (ngrok) or HTTPS
+	// For ngrok/tunneling, set SameSite and Secure flags based on URL
 	if strings.Contains(appUrl, "ngrok") || strings.HasPrefix(appUrl, "https://") {
 		store.Options.SameSite = http.SameSiteNoneMode
 		store.Options.Secure = true
@@ -431,13 +377,11 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 
 	log.Info().Msgf("Auth initialized in '%s' mode. Secure cookies: %v.", appEnv, isProd)
 
-	// 5. Goth Provider Registration
 	callbackURL := fmt.Sprintf("%s/auth/google/callback", appUrl)
 	goth.UseProviders(
 		google.New(googleClientId, googleClientSecret, callbackURL),
 	)
 
-	// 6. Background Processes
 	startOTPCleanup(context.Background())
 	startPendingRegCleanup()
 	log.Info().Msg("Auth initialized with OTP support")
@@ -446,231 +390,102 @@ func InitAuth(dbpool *pgxpool.Pool) error {
 	return nil
 }
 
-// LogAuthActivity logs structured authentication events to both the database audit log
-// and the system console for real-time monitoring.
-func LogAuthActivity(ctx context.Context, c echo.Context, entry AuthLogEntry) {
-	// 1. Resolve Logger
-	var logger *zerolog.Logger
-	if val := c.Get("logger"); val != nil {
-		logger = val.(*zerolog.Logger)
-	} else {
-		l := log.With().Logger()
-		logger = &l
-		logger.Warn().Msg("Middleware logger missing; using global fallback")
-	}
-
-	// 2. Data Enrichment
-	realIP := utility.GetRealIP(c)
-	var ipAddrParsed *netip.Addr
-	if ipStr := strings.Split(realIP, ":")[0]; ipStr != "" {
-		if ip, err := netip.ParseAddr(ipStr); err == nil {
-			ipAddrParsed = &ip
-		}
-	}
-
-	metadataJSON, _ := json.Marshal(entry.Metadata)
-	dbUserID := pgtype.Text{Valid: false}
-	if entry.UserID != nil {
-		dbUserID = pgtype.Text{String: *entry.UserID, Valid: true}
-	}
-
-	// 3. Database Audit
-	if _, err := queries.CreateAuthLog(ctx, database.CreateAuthLogParams{
-		UserID:      dbUserID,
-		LogCategory: entry.Category,
-		LogAction:   entry.Action,
-		LogMessage:  entry.Message,
-		LogLevel:    pgtype.Text{String: entry.Level, Valid: true},
-		IpAddress:   ipAddrParsed,
-		UserAgent:   pgtype.Text{String: c.Request().UserAgent(), Valid: true},
-		Metadata:    metadataJSON,
-	}); err != nil {
-		logger.Error().Err(err).Msg("Audit log persistence failed")
-	}
-
-	// 4. Console Output
-	var event *zerolog.Event
-	switch entry.Level {
-	case LogLevelInfo:
-		event = logger.Info()
-	case LogLevelWarning:
-		event = logger.Warn()
-	case LogLevelError:
-		event = logger.Error()
-	default:
-		event = logger.Debug()
-	}
-
-	if entry.UserID != nil {
-		event.Str("user_id", *entry.UserID)
-	}
-
-	event.Str("category", entry.Category).
-		Str("action", entry.Action).
-		Str("ip", realIP).
-		Interface("meta", entry.Metadata).
-		Msg(entry.Message)
-}
-
-// JwtAuthMiddleware intercepts requests to validate JWTs from Headers or Cookies.
-func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		tokenStr, isMobile := "", false
-
-		if h := c.Request().Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-			tokenStr = strings.TrimPrefix(h, "Bearer ")
-			isMobile = true
-		} else if cookie, err := c.Cookie("access-token"); err == nil {
-			tokenStr = cookie.Value
-		}
-
-		if tokenStr == "" {
-			if isMobile { return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing token"}) }
-			return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
-		}
-
-		// Parse & Validate
-		token, err := jwt.ParseWithClaims(tokenStr, &JwtCustomClaims{}, func(t *jwt.Token) (interface{}, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected algo: %v", t.Header["alg"])
-			}
-			return sessionSecret, nil
-		})
-
-		if err != nil || !token.Valid {
-			if isMobile { return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"}) }
-			return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
-		}
-
-		// Inject Identity
-		if claims, ok := token.Claims.(*JwtCustomClaims); ok {
-			c.Set("user_claims", claims)
-			c.Set("user_id", claims.UserID)
-
-			// FastDB Lookup for Role/Status
-			u, err := queries.GetUserByID(c.Request().Context(), claims.UserID)
-			if err != nil {
-				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User record missing"})
-			}
-			if u.Status.Valid && u.Status.UserStatus != database.UserStatusActive {
-				return c.JSON(http.StatusForbidden, map[string]string{"error": "Account suspended"})
-			}
-			c.Set("user", &u)
-			return next(c)
-		}
-
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Malformed claims"})
-	}
-}
-
-/* =================================================================================
-								USER AUTHENTICATION
-=================================================================================*/
-
-// --- OAUTH HANDLERS ---
-
-// verifyGoogleIDToken contacts Google's tokeninfo endpoint to validate the ID token.
-func verifyGoogleIDToken(idToken string) (*GoogleUserInfo, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken)
-	if err != nil {
-		return nil, fmt.Errorf("network error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("invalid token (status %d)", resp.StatusCode)
-	}
-
-	var info GoogleUserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return nil, err
-	}
-
-	// Audience Check
-	validAud := false
-	for _, aud := range validGoogleAudiences {
-		if info.Aud == aud {
-			validAud = true
-			break
-		}
-	}
-	if !validAud {
-		return nil, fmt.Errorf("audience mismatch: %s", info.Aud)
-	}
-
-	if info.EmailVerified != "true" {
-		return nil, fmt.Errorf("google email not verified")
-	}
-
-	return &info, nil
-}
-
-// ProviderHandler initiates the OAuth2 flow for a specific provider (e.g., "google").
-// It redirects the user to the provider's consent screen.
-func ProviderHandler(c echo.Context) error {
-	provider := c.Param("provider")
-	
-	// Inject provider into context for Goth
-	ctx := context.WithValue(c.Request().Context(), "provider", provider)
-	req := c.Request().WithContext(ctx)
-
-	log.Info().Str("provider", provider).Msg("Starting OAuth flow")
-	gothic.BeginAuthHandler(c.Response().Writer, req)
-	return nil
-}
-
-// MobileGoogleAuthHandler processes OAuth 2.0 ID tokens from native mobile apps.
-// It verifies the token with Google, checks for existing accounts, and issues JWTs.
+// MobileGoogleAuthHandler handles Google Sign-In from Android/iOS
 func MobileGoogleAuthHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	var req GoogleTokenRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON payload"})
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_invalid_request",
+			Message:  "Invalid mobile OAuth request format",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 
 	if req.IDToken == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing ID token"})
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_missing_token",
+			Message:  "Mobile OAuth attempt without ID token",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "id_token is required"})
 	}
 
-	// 1. Verify Identity
+	// Verify Google ID token
 	userInfo, err := verifyGoogleIDToken(req.IDToken)
 	if err != nil {
 		LogAuthActivity(ctx, c, AuthLogEntry{
-			Category: LogCategoryOAuth, Action: "token_invalid", Level: LogLevelWarning,
-			Message: fmt.Sprintf("Google verification failed: %v", err),
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_token_verification_failed",
+			Message:  fmt.Sprintf("Google ID token verification failed: %s", err.Error()),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
 		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid Google identity"})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid Google token"})
 	}
 
-	// 2. Email Reputation Check
-	if valid, msg, err := VerifyEmailAddressWithCache(userInfo.Email); err != nil || !valid {
+	isValidEmail, emailError, err := VerifyEmailAddressWithCache(userInfo.Email)
+	if err != nil {
+		log.Error().Err(err).Msgf("Email verification error:")
+	} else if !isValidEmail {
 		LogAuthActivity(ctx, c, AuthLogEntry{
-			Category: LogCategoryOAuth, Action: "email_risk", Level: LogLevelWarning,
-			Message: fmt.Sprintf("Email risk check failed: %s", msg),
+			UserID:   nil,
+			Category: LogCategoryOAuth,
+			Action:   "oauth_mobile_invalid_email",
+			Message:  fmt.Sprintf("Mobile OAuth attempt with invalid email: %s", emailError),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"email": userInfo.Email,
+				"error": emailError,
+			},
 		})
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Email address flagged as unsafe"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": emailError})
 	}
 
-	// 3. Conflict Detection (Account Linking)
-	existing, err := queries.GetUserByEmail(ctx, pgtype.Text{String: userInfo.Email, Valid: true})
-	if err == nil && existing.UserID != "" && existing.UserProvider.String == "" {
+	// Check if email exists in traditional auth users
+	existingTraditionalUser, err := queries.GetUserByEmail(ctx, pgtype.Text{String: userInfo.Email, Valid: true})
+	if err == nil && existingTraditionalUser.UserID != "" && existingTraditionalUser.UserProvider.String == "" {
 		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(existing.UserID), Category: LogCategoryOAuth, 
-			Action: "account_conflict", Level: LogLevelWarning,
-			Message: "OAuth attempt on traditional account",
+			UserID:   utility.StringPtr(existingTraditionalUser.UserID),
+			Category: LogCategoryOAuth,
+			Action:   "mobile_oauth_login_conflict",
+			Message:  "Mobile OAuth login attempt detected existing traditional user email",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"email":            userInfo.Email,
+				"existing_user_id": existingTraditionalUser.UserID,
+			},
 		})
+
 		return c.JSON(http.StatusConflict, map[string]string{
 			"error_code": "ACCOUNT_EXISTS_TRADITIONAL",
-			"message":    "Account exists. Please login with password and link Google in settings.",
+			"message":    "This email is registered with a password. Please log in with your password and link your Google account from your profile settings.",
 		})
 	}
 
-	// 4. User Upsert (Idempotent)
-	rawData, _ := json.Marshal(userInfo)
+	// Upsert user with OAuth data
+	rawDataJSON, _ := json.Marshal(map[string]interface{}{
+		"sub":            userInfo.Sub,
+		"email":          userInfo.Email,
+		"email_verified": userInfo.EmailVerified,
+		"name":           userInfo.Name,
+		"picture":        userInfo.Picture,
+		"given_name":     userInfo.GivenName,
+		"family_name":    userInfo.FamilyName,
+	})
+	now := time.Now()
+
+	// Generate UUID for new OAuth users
 	userID := uuid.New().String()
-	
+
 	user, err := queries.UpsertOAuthUser(ctx, database.UpsertOAuthUserParams{
 		UserID:             userID,
 		UserEmail:          pgtype.Text{String: userInfo.Email, Valid: true},
@@ -678,169 +493,250 @@ func MobileGoogleAuthHandler(c echo.Context) error {
 		UserAvatarUrl:      pgtype.Text{String: userInfo.Picture, Valid: userInfo.Picture != ""},
 		UserProvider:       pgtype.Text{String: "google", Valid: true},
 		UserProviderUserID: pgtype.Text{String: userInfo.Sub, Valid: true},
-		UserRawData:        rawData,
-		UserLastLoginAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		UserRawData:        rawDataJSON,
+		UserLastLoginAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		UserEmailAuth:      pgtype.Text{String: userInfo.Email, Valid: true},
-		EmailVerifiedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		EmailVerifiedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 	})
 
 	if err != nil {
 		LogAuthActivity(ctx, c, AuthLogEntry{
-			Category: LogCategoryOAuth, Action: "upsert_failed", Level: LogLevelError,
-			Message: "Database error during user upsert", Metadata: map[string]interface{}{"err": err.Error()},
+			UserID:   utility.StringPtr(userID),
+			Category: LogCategoryOAuth,
+			Action:   "oauth_upsert_error",
+			Message:  "Error upserting OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email": userInfo.Email,
+				"error": err.Error(),
+			},
 		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Service unavailable"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error saving user data"})
 	}
 
-	// 5. Role Assignment (Idempotent)
-	_ = queries.AssignUserRole(ctx, database.AssignUserRoleParams{UserID: user.UserID, RoleName: "user"})
+	if err = queries.AssignUserRole(ctx, database.AssignUserRoleParams{
+		UserID:   user.UserID,
+		RoleName: "user",
+	}); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(userID),
+			Category: LogCategoryError,
+			Action:   "user_role_assign_failed",
+			Message:  "Failed to assign user role after user creation",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email": userInfo.Email,
+				"error": err.Error(),
+			},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to assign user role"})
+	}
 
-	// 6. Token Generation
-	access, err := generateAccessToken(&user)
+	// Generate tokens
+	accessToken, err := generateAccessToken(&user)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Token generation failed"})
-	}
-	refresh, err := generateAndStoreRefreshToken(ctx, c, queries, user.UserID, c.Request())
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Session creation failed"})
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryError,
+			Action:   "token_generation_error",
+			Message:  "Error generating access token for OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
 	}
 
+	refreshToken, err := generateAndStoreRefreshToken(ctx, c, queries, user.UserID, c.Request())
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryError,
+			Action:   "token_generation_error",
+			Message:  "Error generating refresh token for OAuth user",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating refresh token"})
+	}
+
+	// Log successful OAuth login
 	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID: utility.StringPtr(user.UserID), Category: LogCategoryOAuth, 
-		Action: "login_success", Level: LogLevelInfo, Message: "Mobile OAuth login completed",
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryOAuth,
+		Action:   "oauth_login_success",
+		Message:  "Mobile OAuth user successfully authenticated",
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"email": user.UserEmail.String,
+		},
 	})
 
-	return c.JSON(http.StatusOK, AuthResponse{
-		AccessToken: access, RefreshToken: refresh, TokenType: "Bearer",
-		ExpiresIn: int64(AccessTokenDuration.Seconds()), User: user,
-	})
+	response := AuthResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(AccessTokenDuration.Seconds()),
+		User:         user,
+	}
+
+	return c.JSON(http.StatusOK, response)
 }
 
-// LinkGoogleAccountHandler connects an authenticated user's account to a Google identity.
-// This allows future logins via Google Sign-In.
-func LinkGoogleAccountHandler(c echo.Context) error {
+// verifyGoogleIDToken verifies the Google ID token and returns user info
+func verifyGoogleIDToken(idToken string) (*GoogleUserInfo, error) {
+	url := fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?id_token=%s", idToken)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("invalid token: status %d", resp.StatusCode)
+	}
+
+	var userInfo GoogleUserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode user info: %w", err)
+	}
+
+	isAudienceValid := false
+	for _, aud := range validGoogleAudiences {
+		if userInfo.Aud == aud {
+			isAudienceValid = true
+			break
+		}
+	}
+
+	if !isAudienceValid {
+		// Return a clear error including the invalid audience
+		return nil, fmt.Errorf("token audience (%s) did not match any registered client ID", userInfo.Aud)
+	}
+
+	if userInfo.EmailVerified != "true" {
+		return nil, fmt.Errorf("email not verified")
+	}
+
+	return &userInfo, nil
+}
+
+func JwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var tokenString string
+		isMobile := false
+
+		// Try to get token from Authorization header first (mobile)
+		authHeader := c.Request().Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+			isMobile = true
+		} else {
+			// Try to get from cookie (web)
+			cookie, err := c.Cookie("access-token")
+			if err != nil {
+				return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
+			}
+			tokenString = cookie.Value
+		}
+
+		token, err := jwt.ParseWithClaims(tokenString, &JwtCustomClaims{}, func(token *jwt.Token) (interface{}, error) {
+			// Verify signing method
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return sessionSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			log.Error().Err(err).Msg("Token validation error")
+			if isMobile {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired token"})
+			}
+			return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
+		}
+
+		if claims, ok := token.Claims.(*JwtCustomClaims); ok {
+			c.Set("user_claims", claims)
+
+			c.Set("user_id", claims.UserID)
+
+			ctx := c.Request().Context()
+			user, err := queries.GetUserByID(ctx, claims.UserID)
+			if err != nil {
+				log.Error().Err(err).Msg("Error fetching user from DB")
+				if isMobile {
+					return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not found"})
+				}
+				return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
+			}
+
+			if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
+				log.Warn().Msgf("Blocked access for %s user: %s", user.Status.UserStatus, user.UserID)
+				if isMobile {
+					return c.JSON(http.StatusForbidden, map[string]string{
+						"error": "Account is " + string(user.Status.UserStatus),
+						"code":  "ACCOUNT_DISABLED",
+					})
+				}
+				return c.Redirect(http.StatusTemporaryRedirect, "/seller/login?error=account_disabled")
+			}
+
+			c.Set("user", &user)
+
+			return next(c)
+		}
+
+		if isMobile {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"})
+		}
+		return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
+	}
+}
+
+// LogoutHandler with logging
+func LogoutHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-	userID, err := utility.GetUserIDFromContext(c)
-	if err != nil {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
 
-	var req LinkGoogleRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
-	}
+	userID, ok := c.Get("user_id").(string)
+	if ok && userID != "" {
+		// Revoke all refresh tokens
+		userIDPgtype := pgtype.UUID{}
+		if err := userIDPgtype.Scan(userID); err == nil {
+			if err := queries.RevokeAllUserRefreshTokens(ctx, userID); err != nil {
+				LogAuthActivity(ctx, c, AuthLogEntry{
+					UserID:   utility.StringPtr(userID),
+					Category: LogCategoryLogout,
+					Action:   "logout_revoke_tokens_error",
+					Message:  "Error revoking tokens during logout",
+					Level:    LogLevelWarning,
+					Metadata: map[string]interface{}{"error": err.Error()},
+				})
+			}
+		}
 
-	// 1. Verify Google Identity
-	userInfo, err := verifyGoogleIDToken(req.IDToken)
-	if err != nil {
+		// Log successful logout
 		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(userID), Category: "profile", Action: "link_google_failed",
-			Level: LogLevelWarning, Message: "Google token verification failed",
+			UserID:   utility.StringPtr(userID),
+			Category: LogCategoryLogout,
+			Action:   "logout_success",
+			Message:  "User logged out successfully",
+			Level:    LogLevelInfo,
 		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid Google token"})
 	}
 
-	user, err := queries.GetUserByID(ctx, userID)
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	ClearAuthCookies(c)
+
+	isMobile := c.Request().Header.Get("X-Platform") == "mobile" ||
+		strings.HasPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
+
+	if isMobile {
+		return c.JSON(http.StatusOK, map[string]string{"message": "Logged out successfully"})
 	}
 
-	// 2. Security Check: Email Match
-	if !strings.EqualFold(user.UserEmail.String, userInfo.Email) {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(userID), Category: "profile", Action: "link_google_mismatch",
-			Level: LogLevelWarning, Message: "Email mismatch during link attempt",
-		})
-		return c.JSON(http.StatusConflict, map[string]string{"error": "Google email does not match account email"})
-	}
-
-	// 3. Uniqueness Check
-	if existing, err := queries.GetUserProviderID(ctx, pgtype.Text{String: userInfo.Sub, Valid: true}); err == nil && existing.UserID != userID {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(userID), Category: "profile", Action: "link_google_conflict",
-			Level: LogLevelError, Message: "Google ID already linked to another account",
-		})
-		return c.JSON(http.StatusConflict, map[string]string{"error": "This Google account is already linked to another user"})
-	}
-
-	// 4. Update User Record
-	rawData, _ := json.Marshal(userInfo)
-	err = queries.UpdateUserGoogleLink(ctx, database.UpdateUserGoogleLinkParams{
-		UserID:             userID,
-		UserProvider:       pgtype.Text{String: "google", Valid: true},
-		UserProviderUserID: pgtype.Text{String: userInfo.Sub, Valid: true},
-		UserEmailAuth:      pgtype.Text{String: userInfo.Email, Valid: true},
-		UserNameAuth:       pgtype.Text{String: userInfo.Name, Valid: true},
-		UserAvatarUrl:      pgtype.Text{String: userInfo.Picture, Valid: true},
-		UserRawData:        rawData,
-	})
-
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Link failed"})
-	}
-
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID: utility.StringPtr(userID), Category: "profile", Action: "link_google_success",
-		Level: LogLevelInfo, Message: "Google account linked successfully",
-	})
-
-	return c.JSON(http.StatusOK, map[string]string{"message": "Account linked"})
+	return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
 }
 
-// UnlinkGoogleAccountHandler disconnects a Google identity from the user account.
-// Requires password verification to prevent lockout or unauthorized changes.
-func UnlinkGoogleAccountHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	userID, err := utility.GetUserIDFromContext(c)
-	if err != nil {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-
-	var req UnlinkGoogleRequest
-	if err := c.Bind(&req); err != nil || req.Password == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password required"})
-	}
-
-	user, err := queries.GetUserByID(ctx, userID)
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
-	}
-
-	// 1. Verify Link State
-	if !user.UserProvider.Valid || user.UserProvider.String != "google" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Account not linked to Google"})
-	}
-
-	// 2. Safety Check: Ensure Password Exists
-	if !user.UserPassword.Valid || user.UserPassword.String == "" {
-		return c.JSON(http.StatusForbidden, map[string]string{
-			"error": "Password not set. Please set a password before unlinking.",
-		})
-	}
-
-	// 3. Verify Password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password)); err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(userID), Category: "profile", Action: "unlink_google_failed",
-			Level: LogLevelWarning, Message: "Incorrect password during unlink",
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Incorrect password"})
-	}
-
-	// 4. Execute Unlink
-	if err := queries.UnlinkGoogleAccount(ctx, userID); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Unlink failed"})
-	}
-
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID: utility.StringPtr(userID), Category: "profile", Action: "unlink_google_success",
-		Level: LogLevelInfo, Message: "Google account unlinked",
-	})
-
-	return c.JSON(http.StatusOK, map[string]string{"message": "Unlinked successfully"})
-}
-
-// generateAccessToken creates a short-lived JWT for API access.
 func generateAccessToken(user *database.User) (string, error) {
 	name := user.UserNameAuth.String
 	if name == "" && user.UserUsername.Valid {
@@ -848,21 +744,9 @@ func generateAccessToken(user *database.User) (string, error) {
 	}
 
 	claims := &JwtCustomClaims{
-		UserID: user.UserID, Email: user.UserEmail.String, Name: name,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenDuration)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "glupulse",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(sessionSecret)
-}
-
-func generateTraditionalAccessToken(userID, email, username string) (string, error) {
-	claims := &JwtCustomClaims{
-		UserID: userID,
-		Email:  email,
-		Name:   username,
+		UserID: user.UserID,
+		Email:  user.UserEmail.String,
+		Name:   name,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenDuration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -874,36 +758,94 @@ func generateTraditionalAccessToken(userID, email, username string) (string, err
 	return token.SignedString(sessionSecret)
 }
 
-// RefreshHandler issues new access tokens using a valid refresh token.
-func RefreshHandler(c echo.Context) error{
+// RefreshHandler with logging
+func RefreshHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-	var req struct { Token string `json:"refresh_token"` }
-	_ = c.Bind(&req)
+	var refreshToken string
 
-	if req.Token == "" {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing refresh token"})
+	var bodyReq struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := c.Bind(&bodyReq); err == nil && bodyReq.RefreshToken != "" {
+		refreshToken = bodyReq.RefreshToken
+		log.Info().Msg("Refresh token received from request body")
 	}
 
-	user, newToken, err := useRefreshToken(ctx, c, req.Token, c.Request())
+	if refreshToken == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRefresh,
+			Action:   "refresh_no_token",
+			Message:  "Refresh attempt without token",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "No refresh token provided. Send in body",
+		})
+	}
+
+	log.Info().Msgf("Processing refresh token (first 10 chars): %s...", refreshToken[:min(10, len(refreshToken))])
+
+	user, newRefreshToken, err := useRefreshToken(ctx, c, refreshToken, c.Request())
 	if err != nil {
 		LogAuthActivity(ctx, c, AuthLogEntry{
-			Category: LogCategoryRefresh, Action: "refresh_failed", Level: LogLevelWarning,
-			Message: fmt.Sprintf("Invalid refresh attempt: %v", err),
+			UserID:   nil,
+			Category: LogCategoryRefresh,
+			Action:   "refresh_invalid_token",
+			Message:  fmt.Sprintf("Invalid or expired refresh token: %s", err.Error()),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
 		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"})
-	}
-
-	access, _ := generateAccessToken(user)
-	
-	if isMobile := c.Request().Header.Get("X-Platform") == "mobile"; isMobile {
-		return c.JSON(http.StatusOK, AuthResponse{
-			AccessToken: access, RefreshToken: newToken, TokenType: "Bearer",
-			ExpiresIn: int64(AccessTokenDuration.Seconds()), User: *user,
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error":   "Invalid or expired refresh token",
+			"details": err.Error(), // Add details for debugging (remove in production)
 		})
 	}
 
-	setAuthCookies(c, access, newToken)
-	return c.JSON(http.StatusOK, map[string]string{"message": "Refreshed"})
+	accessToken, err := generateAccessToken(user)
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryRefresh,
+			Action:   "refresh_token_generation_error",
+			Message:  "Error generating access token during refresh",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating access token"})
+	}
+
+	// Log successful refresh
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryRefresh,
+		Action:   "refresh_success",
+		Message:  "Token refreshed successfully",
+		Level:    LogLevelInfo,
+	})
+
+	// Determine platform
+	isMobile := c.Request().Header.Get("X-Platform") == "mobile" ||
+		strings.HasPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
+
+	if isMobile {
+		response := AuthResponse{
+			AccessToken:  accessToken,
+			RefreshToken: newRefreshToken,
+			TokenType:    "Bearer",
+			ExpiresIn:    int64(AccessTokenDuration.Seconds()),
+			User:         *user,
+		}
+		return c.JSON(http.StatusOK, response)
+	}
+
+	// Web: update cookies
+	setAuthCookies(c, accessToken, newRefreshToken)
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":       "Token refreshed",
+		"access_token":  accessToken,
+		"refresh_token": newRefreshToken,
+	})
 }
 
 func generateAndStoreRefreshToken(ctx context.Context, c echo.Context, q *database.Queries, userID string, r *http.Request) (string, error) {
@@ -1066,6 +1008,504 @@ func ClearAuthCookies(c echo.Context) {
 	}
 }
 
+func ProviderHandler(c echo.Context) error {
+	provider := c.Param("provider")
+
+	log.Info().Msgf("Starting OAuth flow for provider: %s", provider)
+	log.Info().Msgf("Request URL: %s", c.Request().URL.String())
+	log.Info().Msgf("Request Host: %s", c.Request().Host)
+
+	// Set provider in context
+	ctx := context.WithValue(c.Request().Context(), "provider", provider)
+	req := c.Request().WithContext(ctx)
+
+	// Start OAuth flow
+	gothic.BeginAuthHandler(c.Response().Writer, req)
+	return nil
+}
+
+// SignupHandler handles user registration with DB-based pending registration
+func SignupHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	realIP := utility.GetRealIP(c)
+
+	if err := utility.CheckIPRateLimit(realIP); err != nil {
+		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+	}
+
+	var req SignupRequest
+	if err := c.Bind(&req); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_invalid_request",
+			Message:  "Invalid signup request format",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	// Validate required fields
+	if req.Username == "" || req.Password == "" || req.Email == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_missing_fields",
+			Message:  "Signup attempt with missing required fields",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"username": req.Username,
+				"email":    req.Email,
+			},
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Username, password, and email are required"})
+	}
+
+	if err := validatePasswordStrength(req.Password); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	// Email verification
+	isValidEmail, emailError, err := VerifyEmailAddressWithCache(req.Email)
+	if err != nil {
+		log.Error().Err(err).Msg("Email verification error")
+	} else if !isValidEmail {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_invalid_email",
+			Message:  fmt.Sprintf("Signup attempt with invalid email: %s", emailError),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"email": req.Email,
+				"error": emailError,
+			},
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": emailError})
+	}
+
+	// Check username exists in actual users table
+	usernameExists, err := queries.CheckUsernameExists(ctx, pgtype.Text{String: req.Username, Valid: true})
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_db_error",
+			Message:  "Database error checking username",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+	if usernameExists {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_username",
+			Message:  "Signup attempt with existing username",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists"})
+	}
+
+	// Check if username exists in pending registrations
+	existingPendingByUsername, err := queries.GetPendingRegistrationByUsername(ctx, pgtype.Text{String: req.Username, Valid: true})
+	if err == nil && existingPendingByUsername.PendingID.Valid {
+		// Username already in pending registration
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_username_pending",
+			Message:  "Signup attempt with username in pending registration",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists in pending registration"})
+	}
+
+	// Check email exists in actual users table
+	emailExists, err := queries.CheckEmailExists(ctx, pgtype.Text{String: req.Email, Valid: true})
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_db_error",
+			Message:  "Database error checking email",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+	if emailExists {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_email",
+			Message:  "Signup attempt with existing email",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"email": req.Email},
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Email already exists"})
+	}
+
+	// Check if email exists in pending registrations
+	existingPendingByEmail, err := queries.GetPendingRegistrationByEmail(ctx, req.Email)
+	if err == nil && existingPendingByEmail.PendingID.Valid {
+		// Email already in pending registration - allow resend OTP
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_duplicate_email_pending",
+			Message:  "Signup attempt with email already in pending registration",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{
+				"email":      req.Email,
+				"pending_id": existingPendingByEmail.PendingID,
+			},
+		})
+		return c.JSON(http.StatusConflict, map[string]interface{}{
+			"error":      "Email already exists in pending registration",
+			"pending_id": existingPendingByEmail.PendingID,
+			"message":    "A verification code was already sent to this email. Please check your inbox or request a new code.",
+		})
+	}
+
+	// Check OAuth users
+	existingOAuthUser, err := queries.GetUserByOAuthEmail(ctx, pgtype.Text{String: req.Email, Valid: true})
+	if err == nil && existingOAuthUser.UserID != "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryRegister,
+			Action:   "signup_oauth_email_conflict",
+			Message:  "Signup attempt with email linked to OAuth account",
+			Level:    LogLevelInfo,
+			Metadata: map[string]interface{}{"email": req.Email},
+		})
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error": "This email is already registered with Google. Please use 'Sign in with Google' instead.",
+		})
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_hash_error",
+			Message:  "Error hashing password",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+
+	// Prepare address data if provided
+	var addressData *AddressData
+	if req.AddressLine1 != nil && *req.AddressLine1 != "" &&
+		req.AddressCity != nil && *req.AddressCity != "" {
+
+		// Validate address fields
+		if len(*req.AddressLine1) < 5 {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "Address line 1 must be at least 5 characters",
+			})
+		}
+		if len(*req.AddressCity) < 2 {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "City must be at least 2 characters",
+			})
+		}
+
+		// Validate coordinates if provided
+		if req.AddressLatitude != nil {
+			if *req.AddressLatitude < -90 || *req.AddressLatitude > 90 {
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": "Invalid latitude value (must be between -90 and 90)",
+				})
+			}
+		}
+		if req.AddressLongitude != nil {
+			if *req.AddressLongitude < -180 || *req.AddressLongitude > 180 {
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": "Invalid longitude value (must be between -180 and 180)",
+				})
+			}
+		}
+
+		// Set default label if not provided
+		addressLabel := "Home"
+		if req.AddressLabel != nil && *req.AddressLabel != "" {
+			addressLabel = *req.AddressLabel
+		}
+
+		addressData = &AddressData{
+			AddressLine1:   *req.AddressLine1,
+			AddressLine2:   req.AddressLine2,
+			City:           *req.AddressCity,
+			Province:       req.AddressProvince,
+			PostalCode:     req.AddressPostalCode,
+			Latitude:       req.AddressLatitude,
+			Longitude:      req.AddressLongitude,
+			AddressLabel:   addressLabel,
+			RecipientName:  req.RecipientName,
+			RecipientPhone: req.RecipientPhone,
+			DeliveryNotes:  req.DeliveryNotes,
+		}
+
+		log.Info().Msgf("Address data provided for signup: %s, %s", addressLabel, *req.AddressCity)
+	}
+
+	// Store additional data in JSON
+	rawDataMap := map[string]interface{}{
+		"dob":    req.DOB,
+		"gender": req.Gender,
+	}
+
+	// Add address to raw_data if provided
+	if addressData != nil {
+		rawDataMap["address"] = addressData
+	}
+
+	rawData, err := json.Marshal(rawDataMap)
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_json_marshal_error",
+			Message:  "Error marshaling raw data",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+
+	// Store pending registration in database
+	pendingID, err := queries.CreatePendingRegistration(ctx, database.CreatePendingRegistrationParams{
+		EntityRole:     "user",
+		Email:          req.Email,
+		Username:       pgtype.Text{String: req.Username, Valid: true},
+		HashedPassword: string(hashedPassword),
+		FirstName:      pgtype.Text{String: req.FirstName, Valid: true},
+		LastName:       pgtype.Text{String: req.LastName, Valid: req.LastName != ""},
+		RawData:        rawData,
+		ExpiresAt:      pgtype.Timestamptz{Time: time.Now().Add(PendingRegExpiry), Valid: true},
+	})
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_db_error",
+			Message:  "Failed to create pending registration",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email":    req.Email,
+				"username": req.Username,
+				"error":    err.Error(),
+			},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+
+	// Convert pgtype.UUID to string for OTP storage
+	var pendingIDStr string
+	if pendingID.Valid {
+		pendingIDStr, err = utility.PgtypeUUIDToString(pendingID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert UUID to string"})
+		}
+	} else {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryError,
+			Action:   "signup_invalid_pending_id",
+			Message:  "Invalid pending registration ID generated",
+			Level:    LogLevelError,
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+	}
+
+	// Generate and send OTP using pending registration ID
+	if err := GenerateAndStoreOTP(ctx, pendingIDStr, req.Email, "signup"); err != nil {
+		// Remove from pending registrations if OTP fails
+		queries.DeletePendingRegistration(ctx, pendingID)
+
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryOTP,
+			Action:   "otp_send_failed",
+			Message:  "Failed to send OTP during registration",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"email":      req.Email,
+				"pending_id": pendingIDStr,
+				"error":      err.Error(),
+			},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to send verification code. Please try again.",
+		})
+	}
+
+	// Log pending registration
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   nil,
+		Category: LogCategoryRegister,
+		Action:   "signup_pending_verification",
+		Message:  fmt.Sprintf("Registration pending verification for %s", req.Username),
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"username":   req.Username,
+			"email":      req.Email,
+			"pending_id": pendingIDStr,
+		},
+	})
+
+	log.Error().Msgf("Pending registration created for: %s (%s) with ID: %s. Awaiting OTP verification.", req.Username, req.Email, pendingIDStr)
+
+	atomic.AddInt64(&metrics.SignupsPending, 1)
+
+	return c.JSON(http.StatusAccepted, map[string]interface{}{
+		"message":    "Verification code sent to your email. Please verify to complete registration.",
+		"pending_id": pendingIDStr,
+		"email":      req.Email,
+		"next_step":  "/verify",
+		"expires_in": int(OtpExpiryDuration.Seconds()),
+	})
+}
+
+// LoginHandler with comprehensive logging
+func LoginHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	realIP := utility.GetRealIP(c)
+
+	if err := utility.CheckIPRateLimit(realIP); err != nil {
+		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+	}
+
+	var req LoginRequest
+	if err := c.Bind(&req); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryLogin,
+			Action:   "login_invalid_request",
+			Message:  "Invalid login request format",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	if req.Username == "" || req.Password == "" {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryLogin,
+			Action:   "login_missing_credentials",
+			Message:  "Login attempt with missing credentials",
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Username and password are required"})
+	}
+
+	// Get user and verify password
+	user, err := queries.GetUserByUsername(ctx, pgtype.Text{String: req.Username, Valid: true})
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: LogCategoryLogin,
+			Action:   "login_user_not_found",
+			Message:  fmt.Sprintf("Login attempt for non-existent user: %s", req.Username),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{"username": req.Username},
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid username or password"})
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password))
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryLogin,
+			Action:   "login_password_mismatch",
+			Message:  fmt.Sprintf("Failed login attempt for user: %s", req.Username),
+			Level:    LogLevelWarning,
+			Metadata: map[string]interface{}{
+				"username": req.Username,
+				"user_id":  user.UserID,
+			},
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid username or password"})
+	}
+
+	if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": "Account is " + string(user.Status.UserStatus),
+		})
+	}
+
+	// Generate and send OTP
+	if err := GenerateAndStoreOTP(ctx, user.UserID, user.UserEmail.String, "login"); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryOTP,
+			Action:   "otp_send_failed",
+			Message:  "Failed to send login OTP",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{
+				"username": req.Username,
+				"email":    user.UserEmail.String,
+				"error":    err.Error(),
+			},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to send verification code. " + err.Error(),
+		})
+	}
+
+	// Log successful credential verification
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: LogCategoryLogin,
+		Action:   "login_credentials_verified",
+		Message:  fmt.Sprintf("Login credentials verified for %s, OTP sent", req.Username),
+		Level:    LogLevelInfo,
+		Metadata: map[string]interface{}{
+			"username": req.Username,
+			"email":    user.UserEmail.String,
+		},
+	})
+
+	// Mobile: Return JSON response (Status 202 Accepted)
+	return c.JSON(http.StatusAccepted, map[string]interface{}{
+		"message":    "Verification code sent to your email.",
+		"user_id":    user.UserID,
+		"email":      user.UserEmail.String,
+		"next_step":  "/seller/verify-otp",
+		"expires_in": int(OtpExpiryDuration.Seconds()),
+	})
+}
+
+func generateTraditionalAccessToken(userID, email, username string) (string, error) {
+	claims := &JwtCustomClaims{
+		UserID: userID,
+		Email:  email,
+		Name:   username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenDuration)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "glupulse",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(sessionSecret)
+}
+
 // email verification handler
 func verifyEmailAddress(email string) (bool, string, error) {
 
@@ -1127,46 +1567,6 @@ func VerifyEmailAddressWithCache(email string) (bool, string, error) {
 		log.Info().Msgf("Email verification timeout for: %s", email)
 		return true, "", nil // Assume valid on timeout
 	}
-}
-
-func validatePasswordStrength(password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
-	}
-	if len(password) > 128 {
-		return fmt.Errorf("password must be less than 128 characters")
-	}
-
-	var hasDigit, hasUpper, hasLower, hasSpecial bool
-	for _, char := range password {
-		switch {
-		case unicode.IsDigit(char):
-			hasDigit = true
-		case unicode.IsUpper(char):
-			hasUpper = true
-		case unicode.IsLower(char):
-			hasLower = true
-		case unicode.IsPunct(char) || unicode.IsSymbol(char):
-			hasSpecial = true
-		}
-	}
-
-	if !hasDigit || !hasUpper || !hasLower || !hasSpecial {
-		return fmt.Errorf("password must contain uppercase, lowercase, digit, and special character")
-	}
-
-	// Check common passwords
-	commonPasswords := []string{
-		"123456", "123456789", "12345678", "password", "qwerty123", "qwerty1", "qwerty", "111111", "12345", "secret", "123123", "1234567890", "1234567", "000000", "qwerty", "abc123", "password1", "iloveyou", "11111111",
-	}
-	lowerPass := strings.ToLower(password)
-	for _, common := range commonPasswords {
-		if lowerPass == common {
-			return fmt.Errorf("password is too common")
-		}
-	}
-
-	return nil
 }
 
 // GenerateAndStoreOTP creates and stores OTP in database
@@ -2004,611 +2404,22 @@ func ResendOTPHandler(c echo.Context) error {
 	})
 }
 
-// SignupHandler handles user registration with DB-based pending registration
-func SignupHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	realIP := utility.GetRealIP(c)
-
-	if err := utility.CheckIPRateLimit(realIP); err != nil {
-		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
-	}
-
-	var req SignupRequest
-	if err := c.Bind(&req); err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_invalid_request",
-			Message:  "Invalid signup request format",
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
-	}
-
-	// Validate required fields
-	if req.Username == "" || req.Password == "" || req.Email == "" {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_missing_fields",
-			Message:  "Signup attempt with missing required fields",
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{
-				"username": req.Username,
-				"email":    req.Email,
-			},
-		})
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Username, password, and email are required"})
-	}
-
-	if err := validatePasswordStrength(req.Password); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-	}
-
-	// Email verification
-	isValidEmail, emailError, err := VerifyEmailAddressWithCache(req.Email)
-	if err != nil {
-		log.Error().Err(err).Msg("Email verification error")
-	} else if !isValidEmail {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_invalid_email",
-			Message:  fmt.Sprintf("Signup attempt with invalid email: %s", emailError),
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{
-				"email": req.Email,
-				"error": emailError,
-			},
-		})
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": emailError})
-	}
-
-	// Check username exists in actual users table
-	usernameExists, err := queries.CheckUsernameExists(ctx, pgtype.Text{String: req.Username, Valid: true})
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryError,
-			Action:   "signup_db_error",
-			Message:  "Database error checking username",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-	if usernameExists {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_duplicate_username",
-			Message:  "Signup attempt with existing username",
-			Level:    LogLevelInfo,
-			Metadata: map[string]interface{}{"username": req.Username},
-		})
-		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists"})
-	}
-
-	// Check if username exists in pending registrations
-	existingPendingByUsername, err := queries.GetPendingRegistrationByUsername(ctx, pgtype.Text{String: req.Username, Valid: true})
-	if err == nil && existingPendingByUsername.PendingID.Valid {
-		// Username already in pending registration
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_duplicate_username_pending",
-			Message:  "Signup attempt with username in pending registration",
-			Level:    LogLevelInfo,
-			Metadata: map[string]interface{}{"username": req.Username},
-		})
-		return c.JSON(http.StatusConflict, map[string]string{"error": "Username already exists in pending registration"})
-	}
-
-	// Check email exists in actual users table
-	emailExists, err := queries.CheckEmailExists(ctx, pgtype.Text{String: req.Email, Valid: true})
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryError,
-			Action:   "signup_db_error",
-			Message:  "Database error checking email",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-	if emailExists {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_duplicate_email",
-			Message:  "Signup attempt with existing email",
-			Level:    LogLevelInfo,
-			Metadata: map[string]interface{}{"email": req.Email},
-		})
-		return c.JSON(http.StatusConflict, map[string]string{"error": "Email already exists"})
-	}
-
-	// Check if email exists in pending registrations
-	existingPendingByEmail, err := queries.GetPendingRegistrationByEmail(ctx, req.Email)
-	if err == nil && existingPendingByEmail.PendingID.Valid {
-		// Email already in pending registration - allow resend OTP
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_duplicate_email_pending",
-			Message:  "Signup attempt with email already in pending registration",
-			Level:    LogLevelInfo,
-			Metadata: map[string]interface{}{
-				"email":      req.Email,
-				"pending_id": existingPendingByEmail.PendingID,
-			},
-		})
-		return c.JSON(http.StatusConflict, map[string]interface{}{
-			"error":      "Email already exists in pending registration",
-			"pending_id": existingPendingByEmail.PendingID,
-			"message":    "A verification code was already sent to this email. Please check your inbox or request a new code.",
-		})
-	}
-
-	// Check OAuth users
-	existingOAuthUser, err := queries.GetUserByOAuthEmail(ctx, pgtype.Text{String: req.Email, Valid: true})
-	if err == nil && existingOAuthUser.UserID != "" {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryRegister,
-			Action:   "signup_oauth_email_conflict",
-			Message:  "Signup attempt with email linked to OAuth account",
-			Level:    LogLevelInfo,
-			Metadata: map[string]interface{}{"email": req.Email},
-		})
-		return c.JSON(http.StatusConflict, map[string]string{
-			"error": "This email is already registered with Google. Please use 'Sign in with Google' instead.",
-		})
-	}
-
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryError,
-			Action:   "signup_hash_error",
-			Message:  "Error hashing password",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-
-	// Prepare address data if provided
-	var addressData *AddressData
-	if req.AddressLine1 != nil && *req.AddressLine1 != "" &&
-		req.AddressCity != nil && *req.AddressCity != "" {
-
-		// Validate address fields
-		if len(*req.AddressLine1) < 5 {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": "Address line 1 must be at least 5 characters",
-			})
-		}
-		if len(*req.AddressCity) < 2 {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": "City must be at least 2 characters",
-			})
-		}
-
-		// Validate coordinates if provided
-		if req.AddressLatitude != nil {
-			if *req.AddressLatitude < -90 || *req.AddressLatitude > 90 {
-				return c.JSON(http.StatusBadRequest, map[string]string{
-					"error": "Invalid latitude value (must be between -90 and 90)",
-				})
-			}
-		}
-		if req.AddressLongitude != nil {
-			if *req.AddressLongitude < -180 || *req.AddressLongitude > 180 {
-				return c.JSON(http.StatusBadRequest, map[string]string{
-					"error": "Invalid longitude value (must be between -180 and 180)",
-				})
-			}
-		}
-
-		// Set default label if not provided
-		addressLabel := "Home"
-		if req.AddressLabel != nil && *req.AddressLabel != "" {
-			addressLabel = *req.AddressLabel
-		}
-
-		addressData = &AddressData{
-			AddressLine1:   *req.AddressLine1,
-			AddressLine2:   req.AddressLine2,
-			City:           *req.AddressCity,
-			Province:       req.AddressProvince,
-			PostalCode:     req.AddressPostalCode,
-			Latitude:       req.AddressLatitude,
-			Longitude:      req.AddressLongitude,
-			AddressLabel:   addressLabel,
-			RecipientName:  req.RecipientName,
-			RecipientPhone: req.RecipientPhone,
-			DeliveryNotes:  req.DeliveryNotes,
-		}
-
-		log.Info().Msgf("Address data provided for signup: %s, %s", addressLabel, *req.AddressCity)
-	}
-
-	// Store additional data in JSON
-	rawDataMap := map[string]interface{}{
-		"dob":    req.DOB,
-		"gender": req.Gender,
-	}
-
-	// Add address to raw_data if provided
-	if addressData != nil {
-		rawDataMap["address"] = addressData
-	}
-
-	rawData, err := json.Marshal(rawDataMap)
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryError,
-			Action:   "signup_json_marshal_error",
-			Message:  "Error marshaling raw data",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-
-	// Store pending registration in database
-	pendingID, err := queries.CreatePendingRegistration(ctx, database.CreatePendingRegistrationParams{
-		EntityRole:     "user",
-		Email:          req.Email,
-		Username:       pgtype.Text{String: req.Username, Valid: true},
-		HashedPassword: string(hashedPassword),
-		FirstName:      pgtype.Text{String: req.FirstName, Valid: true},
-		LastName:       pgtype.Text{String: req.LastName, Valid: req.LastName != ""},
-		RawData:        rawData,
-		ExpiresAt:      pgtype.Timestamptz{Time: time.Now().Add(PendingRegExpiry), Valid: true},
-	})
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryError,
-			Action:   "signup_db_error",
-			Message:  "Failed to create pending registration",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{
-				"email":    req.Email,
-				"username": req.Username,
-				"error":    err.Error(),
-			},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-
-	// Convert pgtype.UUID to string for OTP storage
-	var pendingIDStr string
-	if pendingID.Valid {
-		pendingIDStr, err = utility.PgtypeUUIDToString(pendingID)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert UUID to string"})
-		}
-	} else {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryError,
-			Action:   "signup_invalid_pending_id",
-			Message:  "Invalid pending registration ID generated",
-			Level:    LogLevelError,
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-
-	// Generate and send OTP using pending registration ID
-	if err := GenerateAndStoreOTP(ctx, pendingIDStr, req.Email, "signup"); err != nil {
-		// Remove from pending registrations if OTP fails
-		queries.DeletePendingRegistration(ctx, pendingID)
-
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryOTP,
-			Action:   "otp_send_failed",
-			Message:  "Failed to send OTP during registration",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{
-				"email":      req.Email,
-				"pending_id": pendingIDStr,
-				"error":      err.Error(),
-			},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Failed to send verification code. Please try again.",
-		})
-	}
-
-	// Log pending registration
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID:   nil,
-		Category: LogCategoryRegister,
-		Action:   "signup_pending_verification",
-		Message:  fmt.Sprintf("Registration pending verification for %s", req.Username),
-		Level:    LogLevelInfo,
-		Metadata: map[string]interface{}{
-			"username":   req.Username,
-			"email":      req.Email,
-			"pending_id": pendingIDStr,
-		},
-	})
-
-	log.Error().Msgf("Pending registration created for: %s (%s) with ID: %s. Awaiting OTP verification.", req.Username, req.Email, pendingIDStr)
-
-	atomic.AddInt64(&metrics.SignupsPending, 1)
-
-	return c.JSON(http.StatusAccepted, map[string]interface{}{
-		"message":    "Verification code sent to your email. Please verify to complete registration.",
-		"pending_id": pendingIDStr,
-		"email":      req.Email,
-		"next_step":  "/verify",
-		"expires_in": int(OtpExpiryDuration.Seconds()),
-	})
-}
-
-// LoginHandler with comprehensive logging
-func LoginHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	realIP := utility.GetRealIP(c)
-
-	if err := utility.CheckIPRateLimit(realIP); err != nil {
-		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
-	}
-
-	var req LoginRequest
-	if err := c.Bind(&req); err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryLogin,
-			Action:   "login_invalid_request",
-			Message:  "Invalid login request format",
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{"error": err.Error()},
-		})
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
-	}
-
-	if req.Username == "" || req.Password == "" {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryLogin,
-			Action:   "login_missing_credentials",
-			Message:  "Login attempt with missing credentials",
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{"username": req.Username},
-		})
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Username and password are required"})
-	}
-
-	// Get user and verify password
-	user, err := queries.GetUserByUsername(ctx, pgtype.Text{String: req.Username, Valid: true})
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   nil,
-			Category: LogCategoryLogin,
-			Action:   "login_user_not_found",
-			Message:  fmt.Sprintf("Login attempt for non-existent user: %s", req.Username),
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{"username": req.Username},
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid username or password"})
-	}
-
-	err = bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password))
-	if err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: LogCategoryLogin,
-			Action:   "login_password_mismatch",
-			Message:  fmt.Sprintf("Failed login attempt for user: %s", req.Username),
-			Level:    LogLevelWarning,
-			Metadata: map[string]interface{}{
-				"username": req.Username,
-				"user_id":  user.UserID,
-			},
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid username or password"})
-	}
-
-	if user.Status.Valid && user.Status.UserStatus != database.UserStatusActive {
-		return c.JSON(http.StatusForbidden, map[string]string{
-			"error": "Account is " + string(user.Status.UserStatus),
-		})
-	}
-
-	// Generate and send OTP
-	if err := GenerateAndStoreOTP(ctx, user.UserID, user.UserEmail.String, "login"); err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID:   utility.StringPtr(user.UserID),
-			Category: LogCategoryOTP,
-			Action:   "otp_send_failed",
-			Message:  "Failed to send login OTP",
-			Level:    LogLevelError,
-			Metadata: map[string]interface{}{
-				"username": req.Username,
-				"email":    user.UserEmail.String,
-				"error":    err.Error(),
-			},
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Failed to send verification code. " + err.Error(),
-		})
-	}
-
-	// Log successful credential verification
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID:   utility.StringPtr(user.UserID),
-		Category: LogCategoryLogin,
-		Action:   "login_credentials_verified",
-		Message:  fmt.Sprintf("Login credentials verified for %s, OTP sent", req.Username),
-		Level:    LogLevelInfo,
-		Metadata: map[string]interface{}{
-			"username": req.Username,
-			"email":    user.UserEmail.String,
-		},
-	})
-
-	// Mobile: Return JSON response (Status 202 Accepted)
-	return c.JSON(http.StatusAccepted, map[string]interface{}{
-		"message":    "Verification code sent to your email.",
-		"user_id":    user.UserID,
-		"email":      user.UserEmail.String,
-		"next_step":  "/seller/verify-otp",
-		"expires_in": int(OtpExpiryDuration.Seconds()),
-	})
-}
-
-// LogoutHandler invalidates sessions and clears client-side credentials.
-func LogoutHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	if uid, ok := c.Get("user_id").(string); ok && uid != "" {
-		_ = queries.RevokeAllUserRefreshTokens(ctx, uid)
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(uid), Category: LogCategoryLogout,
-			Action: "logout", Level: LogLevelInfo, Message: "Session terminated",
-		})
-	}
-
-	ClearAuthCookies(c)
-	
-	isMobile := c.Request().Header.Get("X-Platform") == "mobile"
-	if isMobile {
-		return c.JSON(http.StatusOK, map[string]string{"message": "Logged out"})
-	}
-	return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
-}
-
-// --- PASSWORD MANAGEMENT HANDLERS ---
-
-// RequestPasswordResetHandler initiates the forgotten password flow.
-// It verifies the account exists and sends an OTP, but keeps the response vague to prevent enumeration.
-func RequestPasswordResetHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	var req ResetRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
-	}
-
-	// 1. Generic Response Wrapper (Anti-Enumeration)
-	sendGenericResponse := func() error {
-		return c.JSON(http.StatusOK, map[string]string{
-			"message": "If an account exists, a reset code has been sent.",
-		})
-	}
-
-	user, err := queries.GetUserByEmail(ctx, pgtype.Text{String: req.Email, Valid: true})
-	if err != nil {
-		// Log internally but return success to user
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			Category: "password_reset", Action: "user_not_found", Level: LogLevelWarning,
-			Message: fmt.Sprintf("Reset attempted for unknown email: %s", req.Email),
-		})
-		return sendGenericResponse()
-	}
-
-	// 2. Validate Account Type (Traditional only)
-	if user.UserProvider.Valid && user.UserProvider.String != "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "This account uses Google Sign-In. Please reset via Google.",
-		})
-	}
-
-	// 3. Send OTP
-	if err := GenerateAndStoreOTP(ctx, user.UserID, user.UserEmail.String, "Reset Password"); err != nil {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(user.UserID), Category: LogCategoryOTP, Action: "otp_failed",
-			Level: LogLevelError, Message: "Failed to send reset OTP",
-		})
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Service unavailable"})
-	}
-
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID: utility.StringPtr(user.UserID), Category: "password_reset", Action: "otp_sent",
-		Level: LogLevelInfo, Message: "Reset OTP sent",
-	})
-
-	return c.JSON(http.StatusAccepted, map[string]interface{}{
-		"message":    "Verification code sent.",
-		"user_id":    user.UserID,
-		"next_step":  "/complete-reset",
-		"expires_in": int(OtpExpiryDuration.Seconds()),
-	})
-}
-
-// ResetPasswordHandler completes the password reset process.
-// It verifies the OTP and updates the user's credentials securely.
-func ResetPasswordHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	var req CompleteResetRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
-	}
-
-	if req.NewPassword != req.ConfirmPassword || len(req.NewPassword) < 8 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Passwords mismatch or too short"})
-	}
-
-	// 1. Verify OTP
-	valid, err := VerifyOTPCode(ctx, req.UserID, req.OtpCode)
-	if err != nil || !valid {
-		LogAuthActivity(ctx, c, AuthLogEntry{
-			UserID: utility.StringPtr(req.UserID), Category: LogCategoryOTP, Action: "otp_invalid",
-			Level: LogLevelWarning, Message: "Invalid OTP during reset",
-		})
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid code"})
-	}
-
-	// 2. Hash New Password
-	hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Processing failed"})
-	}
-
-	// 3. Update Database
-	err = queries.UpdateUserPassword(ctx, database.UpdateUserPasswordParams{
-		UserID:       req.UserID,
-		UserPassword: pgtype.Text{String: string(hashed), Valid: true},
-	})
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Update failed"})
-	}
-
-	// 4. Security: Revoke Sessions
-	_ = queries.RevokeAllUserRefreshTokens(ctx, req.UserID)
-
-	LogAuthActivity(ctx, c, AuthLogEntry{
-		UserID: utility.StringPtr(req.UserID), Category: "password_reset", Action: "success",
-		Level: LogLevelInfo, Message: "Password reset completed",
-	})
-
-	return c.JSON(http.StatusOK, map[string]string{"message": "Password reset successful"})
-}
-
-/* =================================================================================
-							BACKGROUND PROCESSES
-=================================================================================*/
-
+// Update OTP cleanup to use database
 func startOTPCleanup(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Minute)
+	ticker := time.NewTicker(15 * time.Minute) // Clean every 15 minutes
 	go func() {
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				_ = queries.DeleteScheduledOTPCodes(ctx)
+				// Delete OTPs that reached their scheduled deletion time
+				if err := queries.DeleteScheduledOTPCodes(ctx); err != nil {
+					log.Info().Msgf("Error cleaning up scheduled OTP deletions: %v", err)
+				} else {
+					log.Info().Msg("Cleaned up scheduled OTP codes from database")
+				}
 			case <-otpCleanupShutdown:
+				log.Info().Msg("OTP cleanup stopped")
 				return
 			}
 		}
@@ -2622,12 +2433,454 @@ func startPendingRegCleanup() {
 		for {
 			select {
 			case <-ticker.C:
-				_ = queries.DeleteExpiredPendingRegistrations(context.Background())
+				log.Info().Msg("Running pending registration cleanup...")
+				// Use a new background context
+				if err := queries.DeleteExpiredPendingRegistrations(context.Background()); err != nil {
+					log.Info().Msgf("Error cleaning up expired pending registrations: %v", err)
+				} else {
+					log.Info().Msg("Cleaned up expired pending registrations.")
+				}
 			case <-pendingRegShutdown:
+				log.Info().Msg("Pending registration cleanup goroutine stopped")
 				return
 			}
 		}
 	}()
+}
+
+// LogAuthActivity logs auth events to the console (via Zerolog) and the DB.
+func LogAuthActivity(ctx context.Context, c echo.Context, entry AuthLogEntry) {
+	var logger *zerolog.Logger
+	val := c.Get("logger") // Get from our new middleware
+	if val == nil {
+		// Fallback to global logger if middleware isn't set up
+		l := log.With().Logger() // Create a copy
+		logger = &l
+		logger.Warn().Msg("Logger not found in context, using global logger.")
+	} else {
+		logger = val.(*zerolog.Logger)
+	}
+
+	// --- 2. Gather data (your existing code) ---
+	realIP := utility.GetRealIP(c)
+	var ipAddrParsed *netip.Addr
+	ipStr := strings.Split(realIP, ":")[0]
+	if ipStr != "" {
+		if ip, err := netip.ParseAddr(ipStr); err == nil {
+			ipAddrParsed = &ip
+		}
+	}
+	userAgent := c.Request().UserAgent()
+	metadataJSON, _ := json.Marshal(entry.Metadata)
+	var dbUserID pgtype.Text
+	if entry.UserID != nil {
+		dbUserID = pgtype.Text{String: *entry.UserID, Valid: true}
+	} else {
+		dbUserID = pgtype.Text{Valid: false}
+	}
+
+	// --- 3. Log to Database (your existing code) ---
+	_, err := queries.CreateAuthLog(ctx, database.CreateAuthLogParams{
+		UserID:      dbUserID,
+		LogCategory: entry.Category,
+		LogAction:   entry.Action,
+		LogMessage:  entry.Message,
+		LogLevel:    pgtype.Text{String: entry.Level, Valid: true},
+		IpAddress:   ipAddrParsed,
+		UserAgent:   pgtype.Text{String: userAgent, Valid: true},
+		Metadata:    metadataJSON,
+	})
+	if err != nil {
+		// Log the failure *using the new logger*
+		logger.Error().Err(err).Msg("Failed to log auth activity to database")
+	}
+
+	// --- 4. Log to Console using zerolog ---
+	// This replaces your old c.Logger().Infof(...)
+
+	// Create a new log event based on the entry's level
+	var logEvent *zerolog.Event
+	switch entry.Level {
+	case LogLevelInfo:
+		logEvent = logger.Info()
+	case LogLevelWarning:
+		logEvent = logger.Warn()
+	case LogLevelError:
+		logEvent = logger.Error()
+	default:
+		logEvent = logger.Debug()
+	}
+
+	// Add all structured fields
+	if entry.UserID != nil {
+		logEvent.Str("user_id", *entry.UserID)
+	}
+
+	logEvent.Str("category", entry.Category).
+		Str("action", entry.Action).
+		Str("ip_address", realIP).
+		Str("user_agent", userAgent)
+
+	// Add metadata fields individually for better searchability
+	if entry.Metadata != nil {
+		logEvent.Interface("metadata", entry.Metadata)
+	}
+
+	// Send the log with the final message
+	logEvent.Msg(entry.Message)
+}
+
+// LinkGoogleAccountHandler handles linking a Google account to an existing traditional account
+func LinkGoogleAccountHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	claims, ok := c.Get("user_claims").(*JwtCustomClaims)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+	userID := claims.UserID
+
+	if userID == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid user token"})
+	}
+
+	user, err := queries.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Error().Msgf("UnlinkGoogleAccountHandler: Error fetching user: %v", err)
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	}
+
+	// ind the request body
+	req := new(LinkGoogleRequest)
+	if err := c.Bind(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request. 'id_token' is required."})
+	}
+
+	// 3. Validate the Google ID Token
+	userInfo, err := verifyGoogleIDToken(req.IDToken)
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(userID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Google token verification failed during linking attempt",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid Google token: " + err.Error()})
+	}
+
+	// Check if the Google email matches the user's current email
+	if !strings.EqualFold(user.UserEmail.String, userInfo.Email) {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Google account email mismatch. Current: " + user.UserEmail.String + ", Attempted: " + userInfo.Email,
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Google account email does not match your current account email."})
+	}
+
+	// Check if this Google account is already linked to ANOTHER user
+	existingGoogleUser, err := queries.GetUserProviderID(ctx, pgtype.Text{String: userInfo.Sub, Valid: true})
+	if err == nil && existingGoogleUser.UserID != "" && existingGoogleUser.UserID != user.UserID {
+		// This Google account is already tied to a different user.
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Attempted to link a Google account (sub:" + userInfo.Sub + ") that is already linked to another user (" + existingGoogleUser.UserID + ")",
+			Level:    LogLevelError,
+		})
+		return c.JSON(http.StatusConflict, map[string]string{"error": "This Google account is already linked to a different user."})
+	}
+
+	rawDataJSON, _ := json.Marshal(map[string]interface{}{
+		"sub":            userInfo.Sub,
+		"email":          userInfo.Email,
+		"email_verified": userInfo.EmailVerified,
+		"name":           userInfo.Name,
+		"picture":        userInfo.Picture,
+		"given_name":     userInfo.GivenName,
+		"family_name":    userInfo.FamilyName,
+	})
+
+	// 7. All checks passed. Update the user.
+	err = queries.UpdateUserGoogleLink(ctx, database.UpdateUserGoogleLinkParams{
+		UserNameAuth:       pgtype.Text{String: userInfo.Name, Valid: userInfo.Name != ""},
+		UserAvatarUrl:      pgtype.Text{String: userInfo.Picture, Valid: userInfo.Picture != ""},
+		UserProvider:       pgtype.Text{String: "google", Valid: true},
+		UserProviderUserID: pgtype.Text{String: userInfo.Sub, Valid: true},
+		UserRawData:        rawDataJSON,
+		UserEmailAuth:      pgtype.Text{String: userInfo.Email, Valid: true},
+		UserID:             user.UserID,
+	})
+
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "link_google_failed",
+			Message:  "Database error during Google account link: " + err.Error(),
+			Level:    LogLevelError,
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not link account. " + err.Error()})
+	}
+
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "profile",
+		Action:   "link_google_success",
+		Message:  "Successfully linked Google account.",
+		Level:    LogLevelInfo,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Google account linked successfully"})
+}
+
+// UnlinkGoogleAccountHandler detaches a Google account from a user, reverting them to a traditional user
+func UnlinkGoogleAccountHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// Get claims from middleware
+	claims, ok := c.Get("user_claims").(*JwtCustomClaims)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+	userID := claims.UserID
+
+	// Bind the request to get the password
+	var req UnlinkGoogleRequest
+	if err := c.Bind(&req); err != nil || req.Password == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password is required to unlink account"})
+	}
+
+	// Get full user object
+	user, err := queries.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Error().Msgf("UnlinkGoogleAccountHandler: Error fetching user: %v", err)
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	}
+
+	// 4. Check if account is actually linked to Google
+	if !user.UserProvider.Valid || user.UserProvider.String != "google" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "This account is not linked to Google."})
+	}
+
+	// 5. Check if user has a password to fall back on
+	if !user.UserPassword.Valid || user.UserPassword.String == "" {
+		// This is (or was) a "Google-only" user.
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error_code": "PASSWORD_NOT_SET",
+			"message":    "You must set a password for your account before you can unlink Google.",
+		})
+	}
+
+	// 6. Verify password to confirm identity
+	err = bcrypt.CompareHashAndPassword([]byte(user.UserPassword.String), []byte(req.Password))
+	if err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: "profile",
+			Action:   "unlink_google_failed",
+			Message:  "Failed to unlink Google - incorrect password",
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Password is incorrect"})
+	}
+
+	// 7. All checks passed. Unlink the account.
+	err = queries.UnlinkGoogleAccount(ctx, userID)
+	if err != nil {
+		log.Error().Msgf("UnlinkGoogleAccountHandler: Error unlinking account: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to unlink account. Please try again."})
+	}
+
+	// 8. Log and return success
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "profile",
+		Action:   "unlink_google_success",
+		Message:  "User successfully unlinked their Google account.",
+		Level:    LogLevelInfo,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Google account unlinked successfully."})
+}
+
+func validatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
+	}
+	if len(password) > 128 {
+		return fmt.Errorf("password must be less than 128 characters")
+	}
+
+	var hasDigit, hasUpper, hasLower, hasSpecial bool
+	for _, char := range password {
+		switch {
+		case unicode.IsDigit(char):
+			hasDigit = true
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	if !hasDigit || !hasUpper || !hasLower || !hasSpecial {
+		return fmt.Errorf("password must contain uppercase, lowercase, digit, and special character")
+	}
+
+	// Check common passwords
+	commonPasswords := []string{
+		"123456", "123456789", "12345678", "password", "qwerty123", "qwerty1", "qwerty", "111111", "12345", "secret", "123123", "1234567890", "1234567", "000000", "qwerty", "abc123", "password1", "iloveyou", "11111111",
+	}
+	lowerPass := strings.ToLower(password)
+	for _, common := range commonPasswords {
+		if lowerPass == common {
+			return fmt.Errorf("password is too common")
+		}
+	}
+
+	return nil
+}
+
+func RequestPasswordResetHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	var req ResetRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	// 1. Find user by email (using GetUserByEmail for flexibility)
+	user, err := queries.GetUserByEmail(ctx, pgtype.Text{String: req.Email, Valid: true})
+	if err != nil {
+		// IMPORTANT: Do not reveal if the email exists. Respond generically.
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   nil,
+			Category: "password_reset",
+			Action:   "reset_request_user_not_found",
+			Message:  fmt.Sprintf("Reset request for non-existent email: %s", req.Email),
+			Level:    LogLevelWarning,
+		})
+		// Beri respons 200 OK untuk menghindari brute force email scanning
+		return c.JSON(http.StatusOK, map[string]string{"message": "If the account exists, a reset code has been sent to your email."})
+	}
+
+	// Only traditional users can reset this way (OAuth users must use Google)
+	if user.UserProvider.Valid && user.UserProvider.String != "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "This account uses OAuth. Please reset your password through your OAuth provider.",
+		})
+	}
+
+	// Check if user has a valid password hash (not NULL)
+	if !user.UserPassword.Valid || user.UserPassword.String == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "This account does not have a traditional password to reset.",
+		})
+	}
+
+	// 2. Generate and Send OTP (Purpose: reset)
+	if err := GenerateAndStoreOTP(ctx, user.UserID, user.UserEmail.String, "Reset Password"); err != nil {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(user.UserID),
+			Category: LogCategoryOTP,
+			Action:   "otp_send_failed",
+			Message:  "Failed to send password reset OTP",
+			Level:    LogLevelError,
+			Metadata: map[string]interface{}{"error": err.Error()},
+		})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to send reset code. Try again later."})
+	}
+
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "password_reset",
+		Action:   "reset_otp_sent",
+		Message:  "Password reset OTP sent successfully",
+		Level:    LogLevelInfo,
+	})
+
+	// 3. Inform client to proceed to verification
+	return c.JSON(http.StatusAccepted, map[string]interface{}{
+		"message":    "Verification code sent to your email.",
+		"user_id":    user.UserID,
+		"next_step":  "/complete-reset", // Endpoint for the next step
+		"expires_in": int(OtpExpiryDuration.Seconds()),
+	})
+}
+
+// ResetPasswordHandler verifies OTP and sets the new password
+func ResetPasswordHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	var req CompleteResetRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	if req.UserID == "" || req.OtpCode == "" || req.NewPassword == "" || req.NewPassword != req.ConfirmPassword {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "All fields are required, and new passwords must match"})
+	}
+
+	if len(req.NewPassword) < 8 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "New password must be at least 8 characters"})
+	}
+
+	// 1. Verify OTP
+	valid, err := VerifyOTPCode(ctx, req.UserID, req.OtpCode)
+	if err != nil || !valid {
+		LogAuthActivity(ctx, c, AuthLogEntry{
+			UserID:   utility.StringPtr(req.UserID),
+			Category: LogCategoryOTP,
+			Action:   "reset_otp_verification_failed",
+			Message:  fmt.Sprintf("OTP verification failed during reset: %s", err),
+			Level:    LogLevelWarning,
+		})
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired reset code."})
+	}
+
+	// OTP is valid. Now fetch user.
+	user, err := queries.GetUserByID(ctx, req.UserID)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not found."})
+	}
+
+	// 2. Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("Error hashing new password: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to reset password"})
+	}
+
+	// 3. Update password in database
+	err = queries.UpdateUserPassword(ctx, database.UpdateUserPasswordParams{
+		UserID:       user.UserID,
+		UserPassword: pgtype.Text{String: string(hashedPassword), Valid: true},
+	})
+
+	if err != nil {
+		log.Printf("Error updating password during reset: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update password"})
+	}
+
+	// 4. Revoke all existing refresh tokens for security
+	queries.RevokeAllUserRefreshTokens(ctx, user.UserID)
+
+	LogAuthActivity(ctx, c, AuthLogEntry{
+		UserID:   utility.StringPtr(user.UserID),
+		Category: "password_reset",
+		Action:   "password_reset_success",
+		Message:  "User password successfully reset via OTP",
+		Level:    LogLevelInfo,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Password has been successfully reset. Please log in with your new password.",
+	})
 }
 
 func StopCleanup() {

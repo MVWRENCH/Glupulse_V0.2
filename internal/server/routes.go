@@ -1,6 +1,6 @@
 /*
 Package server implements the HTTP transport layer for the Glupulse platform.
-It manages routing, template rendering, middleware orchestration, and 
+It manages routing, template rendering, middleware orchestration, and
 centralized error handling for User, Seller, and Admin domains.
 */
 package server
@@ -34,7 +34,7 @@ func (t *TemplateRenderer) Render(w io.Writer, name string, data interface{}, c 
 	return t.templates.ExecuteTemplate(w, name, data)
 }
 
-// RegisterRoutes initializes the Echo router, configures global middlewares, 
+// RegisterRoutes initializes the Echo router, configures global middlewares,
 // and defines all public and protected API and web endpoints.
 func (s *Server) RegisterRoutes() http.Handler {
 	e := echo.New()
@@ -84,6 +84,19 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	// --- Public Web Pages (Admin Entry) ---
 	e.GET("/admin/login", s.renderAdminLoginHandler)
+
+	// --- System Management Pages ---
+	e.GET("/admin/dashboard", s.RenderAdminHandler)
+	e.GET("/admin/verifications/seller", s.RenderAdminHandler)
+	e.GET("/admin/verifications/menu", s.RenderAdminHandler)
+	e.GET("/admin/list/users", s.RenderAdminHandler)
+	e.GET("/admin/list/sellers", s.RenderAdminHandler)
+	e.GET("/admin/data/foods", s.RenderAdminHandler)
+	e.GET("/admin/data/ai-analytics", s.RenderAdminHandler)
+	e.GET("/admin/security/logs", s.RenderAdminHandler)
+	e.GET("/admin/system/access", s.RenderAdminHandler)
+	e.GET("/admin/system/health", s.RenderAdminHandler)
+	e.GET("/admin/system/settings", s.RenderAdminHandler)
 
 	// --- OAuth & Identity Federation ---
 	e.GET("/auth/:provider", auth.ProviderHandler)
@@ -217,19 +230,6 @@ func (s *Server) RegisterRoutes() http.Handler {
 	adminGroup := e.Group("/admin")
 	adminGroup.Use(auth.AdminJwtAuthMiddleware)
 
-	// System Management Pages
-	adminGroup.GET("/dashboard", s.RenderAdminHandler)
-	adminGroup.GET("/verifications/seller", s.RenderAdminHandler)
-	adminGroup.GET("/verifications/menu", s.RenderAdminHandler)
-	adminGroup.GET("/list/users", s.RenderAdminHandler)
-	adminGroup.GET("/list/sellers", s.RenderAdminHandler)
-	adminGroup.GET("/data/foods", s.RenderAdminHandler)
-	adminGroup.GET("/data/ai-analytics", s.RenderAdminHandler)
-	adminGroup.GET("/security/logs", s.RenderAdminHandler)
-	adminGroup.GET("/system/access", s.RenderAdminHandler)
-	adminGroup.GET("/system/health", s.RenderAdminHandler)
-	adminGroup.GET("/system/settings", s.RenderAdminHandler)
-
 	// Backend API Endpoints
 	adminGroup.GET("/ws", admin.AdminWebSocketHandler)
 	adminGroup.GET("/dashboard/stats", admin.GetAdminDashboardHandler)
@@ -300,7 +300,7 @@ func getUserDataFromContext(c echo.Context) (map[string]interface{}, error) {
 	}, nil
 }
 
-// LoggerMiddleware generates a unique Request ID for every transaction and injects 
+// LoggerMiddleware generates a unique Request ID for every transaction and injects
 // a scoped zerolog instance into the request context.
 func LoggerMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
