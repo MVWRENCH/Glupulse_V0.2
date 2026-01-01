@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,77 +14,100 @@ import (
 	"Glupulse_V0.2/internal/admin"
 	"Glupulse_V0.2/internal/auth"
 	"Glupulse_V0.2/internal/database"
-	seller "Glupulse_V0.2/internal/seller"
+	"Glupulse_V0.2/internal/seller"
 	"Glupulse_V0.2/internal/server"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
-func gracefulShutdown(apiServer *http.Server, done chan bool) {
-	// Create context that listens for the interrupt signal from the OS.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+func main() {
+	// 1. Initialize Logger
+	setupLogger()
 
-	// Listen for the interrupt signal.
-	<-ctx.Done()
+	// 2. Initialize Database Connection
+	// Using a Service pattern is good; ensure it handles the pool internally.
+	dbService := database.NewService()
+	defer func() {
+		log.Info().Msg("Closing database connection...")
+		dbService.Close()
+	}()
 
-	log.Info().Msg("shutting down gracefully, press Ctrl+C again to force")
-	stop() // Allow Ctrl+C to force shutdown
-
-	// The context is used to inform the server it has 5 seconds to finish
-	// the request it is currently handling
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := apiServer.Shutdown(ctx); err != nil {
-		log.Info().Msgf("Server forced to shutdown with error: %v", err)
+	// 3. Dependency Injection & Package Initialization
+	// We pass the database pool explicitly to ensure packages are testable.
+	if err := initSubsystems(database.Dbpool); err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize subsystems")
 	}
 
-	log.Info().Msg("Server exiting")
+	// 4. Background Workers (Broadcasters)
+	// These run in the background to handle real-time updates.
+	go admin.StartServerHealthBroadcaster()
+	go admin.StartDashboardBroadcaster(database.Dbpool)
 
-	// Notify the main goroutine that the shutdown is complete
-	done <- true
+	// 5. Server Configuration
+	srv := server.NewServer()
+
+	// 6. Graceful Shutdown Orchestration
+	// We use a channel to wait for the shutdown process to finish before exiting main.
+	idleConnsClosed := make(chan struct{})
+	go handleShutdown(srv, idleConnsClosed)
+
+	log.Info().Msgf("Server starting on %s", srv.Addr)
+
+	// 7. Start Server
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal().Err(err).Msg("HTTP server failed to start")
+	}
+
+	// Wait here until handleShutdown signals completion
+	<-idleConnsClosed
+	log.Info().Msg("Application stopped successfully.")
 }
 
-func main() {
-
+// setupLogger configures zerolog for better readability during development.
+func setupLogger() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{
 		Out:        os.Stderr,
-		TimeFormat: time.RFC3339, // Use a human-readable time format
+		TimeFormat: time.RFC3339,
 	})
+	// In production, we might want to remove ConsoleWriter for JSON logging.
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
-	log.Info().Msg("Zerolog initialized...")
+	log.Info().Msg("Logging system initialized")
+}
 
-	dbService := database.NewService()
-	defer dbService.Close() // Ensure the database connection is closed on exit.
+// initSubsystems centralizes the setup of different modules.
+func initSubsystems(db interface{}) error {
+	log.Info().Msg("Initializing application modules...")
 
 	if err := auth.InitAuth(database.Dbpool); err != nil {
-		log.Fatal().Err(err).Msgf("Fatal error: could not initialize authentication providers: %v", err)
+		return fmt.Errorf("auth init: %w", err)
 	}
 
+	// Initialize individual domain logic
 	user.InitUserPackage(database.Dbpool)
-
 	seller.InitSellerPackage(database.Dbpool)
-
 	admin.InitAdminPackage(database.Dbpool)
 
-	go admin.StartServerHealthBroadcaster()
+	return nil
+}
 
-	go admin.StartDashboardBroadcaster(database.Dbpool)
-	
-	server := server.NewServer()
+// handleShutdown listens for system interrupts and shuts down the server gracefully.
+func handleShutdown(srv *http.Server, idleConnsClosed chan struct{}) {
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
 
-	// Create a done channel to signal when the shutdown is complete
-	done := make(chan bool, 1)
+	// Block until a signal is received
+	sig := <-sigint
+	log.Info().Msgf("Received signal: %v. Starting graceful shutdown...", sig)
 
-	// Run graceful shutdown in a separate goroutine
-	go gracefulShutdown(server, done)
+	// Create a deadline for the shutdown process (10 seconds)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	err := server.ListenAndServe()
-	if err != nil && err != http.ErrServerClosed {
-		panic(fmt.Sprintf("http server error: %s", err))
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Error().Err(err).Msg("HTTP server Shutdown error")
 	}
 
-	// Wait for the graceful shutdown to complete
-	<-done
-	log.Info().Msg("Graceful shutdown complete.")
+	// Close the channel to signal main() that we are done
+	close(idleConnsClosed)
 }

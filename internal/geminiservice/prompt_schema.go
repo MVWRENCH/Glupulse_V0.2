@@ -1,3 +1,7 @@
+/*
+Package geminiservice defines the structured output schemas and prompt engineering
+templates for the Glupulse AI recommendation engine.
+*/
 package geminiservice
 
 import (
@@ -8,66 +12,68 @@ import (
 )
 
 /* =================================================================================
-							GEMINI SCHEMA DEFINITION
-	This is the core structure that tells Gemini how to format its JSON response
+                            GEMINI SCHEMA DEFINITIONS
 =================================================================================*/
 
-// GeminiSchema defines the structure for "Controlled Generation" (Structured Output).
-// It maps to Google's generative-ai-go/genai Schema type.
+// GeminiSchema represents a JSON schema definition used for "Controlled Generation"
+// (Structured Output) in the Google Gemini API. It allows for recursive definitions
+// of objects and arrays to enforce a specific response structure.
 type GeminiSchema struct {
-	// Type defines the data type (e.g., "OBJECT", "ARRAY", "STRING", "INTEGER").
+	// Type defines the data type (e.g., "OBJECT", "ARRAY", "STRING", "NUMBER", "INTEGER").
 	Type string `json:"type"`
 
-	// Format specifies data format, primarily used for "enum" validation.
-	Format string `json:"format,omitempty"` // e.g., "enum"
+	// Format specifies the data format, primarily used for "enum" validation.
+	Format string `json:"format,omitempty"`
 
-	// Description explains the field's purpose to the AI, helping it generate better content.
+	// Description provides contextual instructions to the AI regarding the field's purpose.
 	Description string `json:"description,omitempty"`
 
-	// Properties maps field names to their child schemas (used when Type is "OBJECT").
-	// We use a pointer (*GeminiSchema) to allow recursive structures.
-	Properties map[string]*GeminiSchema `json:"properties,omitempty"` // Use pointer for recursion
+	// Properties maps field names to their child schemas (required when Type is "OBJECT").
+	Properties map[string]*GeminiSchema `json:"properties,omitempty"`
 
-	// Items defines the schema for elements within an array (used when Type is "ARRAY").
-	Items *GeminiSchema `json:"items,omitempty"` // For arrays
+	// Items defines the schema for individual elements within an array (required when Type is "ARRAY").
+	Items *GeminiSchema `json:"items,omitempty"`
 
-	// Required lists the field names that the AI MUST include in the response.
+	// Required lists the mandatory field names that the AI must include in the generated JSON.
 	Required []string `json:"required,omitempty"`
 
-	// Enum lists valid specific string values for fields with restricted options.
-	Enum []string `json:"enum,omitempty"` // For enum types
+	// Enum provides a restricted list of valid string values for the field.
+	Enum []string `json:"enum,omitempty"`
 }
 
-// HealthContextData acts as the root container for all user data sent to the AI.
+// HealthContextData serves as the data transfer object (DTO) that aggregates all
+// clinical and demographic context required by the AI to make safe recommendations.
 type HealthContextData struct {
-	// Demographics (Crucial for BMR and risk profiling)
-	Age    int32  `json:"user_age"`
+	// Age represents the user's current age, used for BMR and risk assessment.
+	Age int32 `json:"user_age"`
+
+	// Gender represents the user's biological gender for nutritional balancing.
 	Gender string `json:"user_gender"`
 
-	// Profile contains static info: Age, Gender, Weight, Height, DiabetesType (1,2,Prediabetes).
+	// Profile holds static physical metrics such as weight, height, and diabetes classification.
 	Profile interface{} `json:"user_profile"`
 
-	// Medications lists currently active prescriptions to check for interactions or context.
+	// Medications contains current prescriptions to prevent adverse dietary suggestions.
 	Medications []database.UserMedication `json:"active_medications"`
 
-	// GlucoseHistory contains raw data from the last 3 days to identify trends (spikes/crashes).
+	// GlucoseHistory provides a 3-day window of blood glucose readings to identify trends.
 	GlucoseHistory []database.UserGlucoseReading `json:"glucose_readings_3_days"`
 
-	// ActivityHistory shows recent exercise to determine if the user is sedentary or active.
+	// ActivityHistory tracks physical exertion levels over the past 72 hours.
 	ActivityHistory []database.UserActivityLog `json:"activity_logs_3_days"`
 
-	// SleepHistory provides context on rest, which affects insulin sensitivity.
+	// SleepHistory contains rest data, which influences insulin sensitivity and cravings.
 	SleepHistory []database.UserSleepLog `json:"sleep_logs_3_days"`
 
-	// MealHistory tracks recent intake to prevent suggesting foods the user just ate
-	// or to balance macronutrients based on recent consumption.
+	// MealHistory tracks recent dietary intake to ensure nutritional variety.
 	MealHistory []MealLogContext `json:"meal_logs_3_days"`
 
-	// LatestHBA1C provides the long-term glucose control metric (crucial for risk assessment).
+	// LatestHBA1C provides the most recent glycated hemoglobin records for long-term control context.
 	LatestHBA1C []database.UserHba1cRecord `json:"hba1c_records"`
 }
 
-// MealLogContext is a simplified representation of a meal to save token usage.
+// MealLogContext provides a condensed view of recent meals to optimize token usage
+// in AI prompts while maintaining necessary nutritional context.
 type MealLogContext struct {
 	MealID     pgtype.UUID `json:"meal_id"`
 	LogDate    time.Time   `json:"log_date"`
@@ -78,14 +84,11 @@ type MealLogContext struct {
 }
 
 /* =================================================================================
-						PROMPT ENGINEERING & GUARDRAILS
+                        PROMPT ENGINEERING & GUARDRAILS
 =================================================================================*/
 
-/*
-SystemPrompt defines the "Persona" and "Guardrails" for the AI model.
-It enforces strict safety rules regarding diabetes management and rejects
-non-health related queries.
-*/
+// SystemPrompt defines the core identity, expertise, and safety boundaries of the AI.
+// It mandates the use of Bahasa Indonesia and enforces strict health-only constraints.
 const SystemPrompt = `You are an expert nutritionist and diabetes health coach.
 Your goal is to provide safe, actionable, and personalized recommendations.
 
@@ -124,8 +127,6 @@ FOOD RECOMMENDATION RULES:
 3. Respect user filters:
    - meal_type: Only suggest foods appropriate for requested meal (breakfast/lunch/dinner/snack)
    - food_category_codes: ONLY recommend from requested categories
-     NOTE: Foods can have MULTIPLE categories (e.g., a food can be both ASIAN_GENERIC and PROTEIN_MAIN)
-     If user requests ASIAN_GENERIC, recommend ANY food that has ASIAN_GENERIC in its category array
    - food_preferences: Honor specific requests (spicy, vegetarian, low-carb, etc.)
 4. For Type 2 Diabetes & Prediabetes: Prioritize GI < 55, GL < 10, High Fiber
 5. For Obesity: Focus on low calorie density, high protein, high fiber
@@ -138,7 +139,7 @@ ACTIVITY RECOMMENDATION RULES:
    - If glucose < 100 mg/dL: Suggest eating 15g carbs before activity
    - If glucose 100-180 mg/dL: Safe to exercise
    - If glucose > 250 mg/dL: Recommend light activity only or delay
-4. Respect activity_type_codes filter (e.g., only suggest CYCLING_INTENSE if that's in the filter)
+4. Respect activity_type_codes filter
 5. Consider time of day and user's recent activity patterns
 
 RESPONSE FORMAT:
@@ -147,10 +148,8 @@ RESPONSE FORMAT:
 - If a recommendation type is not requested, return empty array []
 - Keep reasons to ONE sentence max`
 
-/*
-UserPromptTemplate is the formatted string used to build the final message.
-It uses fmt.Sprintf to inject the dynamic user data at runtime.
-*/
+// UserPromptTemplate is the dynamic template populated at runtime with user
+// health data and filtered database records.
 const UserPromptTemplate = `
 === YOUR CURRENT HEALTH STATUS ===
 %s
@@ -182,10 +181,12 @@ INSTRUCTIONS:
 6. Provide a clear, one-sentence reason for EACH recommendation
 7. Rank recommendations by safety first, then effectiveness for my condition`
 
-/*
-RecommendationSchema describes the exact JSON structure the AI MUST output.
-This schema is passed to the Gemini configuration to enforce strict validation.
-*/
+/* =================================================================================
+                            OUTPUT ENFORCEMENT SCHEMA
+=================================================================================*/
+
+// RecommendationSchema provides the blueprint for the final JSON response.
+// It includes analysis, detailed reasoning, safety scores, and critical alerts.
 var RecommendationSchema = &GeminiSchema{
 	Type: "OBJECT",
 	Properties: map[string]*GeminiSchema{
@@ -199,66 +200,41 @@ var RecommendationSchema = &GeminiSchema{
 		},
 		"confidence_score": {
 			Type:        "NUMBER",
-			Description: "Float 0.0 to 1.0. How confident are you that these recommendations are safe given the user's glucose history? If data is missing or conflicting, lower the score.",
+			Description: "Float 0.0 to 1.0. Confidence in safety given the provided history.",
 		},
 		"food_recommendations": {
 			Type:        "ARRAY",
-			Description: "Recommended foods. MUST match exact names from AVAILABLE FOODS DATABASE. Return [] if not requested or refused.",
+			Description: "List of recommended foods from the provided database.",
 			Items: &GeminiSchema{
 				Type: "OBJECT",
 				Properties: map[string]*GeminiSchema{
-					"name": {
-						Type:        "STRING",
-						Description: "EXACT food name from the database (copy precisely, including capitalization)",
-					},
-					"reason": {
-						Type:        "STRING",
-						Description: "One sentence: Why is this food safe and effective for this user's condition right now?",
-					},
-					"nutrition_highlight": {
-						Type:        "STRING",
-						Description: "Brief key benefits (e.g., 'High Fiber 8g, Low GI 42' or 'High Protein, Omega-3')",
-					},
-					"meal_type": {
-						Type:        "STRING",
-						Description: "Best meal timing: breakfast, lunch, dinner, or snack",
-					},
-					"portion_suggestion": {
-						Type:        "STRING",
-						Description: "Recommended portion (e.g., '1 cup', '150g') adjusted for age/gender.",
-					},
+					"name":                {Type: "STRING", Description: "EXACT food name from the database."},
+					"reason":              {Type: "STRING", Description: "Reasoning for selection in one sentence."},
+					"nutrition_highlight": {Type: "STRING", Description: "Key nutritional benefits (e.g., 'Low GI 42')."},
+					"meal_type":           {Type: "STRING", Description: "Optimal meal timing."},
+					"portion_suggestion":  {Type: "STRING", Description: "Portion size adjusted for user demographics."},
 				},
 				Required: []string{"name", "reason", "meal_type"},
 			},
 		},
 		"activity_recommendations": {
 			Type:        "ARRAY",
-			Description: "Recommended activities. MUST match exact names from AVAILABLE ACTIVITIES DATABASE. Return [] if not requested or refused.",
+			Description: "List of recommended physical activities from the database.",
 			Items: &GeminiSchema{
 				Type: "OBJECT",
 				Properties: map[string]*GeminiSchema{
-					"name": {
-						Type:        "STRING",
-						Description: "EXACT activity name from the database (copy precisely)",
-					},
-					"duration_minutes": {
-						Type:        "INTEGER",
-						Description: "Recommended duration in minutes (minimum 10, maximum 120)",
-					},
-					"reason": {
-						Type:        "STRING",
-						Description: "One sentence: Why is this activity safe and effective right now given current glucose?",
-					},
+					"name":             {Type: "STRING", Description: "EXACT activity name from database."},
+					"duration_minutes": {Type: "INTEGER", Description: "Recommended duration (10-120 mins)."},
+					"reason":           {Type: "STRING", Description: "Safety justification based on glucose levels."},
 					"intensity": {
-						Type:        "STRING",
-						Description: "Suggested intensity: light, moderate, or vigorous",
+						Type: "STRING",
+						Enum: []string{"light", "moderate", "vigorous"},
+						Description: "Suggested intensity level.",
 					},
-					"safety_note": {
-						Type:        "STRING",
-						Description: "Important safety tip (e.g., 'Check glucose before starting', 'Have snack ready')",
-					},
+					"safety_note":      {Type: "STRING", Description: "Crucial safety tips for the user."},
 					"best_time": {
-						Type:        "STRING",
+						Type: "STRING",
+						Enum: []string{"morning", "afternoon", "evening", "any"},
 						Description: "Optimal time of day: morning, afternoon, evening, or any",
 					},
 				},
@@ -267,7 +243,7 @@ var RecommendationSchema = &GeminiSchema{
 		},
 		"health_alerts": {
 			Type:        "ARRAY",
-			Description: "CRITICAL safety warnings if glucose is dangerously high/low or concerning patterns detected",
+			Description: "Critical safety warnings regarding dangerous glucose patterns.",
 			Items: &GeminiSchema{
 				Type: "STRING",
 			},

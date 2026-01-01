@@ -1,3 +1,8 @@
+/*
+Package utility provides a collection of helper functions and cross-cutting concerns
+for the Glupulse platform, including identity resolution, type conversion,
+security utilities, and mathematical calculations.
+*/
 package utility
 
 import (
@@ -16,121 +21,45 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
-	"github.com/rs/zerolog/log"
 )
 
 var (
+	// IPRateLimiter stores access timestamps per IP address to mitigate brute-force attempts.
 	IPRateLimiter = sync.Map{}
+	// nonAlphanumericRegex is used to sanitize strings for SEO-friendly slugs.
+	nonAlphanumericRegex = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
-// GetRealIP is a helper function to get the user's real IP address
-// It checks proxy headers (like from ngrok) first.
+/* ====================================================================
+                        NETWORK & SECURITY
+==================================================================== */
+
+// GetRealIP extracts the client's actual IP address, accounting for proxy
+// headers like X-Forwarded-For and X-Real-IP used by load balancers and tunnels.
 func GetRealIP(c echo.Context) string {
-	// 1. Check X-Forwarded-For first
-	// This header can be a list: "client, proxy1, proxy2"
-	xForwardedFor := c.Request().Header.Get("X-Forwarded-For")
-	if xForwardedFor != "" {
-		// Take the first IP in the list
-		ips := strings.Split(xForwardedFor, ",")
-		firstIP := strings.TrimSpace(ips[0])
-		return firstIP
+	if xff := c.Request().Header.Get("X-Forwarded-For"); xff != "" {
+		return strings.TrimSpace(strings.Split(xff, ",")[0])
 	}
-
-	// 2. Check X-Real-IP
-	// This is often set by proxies like Nginx or ngrok
-	xRealIP := c.Request().Header.Get("X-Real-IP")
-	if xRealIP != "" {
-		return xRealIP
+	if xri := c.Request().Header.Get("X-Real-IP"); xri != "" {
+		return xri
 	}
-
-	// 3. If all else fails, get the direct IP (which will be ngrok)
 	return c.RealIP()
 }
 
-// Helper function for nil-safe user ID pointer
-func StringPtr(s string) *string {
-	// Returns a pointer to the string.
-	// If the string should be considered NULL/empty, the caller must pass nil to AuthLogEntry.UserID.
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func PgtypeUUIDToString(pgtypeUUID pgtype.UUID) (string, error) {
-	if !pgtypeUUID.Valid {
-		return "", fmt.Errorf("invalid UUID")
-	}
-
-	// Convert bytes to google UUID
-	UUID, err := uuid.FromBytes(pgtypeUUID.Bytes[:])
-	if err != nil {
-		return "", fmt.Errorf("failed to parse UUID: %w", err)
-	}
-
-	return UUID.String(), nil
-}
-
-func StringToPgtypeUUID(uuidStr string) (pgtype.UUID, error) {
-	parsedUUID, err := uuid.Parse(uuidStr)
-	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("invalid UUID format: %w", err)
-	}
-
-	var entityUUID pgtype.UUID
-	copy(entityUUID.Bytes[:], parsedUUID[:])
-	entityUUID.Valid = true
-
-	return entityUUID, nil
-}
-
-func BoolToByte(b bool) byte {
-	// Constant-time bool to byte conversion
-	return byte(subtle.ConstantTimeSelect(int(b2i(b)), 1, 0))
-}
-
-func b2i(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-func AddRandomDelay() {
-	// Base delay of 50ms
-	const baseDelay = 50 * time.Millisecond
-
-	// Add a random jitter of 0-50ms (for a total of 50-100ms)
-	// We use crypto/rand for a secure, unpredictable source of randomness.
-
-	// rand.Int(reader, max) returns a random int in [0, max-1]
-	// We want [0, 50], so we use a max of 51.
-	maxJitter := big.NewInt(51)
-
-	jitter, err := rand.Int(rand.Reader, maxJitter)
-	if err != nil {
-		// Fallback: If crypto/rand fails (very rare), log it
-		// and just sleep for the base delay.
-		log.Info().Msgf("WARNING: crypto/rand failed, using base delay: %v", err)
-		time.Sleep(baseDelay)
-		return
-	}
-
-	// jitter.Int64() converts the *big.Int to an int64
-	totalDelay := baseDelay + (time.Duration(jitter.Int64()) * time.Millisecond)
-	time.Sleep(totalDelay)
-}
-
+// CheckIPRateLimit enforces a sliding window rate limit for sensitive operations.
+// Default: Max 10 attempts per 15-minute window.
 func CheckIPRateLimit(ip string) error {
 	now := time.Now()
-	window := 15 * time.Minute
-	maxAttempts := 10
+	const (
+		window      = 15 * time.Minute
+		maxAttempts = 10
+	)
 
 	val, _ := IPRateLimiter.LoadOrStore(ip, []time.Time{})
 	attempts := val.([]time.Time)
 
-	// Remove old attempts
-	var recent []time.Time
+	// Filter attempts within the current sliding window
+	recent := make([]time.Time, 0, len(attempts))
 	for _, t := range attempts {
 		if now.Sub(t) < window {
 			recent = append(recent, t)
@@ -146,22 +75,21 @@ func CheckIPRateLimit(ip string) error {
 	return nil
 }
 
-func Min(a, b int) int {
-	if a < b {
-		return a
+// AddRandomDelay introduces a 50ms-100ms jitter using a cryptographically
+// secure random source to prevent timing analysis of sensitive logic.
+func AddRandomDelay() {
+	const baseDelay = 50 * time.Millisecond
+	maxJitter := big.NewInt(51)
+
+	jitter, err := rand.Int(rand.Reader, maxJitter)
+	if err != nil {
+		time.Sleep(baseDelay)
+		return
 	}
-	return b
+	time.Sleep(baseDelay + (time.Duration(jitter.Int64()) * time.Millisecond))
 }
 
-// GetUserIDFromContext safely retrieves user ID from Echo context
-func GetUserIDFromContext(c echo.Context) (string, error) {
-	userID, ok := c.Get("user_id").(string)
-	if !ok || userID == "" {
-		return "", fmt.Errorf("user ID not found in context")
-	}
-	return userID, nil
-}
-
+// GenerateSecureToken creates a hex-encoded random string of the specified byte length.
 func GenerateSecureToken(length int) (string, error) {
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {
@@ -170,37 +98,107 @@ func GenerateSecureToken(length int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// floatToNumeric correctly converts a Go float64 into a pgtype.Numeric
+/* ====================================================================
+                        DATABASE TYPE CONVERSION
+==================================================================== */
+
+// PgtypeUUIDToString converts a pgtype.UUID into a standard hyphenated string.
+func PgtypeUUIDToString(u pgtype.UUID) (string, error) {
+	if !u.Valid {
+		return "", fmt.Errorf("invalid UUID")
+	}
+	id, err := uuid.FromBytes(u.Bytes[:])
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// StringToPgtypeUUID parses a string into a pgtype.UUID compatible with pgx driver.
+func StringToPgtypeUUID(s string) (pgtype.UUID, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	var res pgtype.UUID
+	copy(res.Bytes[:], id[:])
+	res.Valid = true
+	return res, nil
+}
+
+// FloatToNumeric converts a float64 to a pgtype.Numeric with 2-decimal precision.
 func FloatToNumeric(f float64) pgtype.Numeric {
 	var n pgtype.Numeric
-
 	s := fmt.Sprintf("%.2f", f)
-
-	if err := (&n).Scan(s); err != nil {
-		log.Warn().Err(err).Float64("value", f).Str("string_val", s).Msg("Warning: Failed to scan string to pgtype.Numeric")
+	if err := n.Scan(s); err != nil {
 		return pgtype.Numeric{Valid: false}
 	}
-
 	return n
 }
 
-// NumericToFloat converts a pgtype.Numeric to a standard float64.
-// Returns 0.0 if the value is NULL or invalid.
+// NumericToFloat converts a pgtype.Numeric back into a standard float64.
 func NumericToFloat(n pgtype.Numeric) float64 {
 	if !n.Valid {
 		return 0.0
 	}
-
-	// Float64Value() is a method on pgtype.Numeric that returns (pgtype.Float8, error)
 	f, err := n.Float64Value()
 	if err != nil {
 		return 0.0
 	}
-
 	return f.Float64
 }
 
-// BMI Calculation (Redundant if using DB generated column, but useful for frontend projection)
+// UuidToString provides a nil-safe conversion of pgtype.UUID to string.
+func UuidToString(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return uuid.UUID(u.Bytes).String()
+}
+
+// StringToText converts a native string to a pgtype.Text object.
+func StringToText(s string) pgtype.Text {
+	return pgtype.Text{String: s, Valid: s != ""}
+}
+
+// TextToString converts a pgtype.Text object to a native string.
+func TextToString(t pgtype.Text) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.String
+}
+
+// SafeFloatToNumeric converts a float pointer to Numeric, returning NULL if nil.
+func SafeFloatToNumeric(f *float64) pgtype.Numeric {
+	if f == nil {
+		return pgtype.Numeric{Valid: false}
+	}
+	return FloatToNumeric(*f)
+}
+
+// StringToTextNullable converts a string pointer to pgtype.Text, returning NULL if nil.
+func StringToTextNullable(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{Valid: false}
+	}
+	return pgtype.Text{String: *s, Valid: true}
+}
+
+// SafeStringPtr converts pgtype.Text to a string pointer, ideal for JSON marshaling to null.
+func SafeStringPtr(t pgtype.Text) *string {
+	if !t.Valid {
+		return nil
+	}
+	s := t.String
+	return &s
+}
+
+/* ====================================================================
+                        HEALTH & DOMAIN LOGIC
+==================================================================== */
+
+// CalculateBMI computes Body Mass Index and rounds to 2 decimal places.
 func CalculateBMI(weightKg float64, heightCm float64) float64 {
 	if heightCm == 0 {
 		return 0
@@ -209,137 +207,59 @@ func CalculateBMI(weightKg float64, heightCm float64) float64 {
 	return math.Round((weightKg/(heightM*heightM))*100) / 100
 }
 
-// Unit Conversion Helpers
-func LbsToKg(lbs float64) float64 {
-	return lbs * 0.453592
-}
-
-func KgToLbs(kg float64) float64 {
-	return kg * 2.20462
-}
-
-func FeetInchesToCm(feet int, inches int) float64 {
-	totalInches := (feet * 12) + inches
-	return float64(totalInches) * 2.54
-}
-
-func CmToFeetInches(cm float64) (int, int) {
-	totalInches := cm / 2.54
-	feet := int(totalInches / 12)
-	inches := int(math.Round(totalInches)) % 12
-	return feet, inches
-}
-
-// A1C Converter
+// A1cToMmol converts HbA1c percentage to mmol/mol.
 func A1cToMmol(percentage float64) float64 {
-	// Formula: (A1c * 10.93) - 23.5
 	return math.Round(((percentage*10.93)-23.5)*100) / 100
 }
 
+// GetMealTypeName resolves a meal type ID to its human-readable equivalent.
 func GetMealTypeName(id int32) string {
-	switch id {
-	case 1:
-		return "Breakfast"
-	case 2:
-		return "Lunch"
-	case 3:
-		return "Dinner"
-	case 4:
-		return "Snack"
-	default:
-		return "Other"
+	names := map[int32]string{1: "Breakfast", 2: "Lunch", 3: "Dinner", 4: "Snack"}
+	if name, ok := names[id]; ok {
+		return name
 	}
+	return "Other"
 }
 
-func Contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
+/* ====================================================================
+                        GENERAL HELPERS
+==================================================================== */
+
+// GetUserIDFromContext retrieves the authenticated user's ID from the Echo context.
+func GetUserIDFromContext(c echo.Context) (string, error) {
+	userID, ok := c.Get("user_id").(string)
+	if !ok || userID == "" {
+		return "", fmt.Errorf("unauthorized: user ID not found")
 	}
-	return false
+	return userID, nil
 }
 
-// uuidToString safely converts pgtype.UUID to string
-func UuidToString(u pgtype.UUID) string {
-	if !u.Valid {
-		return ""
-	}
-	return uuid.UUID(u.Bytes).String()
-}
-
-func StringToText(s string) pgtype.Text {
-	return pgtype.Text{
-		String: s,
-		Valid:  s != "",
-	}
-}
-
-func TextToString(t pgtype.Text) string {
-	if !t.Valid {
-		return ""
-	}
-	return t.String
-}
-
-func ParseIntParam(param string, defaultValue int) int {
-	if param == "" {
-		return defaultValue
-	}
-
-	val, err := strconv.Atoi(param)
-	if err != nil {
-		// Log the error if necessary, or just fail silently to default
-		return defaultValue
-	}
-
-	return val
-}
-
-var nonAlphanumericRegex = regexp.MustCompile(`[^a-z0-9]+`)
-
-// GenerateStoreSlug creates a SEO-friendly slug: "My Store Name" -> "my-store-name-ax9z"
+// GenerateStoreSlug creates a URL-safe, unique identifier for a store name.
 func GenerateStoreSlug(storeName string) string {
-	// 1. Lowercase
 	slug := strings.ToLower(strings.TrimSpace(storeName))
-
-	// 2. Replace non-alphanumeric with hyphens
 	slug = nonAlphanumericRegex.ReplaceAllString(slug, "-")
-
-	// 3. Trim hyphens from ends
-	slug = strings.Trim(slug, "-")
-
-	// 4. Append random suffix (4 chars) to guarantee uniqueness in DB
-	suffix := GenerateRandomString(4)
-
-	return slug + "-" + suffix
+	return strings.Trim(slug, "-") + "-" + GenerateRandomString(4)
 }
 
+// GenerateRandomString produces a secure, random alphanumeric string of length n.
 func GenerateRandomString(n int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
 	for i := range b {
-		// Use crypto/rand for secure selection
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
-		if err != nil {
-			// Fallback to 0 if entropy fails (rare) or handle error
-			b[i] = letters[0]
-		} else {
-			b[i] = letters[num.Int64()]
-		}
+		num, _ := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		b[i] = letters[num.Int64()]
 	}
 	return string(b)
 }
 
+// InterfaceToStringSlice safely casts or converts an interface to a string slice.
 func InterfaceToStringSlice(v interface{}) []string {
 	if v == nil {
 		return []string{}
 	}
-	// If it's already []string
 	if s, ok := v.([]string); ok {
 		return s
 	}
-	// If it's []interface{} (from JSON unmarshal)
 	if list, ok := v.([]interface{}); ok {
 		result := make([]string, len(list))
 		for i, item := range list {
@@ -352,19 +272,48 @@ func InterfaceToStringSlice(v interface{}) []string {
 	return []string{}
 }
 
-func SafeFloatToNumeric(f *float64) pgtype.Numeric {
-	if f == nil {
-		return pgtype.Numeric{Valid: false} // Sends NULL to DB (No Limit)
+// StringPtr converts a string into a *string, returning nil for empty strings.
+func StringPtr(s string) *string {
+	if s == "" {
+		return nil
 	}
-	return FloatToNumeric(*f)
+	return &s
 }
 
-func StringToTextNullable(s *string) pgtype.Text {
-	if s == nil {
-		return pgtype.Text{Valid: false}
+// ParseIntParam parses a string parameter to an integer with a fallback default.
+func ParseIntParam(param string, defaultValue int) int {
+	if val, err := strconv.Atoi(param); err == nil {
+		return val
 	}
-	return pgtype.Text{
-		String: *s,
-		Valid:  true,
+	return defaultValue
+}
+
+// BoolToByte performs a constant-time conversion of a boolean to a byte.
+func BoolToByte(b bool) byte {
+	return byte(subtle.ConstantTimeSelect(b2i(b), 1, 0))
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
 	}
+	return 0
+}
+
+// Min returns the smaller of two integers.
+func Min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Contains checks if a string exists within a slice.
+func Contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

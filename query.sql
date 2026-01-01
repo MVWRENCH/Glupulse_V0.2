@@ -2368,23 +2368,6 @@ UPDATE admins
 SET password_hash = $2, updated_at = NOW()
 WHERE admin_id = $1;
 
--- name: GetSystemSetting :one
--- Get the boolean value of a specific system setting (e.g., 'maintenance_mode')
-SELECT value 
-FROM system_settings 
-WHERE key = $1;
-
--- name: UpdateSystemSetting :exec
--- Update a global system toggle
-UPDATE system_settings 
-SET value = $2, updated_at = NOW() 
-WHERE key = $1;
-
--- name: GetAllSystemSettings :many
--- Fetch all settings to populate the Admin Dashboard toggles
-SELECT key, value 
-FROM system_settings;
-
 /* ====================================================================
                            Unused Queries
 ==================================================================== */

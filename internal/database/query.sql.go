@@ -3547,37 +3547,6 @@ func (q *Queries) GetAdminRefreshToken(ctx context.Context, refreshToken string)
 	return i, err
 }
 
-const getAllSystemSettings = `-- name: GetAllSystemSettings :many
-SELECT key, value 
-FROM system_settings
-`
-
-type GetAllSystemSettingsRow struct {
-	Key   string `json:"key"`
-	Value bool   `json:"value"`
-}
-
-// Fetch all settings to populate the Admin Dashboard toggles
-func (q *Queries) GetAllSystemSettings(ctx context.Context) ([]GetAllSystemSettingsRow, error) {
-	rows, err := q.db.Query(ctx, getAllSystemSettings)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAllSystemSettingsRow
-	for rows.Next() {
-		var i GetAllSystemSettingsRow
-		if err := rows.Scan(&i.Key, &i.Value); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getAuthLogsByUserID = `-- name: GetAuthLogsByUserID :many
 SELECT log_id, user_id, log_category, log_action, log_message, log_level, ip_address, user_agent, metadata, created_at FROM logs_auth 
 WHERE user_id = $1 
@@ -6619,20 +6588,6 @@ func (q *Queries) GetSleepLogs(ctx context.Context, arg GetSleepLogsParams) ([]U
 	return items, nil
 }
 
-const getSystemSetting = `-- name: GetSystemSetting :one
-SELECT value 
-FROM system_settings 
-WHERE key = $1
-`
-
-// Get the boolean value of a specific system setting (e.g., 'maintenance_mode')
-func (q *Queries) GetSystemSetting(ctx context.Context, key string) (bool, error) {
-	row := q.db.QueryRow(ctx, getSystemSetting, key)
-	var value bool
-	err := row.Scan(&value)
-	return value, err
-}
-
 const getTopRatedActivities = `-- name: GetTopRatedActivities :many
 SELECT 
     a.id,
@@ -9006,23 +8961,6 @@ func (q *Queries) UpdateSleepLog(ctx context.Context, arg UpdateSleepLogParams) 
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const updateSystemSetting = `-- name: UpdateSystemSetting :exec
-UPDATE system_settings 
-SET value = $2, updated_at = NOW() 
-WHERE key = $1
-`
-
-type UpdateSystemSettingParams struct {
-	Key   string `json:"key"`
-	Value bool   `json:"value"`
-}
-
-// Update a global system toggle
-func (q *Queries) UpdateSystemSetting(ctx context.Context, arg UpdateSystemSettingParams) error {
-	_, err := q.db.Exec(ctx, updateSystemSetting, arg.Key, arg.Value)
-	return err
 }
 
 const updateUserAddress = `-- name: UpdateUserAddress :one

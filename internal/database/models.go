@@ -669,12 +669,6 @@ type SellerReview struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
-type SystemSetting struct {
-	Key       string             `json:"key"`
-	Value     bool               `json:"value"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-}
-
 // Unified user table supporting both traditional username/password and OAuth authentication
 type User struct {
 	UserID string `json:"user_id"`

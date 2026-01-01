@@ -1,3 +1,8 @@
+/*
+Package geminiservice provides a robust transport layer for interacting with
+Google's Gemini AI models, featuring exponential backoff, structured JSON 
+enforcement, and context-aware request handling.
+*/
 package geminiservice
 
 import (
@@ -15,70 +20,61 @@ import (
 )
 
 /*=================================================================================
-						 CONFIGURATION & CONSTANTS
+                         CONFIGURATION & CONSTANTS
 =================================================================================*/
 
 const (
-	// geminiAPIURL is the endpoint for the specific experimental model version.
-	// NOTE: We append the API key query param manually in the function.
+	// geminiAPIURL is the base endpoint. The API Key is appended as a query parameter.
 	geminiAPIURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key="
 
-	// maxRetries defines how many times we attempt the API call before giving up.
-	maxRetries = 3
-
-	// initialBackoff is the starting duration for exponential backoff (1s, 2s, 4s).
+	// Reliability settings for the AI service.
+	maxRetries     = 3
 	initialBackoff = 1 * time.Second
+	requestTimeout = 60 * time.Second
 
-	// requestTimeout defines the hard limit for a single API call duration.
-	requestTimeout = 30 * time.Second
-
-	// structuredMimeType tells Gemini we expect a pure JSON response.
+	// structuredMimeType enforces Gemini to return valid JSON strings.
 	structuredMimeType = "application/json"
 )
 
-// httpClient is a package-level client to ensure TCP connection reuse (Keep-Alive).
+// httpClient is initialized at the package level to facilitate TCP connection 
+// reuse across multiple requests (Keep-Alive).
 var httpClient = &http.Client{
-	Timeout: requestTimeout,
+    Timeout: requestTimeout,
+    Transport: &http.Transport{
+        MaxIdleConns:        100,
+        IdleConnTimeout:     60 * time.Second,
+        TLSHandshakeTimeout: 10 * time.Second,
+    },
 }
 
 /* =================================================================================
-							 INTERNAL TRANSPORT STRUCTS
-		 These map directly to the Google Gemini REST API JSON structure.
+                             API TRANSPORT STRUCTS
 ==================================================================================*/
 
-// GeminiPayload represents the top-level JSON body sent TO the API.
+// GeminiPayload defines the structure of the request body sent to the Google API.
 type GeminiPayload struct {
-	// Contents contains the actual prompts (User/Model turns).
-	Contents []GeminiContent `json:"contents"`
-
-	// SystemInstruction sets the "persona" or system-level rules.
-	SystemInstruction *GeminiContent `json:"systemInstruction,omitempty"`
-
-	// GenerationConfig controls output formatting (Temperature, JSON Schema, MIME type).
-	GenerationConfig *GenerationConfig `json:"generationConfig,omitempty"`
+	Contents          []GeminiContent   `json:"contents"`
+	SystemInstruction *GeminiContent    `json:"systemInstruction,omitempty"`
+	GenerationConfig  *GenerationConfig `json:"generationConfig,omitempty"`
 }
 
-// GeminiContent represents a single message block (either from User, Model, or System).
+// GeminiContent represents a single turn in the conversation (user, model, or system).
 type GeminiContent struct {
 	Parts []GeminiPart `json:"parts"`
 }
 
-// GeminiPart is a specific segment of a message.
+// GeminiPart contains the raw text segment of a message.
 type GeminiPart struct {
 	Text string `json:"text,omitempty"`
 }
 
-// GenerationConfig holds configuration parameters for the generation request.
+// GenerationConfig contains parameters to tune the AI model's output formatting.
 type GenerationConfig struct {
-	// ResponseMimeType sets the output format (e.g., "application/json").
-	ResponseMimeType string `json:"responseMimeType"`
-
-	// ResponseSchema enforces a specific JSON structure on the output.
-	// It references the GeminiSchema struct defined in prompt_schema.go file.
-	ResponseSchema *GeminiSchema `json:"response_schema,omitempty"`
+	ResponseMimeType string        `json:"responseMimeType"`
+	ResponseSchema   *GeminiSchema `json:"response_schema,omitempty"`
 }
 
-// GeminiResponse represents the JSON body received FROM the API.
+// GeminiResponse represents the structured response received from the Google API.
 type GeminiResponse struct {
 	Candidates []struct {
 		Content struct {
@@ -90,31 +86,13 @@ type GeminiResponse struct {
 }
 
 /*=================================================================================
-							PUBLIC API FUNCTIONS
+                            PUBLIC API FUNCTIONS
 =================================================================================*/
 
-/*
-GenerateAndParse sends a structured prompt to Gemini to get food, activity and insights suggestions.
-
-	It wraps the internal call to enforce consistency.
-
-	Parameters:
-	  - systemPrompt: The persona/rules (e.g., "You are a nutritionist...").
-	  - userPrompt: The specific user data and context.
-	  - schema: The strict JSON schema the response must adhere to.
-*/
-
-// ParseJSONResponse is a helper to unmarshal the Gemini JSON response
-func ParseJSONResponse(jsonStr string, target interface{}) error {
-	if err := json.Unmarshal([]byte(jsonStr), target); err != nil {
-		return fmt.Errorf("failed to parse Gemini response: %w", err)
-	}
-	return nil
-}
-
-// GenerateAndParse combines API call + JSON parsing in one step
-func GenerateAndParse(log, systemPrompt, userPrompt string, schema *GeminiSchema, result interface{}) error {
-	jsonStr, err := callStructuredGemini(systemPrompt, userPrompt, schema)
+// GenerateAndParse executes a structured prompt against the Gemini API and
+// automatically unmarshals the resulting JSON into the provided 'result' interface.
+func GenerateAndParse(ctx context.Context, systemPrompt, userPrompt string, schema *GeminiSchema, result interface{}) error {
+	jsonStr, err := callStructuredGemini(ctx, systemPrompt, userPrompt, schema)
 	if err != nil {
 		return err
 	}
@@ -122,22 +100,33 @@ func GenerateAndParse(log, systemPrompt, userPrompt string, schema *GeminiSchema
 	return ParseJSONResponse(jsonStr, result)
 }
 
+// ParseJSONResponse is a utility function that converts a JSON string into a Go struct.
+func ParseJSONResponse(jsonStr string, target interface{}) error {
+	if err := json.Unmarshal([]byte(jsonStr), target); err != nil {
+		return fmt.Errorf("failed to parse Gemini JSON: %w", err)
+	}
+	return nil
+}
+
+// GenerateWithCustomSchema allows for generic AI tasks that require a specific 
+// JSON schema, such as data extraction or content classification.
+func GenerateWithCustomSchema(ctx context.Context, systemPrompt, userPrompt string, schema *GeminiSchema) (string, error) {
+	return callStructuredGemini(ctx, systemPrompt, userPrompt, schema)
+}
+
 /*=================================================================================
-							 PRIVATE IMPLEMENTATION
+                             PRIVATE IMPLEMENTATION
 =================================================================================*/
 
-// callStructuredGemini handles the HTTP transport, authentication, retries, and error parsing.
-// This is the core function that all public functions use
-func callStructuredGemini(systemPrompt, userPrompt string, schema *GeminiSchema) (string, error) {
-
-	// 1. Validate Configuration
+// callStructuredGemini manages the lifecycle of the AI request, including 
+// authentication, payload assembly, and exponential backoff retries.
+func callStructuredGemini(ctx context.Context, systemPrompt, userPrompt string, schema *GeminiSchema) (string, error) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		log.Error().Msg("FATAL: GEMINI_API_KEY environment variable is not set.")
-		return "", fmt.Errorf("server is not configured for AI recommendations")
+		log.Error().Msg("AI Service Error: GEMINI_API_KEY environment variable is not set")
+		return "", fmt.Errorf("AI service configuration missing")
 	}
 
-	// 2. Prepare Payload
 	payload := GeminiPayload{
 		SystemInstruction: &GeminiContent{
 			Parts: []GeminiPart{{Text: systemPrompt}},
@@ -153,79 +142,66 @@ func callStructuredGemini(systemPrompt, userPrompt string, schema *GeminiSchema)
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal payload: %w", err)
+		return "", fmt.Errorf("failed to assemble AI payload: %w", err)
 	}
 
-	// 3. Retry Loop (Exponential Backoff)
 	var lastErr error
-
 	for i := 0; i < maxRetries; i++ {
-		// Create a context for this specific attempt
-		reqCtx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-
-		// Execute the request logic
+		// Respect parent context cancellation during retries
+		reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 		response, attemptErr := performRequest(reqCtx, apiKey, payloadBytes)
-		cancel() // Ensure context is cleaned up immediately after request finishes
+		cancel()
 
 		if attemptErr == nil {
-			return response, nil // Success!
+			return response, nil
 		}
 
-		// Log failure and handle backoff
 		lastErr = attemptErr
 		log.Warn().Err(lastErr).Msgf("Gemini API Attempt %d/%d failed", i+1, maxRetries)
 
-		// Don't sleep after the last attempt
+		// Wait before retrying unless it's the final attempt
 		if i < maxRetries-1 {
-			sleepDuration := initialBackoff * time.Duration(math.Pow(2, float64(i)))
-			time.Sleep(sleepDuration)
+			backoff := time.Duration(math.Pow(2, float64(i))) * initialBackoff
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(backoff):
+				// continue to next retry
+			}
 		}
 	}
 
-	return "", fmt.Errorf("failed to call Gemini API after %d attempts: %w", maxRetries, lastErr)
+	return "", fmt.Errorf("AI service unavailable after %d retries: %w", maxRetries, lastErr)
 }
 
-// performRequest handles the single HTTP request logic to keep the loop clean.
+// performRequest executes a single HTTP POST request to the Google Gemini endpoint.
 func performRequest(ctx context.Context, apiKey string, payload []byte) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", geminiAPIURL+apiKey, bytes.NewBuffer(payload))
+	fullURL := geminiAPIURL + apiKey
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewBuffer(payload))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("failed to create http request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Use global httpClient for connection reuse
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("network error: %w", err)
+		return "", fmt.Errorf("network failure: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Handle Non-200 responses
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body) // Read error body for debugging
-		return "", fmt.Errorf("API error %s: %s", resp.Status, string(bodyBytes))
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("AI API error (Status %d): %s", resp.StatusCode, string(body))
 	}
 
-	// Decode successful response directly from stream
 	var geminiResp GeminiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
-		return "", fmt.Errorf("failed to decode response JSON: %w", err)
+		return "", fmt.Errorf("failed to decode AI response: %w", err)
 	}
 
-	// Extract text content
 	if len(geminiResp.Candidates) > 0 && len(geminiResp.Candidates[0].Content.Parts) > 0 {
 		return geminiResp.Candidates[0].Content.Parts[0].Text, nil
 	}
 
-	return "", fmt.Errorf("gemini returned empty content")
-}
-
-/*=================================================================================
-							 FOR FUTURE ENHANCMENTS
-=================================================================================*/
-
-// GenerateWithCustomSchema allows using the service for generic tasks beyond recommendations.
-// Use this for chat features, analysis, or other non-standard logic.
-func GenerateWithCustomSchema(systemPrompt, userPrompt string, schema *GeminiSchema) (string, error) {
-	return callStructuredGemini(systemPrompt, userPrompt, schema)
+	return "", fmt.Errorf("AI model returned an empty candidate")
 }

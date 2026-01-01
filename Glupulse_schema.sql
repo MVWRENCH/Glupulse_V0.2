@@ -1104,19 +1104,6 @@ CREATE TABLE public.seller_reviews (
 ALTER TABLE public.seller_reviews OWNER TO postgres;
 
 --
--- Name: system_settings; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.system_settings (
-    key character varying(50) NOT NULL,
-    value boolean DEFAULT false NOT NULL,
-    updated_at timestamp with time zone DEFAULT now()
-);
-
-
-ALTER TABLE public.system_settings OWNER TO postgres;
-
---
 -- Name: user_activity_logs; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1974,14 +1961,6 @@ ALTER TABLE ONLY public.seller_profiles
 
 ALTER TABLE ONLY public.seller_reviews
     ADD CONSTRAINT seller_reviews_pkey PRIMARY KEY (review_id);
-
-
---
--- Name: system_settings system_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.system_settings
-    ADD CONSTRAINT system_settings_pkey PRIMARY KEY (key);
 
 
 --

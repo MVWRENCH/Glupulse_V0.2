@@ -1,3 +1,8 @@
+/*
+Package geminiservice provides the orchestration logic for generating personalized
+health recommendations using Google's Gemini AI. It aggregates user health data,
+applies medical safety boundaries, and formats data for large language model processing.
+*/
 package geminiservice
 
 import (
@@ -15,68 +20,66 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// RequestParams defines the incoming filters from the HTTP handler.
+// RequestParams defines the filtering criteria and user preferences for health recommendations.
 type RequestParams struct {
-	UserID              string
-	RequestedTypes      []string // ['food', 'activity', 'insights']
-	MealType            string   // 'breakfast', 'lunch', 'dinner', 'snack'
-	FoodCategory        []string // ['ASIAN_GENERIC', 'BEVERAGE_COFFEE_TEA']
-	FoodPreferences     string   // "something spicy"
-	ActivityTypeCodes   []string // ['CYCLING_INTENSE', 'CALISTHENICS']
-	ActivityPreferences string   // "outdoor sports"
-	InsightsQuestion    string   // "How can I lower my HBA1C?"
-	MaxGlycemicLoad     *float64 // Optional: filter foods by GL
-	MaxCarbs            *float64 // Optional: filter foods by carbs
+	UserID              string   // Unique identifier for the user
+	RequestedTypes      []string // Types of output desired: 'food', 'activity', 'insights'
+	MealType            string   // Specific meal time context (e.g., 'breakfast')
+	FoodCategory        []string // Filter for specific cuisine or food groups
+	FoodPreferences     string   // Natural language food preferences
+	ActivityTypeCodes   []string // Filter for specific exercise categories
+	ActivityPreferences string   // Natural language activity preferences
+	InsightsQuestion    string   // Specific health-related question from the user
+	MaxGlycemicLoad     *float64 // Maximum allowed Glycemic Load for recommended foods
+	MaxCarbs            *float64 // Maximum allowed carbohydrates in grams
 }
 
-// GetHealthRecommendations is the main orchestrator.
-// It gathers data, applies safety rules, prompts Gemini, and parses the result.
+/*
+GetHealthRecommendations orchestrates the full recommendation lifecycle:
+1. Applies health-based limits based on the user's chronic condition.
+2. Aggregates clinical context (glucose logs, HBA1C, medications).
+3. Fetches filtered foods and activities from the database.
+4. Prompts the Gemini model and parses the structured response.
+*/
 func GetHealthRecommendations(ctx context.Context, q *database.Queries, req RequestParams) (map[string]interface{}, error) {
-
-	log.Info().Msg("Applying automatic health limits based on user condition...")
+	// Apply automatic safety boundaries based on user's medical profile
+	log.Info().Str("userID", req.UserID).Msg("Applying health boundaries...")
 	if err := ApplyHealthBasedLimits(ctx, q, req.UserID, &req); err != nil {
-		log.Warn().Err(err).Msg("Failed to apply health limits, proceeding with user defaults")
+		log.Warn().Err(err).Msg("Proceeding with default limits due to profile fetch failure")
 	}
 
-	// 1. Fetch User Health Context
-	log.Info().Msg("Building health context from database...")
+	// 1. Concurrent Data Aggregation: Build the Health Context
 	healthContextJSON, err := buildUserHealthContext(ctx, q, req.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build health context: %w", err)
+		return nil, fmt.Errorf("failed to aggregate health context: %w", err)
 	}
 
-	// 2. Fetch FILTERED Foods (Only if requested)
+	// 2. Data Fetching: Foods (Filtered by safety limits and recent history)
 	var dbFoods []database.Food
 	if contains(req.RequestedTypes, "food") {
-		log.Info().Msg("Fetching filtered foods from database...")
-
-		// Fetch recently recommended food IDs to exclude
-		recentFoodIDs, err := q.GetRecentRecommendedFoodIDs(ctx, req.UserID)
-		if err != nil {
-			log.Warn().Err(err).Msg("Failed to fetch recent recommendations, proceeding without exclusion")
+		// Exclude items recommended in the last 24-48 hours to ensure variety
+		recentFoodIDs, _ := q.GetRecentRecommendedFoodIDs(ctx, req.UserID)
+		if recentFoodIDs == nil {
 			recentFoodIDs = []pgtype.UUID{}
 		}
 
-		// Build filter parameters
 		filterParams := database.ListRecommendedFoodsParams{
 			FoodCategory:    req.FoodCategory,
 			MaxGlycemicLoad: utility.SafeFloatToNumeric(req.MaxGlycemicLoad),
-    		MaxCarbs:        utility.SafeFloatToNumeric(req.MaxCarbs),
-			LimitCount:      100, // Get top 100 matches
+			MaxCarbs:        utility.SafeFloatToNumeric(req.MaxCarbs),
+			LimitCount:      100,
 			ExcludedFoodIds: recentFoodIDs,
 		}
 
 		rows, err := q.ListRecommendedFoods(ctx, filterParams)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to fetch filtered foods")
-		} else {
-			// Efficiently map rows to struct
+		if err == nil {
+			// Memory Optimization: Pre-allocate slice capacity
 			dbFoods = make([]database.Food, 0, len(rows))
 			for _, row := range rows {
 				dbFoods = append(dbFoods, database.Food{
 					FoodID:        row.FoodID,
 					FoodName:      row.FoodName,
-					FoodCategory:  row.FoodCategory, // Important for AI context
+					FoodCategory:  row.FoodCategory,
 					ServingSize:   row.ServingSize,
 					Calories:      row.Calories,
 					CarbsGrams:    row.CarbsGrams,
@@ -86,27 +89,17 @@ func GetHealthRecommendations(ctx context.Context, q *database.Queries, req Requ
 					Currency:      row.Currency,
 				})
 			}
-			log.Info().Msgf("Found %d foods (excluding %d recent items)", len(dbFoods), len(recentFoodIDs))
 		}
 	}
 
-	// 3. Fetch FILTERED Activities (Only if requested)
+	// 3. Data Fetching: Activities
 	var dbActivities []database.Activity
 	if contains(req.RequestedTypes, "activity") {
-		log.Info().Msg("Fetching filtered activities from database...")
-
-		dbActivities, err = q.ListRecommendedActivities(ctx, req.ActivityTypeCodes)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to fetch filtered activities")
-		}
-
-		log.Info().Msgf("Found %d activities matching filters", len(dbActivities))
+		dbActivities, _ = q.ListRecommendedActivities(ctx, req.ActivityTypeCodes)
 	}
 
-	// 4. Build User Filters String (for the prompt context)
+	// 4. Prompt Assembly: Inject data into structured templates
 	userFiltersStr := buildUserFiltersString(req)
-
-	// 5. Build Final Prompt
 	finalPrompt := BuildRecommendationPrompt(
 		healthContextJSON,
 		dbFoods,
@@ -115,26 +108,19 @@ func GetHealthRecommendations(ctx context.Context, q *database.Queries, req Requ
 		userFiltersStr,
 	)
 
-	// 7. Call Gemini API
-	log.Info().Msg("Sending prompt to Gemini...")
+	// 5. AI Execution: Invoke Gemini and parse structured JSON
+	log.Info().Msg("Requesting structured insights from Gemini...")
 	var result map[string]interface{}
-	// This helper handles the API call, logging errors, and JSON unmarshalling in one step
-	if err := GenerateAndParse("HealthRecommendations", SystemPrompt, finalPrompt, RecommendationSchema, &result); err != nil {
+	if err := GenerateAndParse(ctx, SystemPrompt, finalPrompt, RecommendationSchema, &result); err != nil {
 		return nil, err
 	}
 
-	log.Info().Msg("Successfully generated and parsed recommendations")
 	return result, nil
 }
 
-/*=================================================================================
-								HELPER FUNCTIONS
-=================================================================================*/
-
-// buildUserHealthContext fetches specific data for the last 3 days
+// buildUserHealthContext executes 8 concurrent database tasks to assemble a
+// 3-day health snapshot of the user.
 func buildUserHealthContext(ctx context.Context, queries *database.Queries, userID string) (string, error) {
-
-	// 1. Initialize the target struct
 	data := HealthContextData{
 		Medications:     []database.UserMedication{},
 		GlucoseHistory:  []database.UserGlucoseReading{},
@@ -144,55 +130,41 @@ func buildUserHealthContext(ctx context.Context, queries *database.Queries, user
 		LatestHBA1C:     []database.UserHba1cRecord{},
 	}
 
-	// 2. Prepare Time Range (Last 3 Days) (Computed once for all queries)
+	// Compute universal time range for all history lookups
 	startTime := time.Now().AddDate(0, 0, -3)
 	pgStart := pgtype.Timestamptz{Time: startTime, Valid: true}
 	pgEnd := pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true}
 
-	// 3. Setup Concurrency Controls
-	// errgroup manages the goroutines and cancels context on error
+	// Use errgroup for parallel execution and context management
 	g, grpCtx := errgroup.WithContext(ctx)
-
-	// mutex protects the 'data' struct from race conditions when writing results
 	var mu sync.Mutex
 
-	// --- Task 1: Age (New!) ---
+	// Demographics Task
 	g.Go(func() error {
-		// We use the new query that fetches both fields in one DB hit
 		demo, err := queries.GetUserDemographics(grpCtx, userID)
 		if err == nil {
 			mu.Lock()
 			data.Age = demo.Age
 			if demo.UserGender.Valid {
-				// We cast the custom enum type (e.g., UsersUserGender) to a standard string
 				data.Gender = string(demo.UserGender.UsersUserGender)
-			} else {
-				// Handle case where gender is NULL in DB (Default to empty or specific value)
-				data.Gender = "unknown"
 			}
 			mu.Unlock()
-		} else {
-			// Log warning but allow the process to continue (defaults to 0/"")
-			log.Warn().Err(err).Msg("Failed to fetch user demographics")
 		}
 		return nil
 	})
 
-	// --- Task 2: Health Profile ---
+	// Health Profile Task
 	g.Go(func() error {
 		profile, err := queries.GetUserHealthProfile(grpCtx, userID)
 		if err == nil {
 			mu.Lock()
 			data.Profile = &profile
 			mu.Unlock()
-		} else {
-			// Log but don't fail the whole group (Best Effort)
-			log.Warn().Err(err).Msg("Failed to fetch profile for context")
 		}
 		return nil
 	})
 
-	// --- Task 3: Medications ---
+	// Medications Task
 	g.Go(func() error {
 		meds, err := queries.GetUserMedications(grpCtx, pgtype.Text{String: userID, Valid: true})
 		if err == nil {
@@ -203,77 +175,57 @@ func buildUserHealthContext(ctx context.Context, queries *database.Queries, user
 		return nil
 	})
 
-	// --- Task 4: Glucose Logs ---
+	// Clinical Logs Tasks (Glucose, Activity, Sleep, HBA1C)
 	g.Go(func() error {
-		glucose, err := queries.GetGlucoseReadings(grpCtx, database.GetGlucoseReadingsParams{UserID: userID, StartDate: pgStart, EndDate: pgEnd})
-		if err == nil {
-			mu.Lock()
-			data.GlucoseHistory = glucose
-			mu.Unlock()
-		}
+		glucose, _ := queries.GetGlucoseReadings(grpCtx, database.GetGlucoseReadingsParams{UserID: userID, StartDate: pgStart, EndDate: pgEnd})
+		mu.Lock()
+		data.GlucoseHistory = glucose
+		mu.Unlock()
 		return nil
 	})
 
-	// --- Task 5: Activity Logs ---
 	g.Go(func() error {
-		activity, err := queries.GetActivityLogs(grpCtx, database.GetActivityLogsParams{UserID: userID, StartDate: pgStart, EndDate: pgEnd})
-		if err == nil {
-			mu.Lock()
-			data.ActivityHistory = activity
-			mu.Unlock()
-		}
+		activity, _ := queries.GetActivityLogs(grpCtx, database.GetActivityLogsParams{UserID: userID, StartDate: pgStart, EndDate: pgEnd})
+		mu.Lock()
+		data.ActivityHistory = activity
+		mu.Unlock()
 		return nil
 	})
 
-	// --- Task 6: Sleep Logs ---
 	g.Go(func() error {
-		sleep, err := queries.GetSleepLogs(grpCtx, database.GetSleepLogsParams{UserID: userID, StartDate: pgStart, EndDate: pgEnd})
-		if err == nil {
-			mu.Lock()
-			data.SleepHistory = sleep
-			mu.Unlock()
-		}
+		sleep, _ := queries.GetSleepLogs(grpCtx, database.GetSleepLogsParams{UserID: userID, StartDate: pgStart, EndDate: pgEnd})
+		mu.Lock()
+		data.SleepHistory = sleep
+		mu.Unlock()
 		return nil
 	})
 
-	// --- Task 7: HBA1C ---
 	g.Go(func() error {
-		hba1c, err := queries.GetHBA1CRecords(grpCtx, userID)
-		if err == nil {
-			mu.Lock()
-			data.LatestHBA1C = hba1c
-			mu.Unlock()
-		}
+		hba1c, _ := queries.GetHBA1CRecords(grpCtx, userID)
+		mu.Lock()
+		data.LatestHBA1C = hba1c
+		mu.Unlock()
 		return nil
 	})
 
-	// --- Task 8: Meal History (Complex Query) ---
+	// Meal History Task (Header + Nested Items)
 	g.Go(func() error {
 		mealHeaders, err := queries.GetMealLogs(grpCtx, database.GetMealLogsParams{UserID: userID, StartDate: pgStart, EndDate: pgEnd})
 		if err == nil {
-			// We build a local slice first to avoid locking inside the loop/DB calls
-			var localMeals []MealLogContext
-
+			localMeals := make([]MealLogContext, 0, len(mealHeaders))
 			for _, header := range mealHeaders {
-				// Note: This sub-query happens inside this goroutine (Sequential within this task)
 				items, _ := queries.GetMealItemsByMealID(grpCtx, header.MealID)
-
-				var foodNames []string
+				foodNames := make([]string, 0, len(items))
 				for _, item := range items {
 					foodNames = append(foodNames, item.FoodName)
 				}
-
 				localMeals = append(localMeals, MealLogContext{
-					MealID:     header.MealID,
-					LogDate:    header.MealTimestamp.Time,
-					MealType:   header.MealTypeName,
-					TotalCarbs: 0,
-					TotalCals:  0,
-					FoodItems:  foodNames,
+					MealID:    header.MealID,
+					LogDate:   header.MealTimestamp.Time,
+					MealType:  header.MealTypeName,
+					FoodItems: foodNames,
 				})
 			}
-
-			// Lock only once to assign the full list
 			mu.Lock()
 			data.MealHistory = localMeals
 			mu.Unlock()
@@ -281,135 +233,147 @@ func buildUserHealthContext(ctx context.Context, queries *database.Queries, user
 		return nil
 	})
 
-	// 4. Wait for all goroutines to finish
 	if err := g.Wait(); err != nil {
-		return "", err // Should rarely happen as we return nil in subtasks
-	}
-
-	// 5. Serialize
-	jsonData, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
 		return "", err
 	}
-	return string(jsonData), nil
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	return string(jsonData), err
 }
 
-// buildUserFiltersString creates a human-readable description of user's request
-// This is injected into the prompt so the AI knows "User asked for Spicy Food".
+// buildUserFiltersString converts RequestParams into a human-readable summary for AI context.
 func buildUserFiltersString(req RequestParams) string {
-	var parts []string
+	var sb strings.Builder
 
 	if req.MealType != "" {
-		parts = append(parts, fmt.Sprintf("Meal Type: %s", req.MealType))
+		sb.WriteString(fmt.Sprintf("Meal Type: %s\n", req.MealType))
 	}
-
 	if len(req.FoodCategory) > 0 {
-		parts = append(parts, fmt.Sprintf("Food Categories: %s", strings.Join(req.FoodCategory, ", ")))
+		sb.WriteString(fmt.Sprintf("Food Categories: %s\n", strings.Join(req.FoodCategory, ", ")))
 	}
-
 	if req.FoodPreferences != "" {
-		parts = append(parts, fmt.Sprintf("Food Preferences: %s", req.FoodPreferences))
+		sb.WriteString(fmt.Sprintf("Food Preferences: %s\n", req.FoodPreferences))
 	}
-
 	if len(req.ActivityTypeCodes) > 0 {
-		parts = append(parts, fmt.Sprintf("Activity Types: %s", strings.Join(req.ActivityTypeCodes, ", ")))
+		sb.WriteString(fmt.Sprintf("Activity Types: %s\n", strings.Join(req.ActivityTypeCodes, ", ")))
 	}
-
 	if req.ActivityPreferences != "" {
-		parts = append(parts, fmt.Sprintf("Activity Preferences: %s", req.ActivityPreferences))
+		sb.WriteString(fmt.Sprintf("Activity Preferences: %s\n", req.ActivityPreferences))
 	}
-
 	if req.InsightsQuestion != "" {
-		parts = append(parts, fmt.Sprintf("Question: %s", req.InsightsQuestion))
+		sb.WriteString(fmt.Sprintf("Question: %s\n", req.InsightsQuestion))
 	}
-
 	if req.MaxGlycemicLoad != nil {
-		parts = append(parts, fmt.Sprintf("Max Glycemic Load: %.1f", *req.MaxGlycemicLoad))
+		sb.WriteString(fmt.Sprintf("Max Glycemic Load: %.1f\n", *req.MaxGlycemicLoad))
 	}
-
 	if req.MaxCarbs != nil {
-		parts = append(parts, fmt.Sprintf("Max Carbs: %.1fg", *req.MaxCarbs))
+		sb.WriteString(fmt.Sprintf("Max Carbs: %.1fg\n", *req.MaxCarbs))
 	}
 
-	if len(parts) == 0 {
+	if sb.Len() == 0 {
 		return "No specific filters"
 	}
-
-	return strings.Join(parts, "\n")
+	return sb.String()
 }
 
-// FormatFoodsForAI creates a structured list of foods for the AI context
+// FormatFoodsForAI serializes database food records into a dense nutritional
+// catalog for the AI's selection process.
 func FormatFoodsForAI(foods []database.Food) string {
 	var builder strings.Builder
 	builder.WriteString("Available Foods:\n")
 
 	for i, f := range foods {
-		// Format nutritional info
-
 		categories := "Uncategorized"
 		if len(f.FoodCategory) > 0 {
 			categories = strings.Join(f.FoodCategory, ", ")
 		}
 
-		builder.WriteString(fmt.Sprintf(
-			"%d. %s\n"+
-				"   Categories: %s\n"+
-				"   Serving Size: %s\n"+
-				"   Nutrition: Calories %d, Carbs %.1fg, Fiber %.1fg, Sugar %.1fg, Protein %.1fg, Fat %.1fg, Sodium %.0fmg\n"+
-				"   Glycemic: GI %d, GL %.1f\n"+
-				"   Price: %s %.0f\n\n",
-			i+1,
-			f.FoodName,
-			categories,
-			f.ServingSize.String,
-
-			f.Calories.Int32,
-			utility.NumericToFloat(f.CarbsGrams),
-			utility.NumericToFloat(f.FiberGrams),
-			utility.NumericToFloat(f.SugarGrams),
-			utility.NumericToFloat(f.ProteinGrams),
-			utility.NumericToFloat(f.FatGrams),
-			utility.NumericToFloat(f.SodiumMg),
-
-			f.GlycemicIndex.Int32,
-			utility.NumericToFloat(f.GlycemicLoad),
-			f.Currency,
-			utility.NumericToFloat(f.Price),
-		))
+		fmt.Fprintf(&builder, "%d. %s\n   Categories: %s\n   Serving: %s\n   Nutrition: Cals %d, Carbs %.1fg, GI %d, GL %.1f\n   Price: %s %.0f\n\n",
+			i+1, f.FoodName, categories, f.ServingSize.String, f.Calories.Int32,
+			utility.NumericToFloat(f.CarbsGrams), f.GlycemicIndex.Int32,
+			utility.NumericToFloat(f.GlycemicLoad), f.Currency, utility.NumericToFloat(f.Price))
 	}
-
 	return builder.String()
 }
 
-// FormatActivitiesForAI creates a structured list of activities for the AI context
+// FormatActivitiesForAI serializes activity records including MET values for AI assessment.
 func FormatActivitiesForAI(activities []database.Activity) string {
 	if len(activities) == 0 {
-		return "(No activities available matching your filters)"
+		return "(No matching activities available)"
 	}
-
 	var builder strings.Builder
-	builder.WriteString("Available Activities (select from this list):\n")
+	builder.WriteString("Available Activities:\n")
 
 	for i, a := range activities {
-		builder.WriteString(fmt.Sprintf(
-			"%d. %s (Code: %s)\n"+
-				"   Description: %s\n"+
-				"   MET Value: %.1f | Measurement: %s\n"+
-				"   Recommended Duration: %.0f minutes\n\n",
-			i+1,
-			a.ActivityName,
-			a.ActivityCode.String,
-			a.Description.String,
-			utility.NumericToFloat(a.MetValue),
-			a.MeasurementUnit.String,
-			utility.NumericToFloat(a.RecommendedMinValue),
-		))
+		fmt.Fprintf(&builder, "%d. %s (%s)\n   MET: %.1f | Recommended: %.0f min\n\n",
+			i+1, a.ActivityName, a.ActivityCode.String, utility.NumericToFloat(a.MetValue),
+			utility.NumericToFloat(a.RecommendedMinValue))
 	}
-
 	return builder.String()
 }
 
-// contains checks if a string slice contains a specific string
+// BuildRecommendationPrompt combines all aggregated data into the final prompt sent to Gemini.
+func BuildRecommendationPrompt(healthContext string, dbFoods []database.Food, dbActivities []database.Activity, requestedTypes []string, userFilters string) string {
+	return fmt.Sprintf(UserPromptTemplate, healthContext, FormatFoodsForAI(dbFoods),
+		FormatActivitiesForAI(dbActivities), strings.Join(requestedTypes, ", "), userFilters)
+}
+
+// ApplyHealthBasedLimits enforces nutritional safety guardrails based on the user's
+// medical condition (Diabetes, Prediabetes, Obesity) and current blood glucose state.
+func ApplyHealthBasedLimits(ctx context.Context, q *database.Queries, userID string, req *RequestParams) error {
+	profile, err := q.GetUserHealthProfile(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	latestGlucose, err := q.GetLatestGlucoseReading(ctx, userID)
+	if err != nil {
+		latestGlucose.GlucoseValue = 150
+	}
+
+	// Safety Logic: Define thresholds based on Condition ID
+	switch profile.ConditionID {
+	case 1: // Type 2 Diabetes
+		if req.MaxGlycemicLoad == nil {
+			gl := 10.0
+			req.MaxGlycemicLoad = &gl
+		}
+		if req.MaxCarbs == nil {
+			carbs := 30.0
+			req.MaxCarbs = &carbs
+		}
+	case 2: // Prediabetes
+		if req.MaxGlycemicLoad == nil {
+			gl := 15.0
+			req.MaxGlycemicLoad = &gl
+		}
+		if req.MaxCarbs == nil {
+			carbs := 45.0
+			req.MaxCarbs = &carbs
+		}
+	case 3: // Obesity
+		if req.MaxCarbs == nil {
+			carbs := 60.0
+			req.MaxCarbs = &carbs
+		}
+	}
+
+	// High Glucose Correction: Tighten limits if current glucose > 180 mg/dL
+	if latestGlucose.GlucoseValue > 180 {
+		if req.MaxGlycemicLoad != nil {
+			val := *req.MaxGlycemicLoad * 0.7
+			req.MaxGlycemicLoad = &val
+		}
+		if req.MaxCarbs != nil {
+			val := *req.MaxCarbs * 0.7
+			req.MaxCarbs = &val
+		}
+	}
+
+	return nil
+}
+
+// Helper: contains checks for item existence in a string slice.
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
@@ -417,93 +381,4 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
-}
-
-// BuildRecommendationPrompt constructs the full prompt with all context
-func BuildRecommendationPrompt(
-	healthContext string,
-	dbFoods []database.Food,
-	dbActivities []database.Activity,
-	requestedTypes []string,
-	userFilters string,
-) string {
-
-	foodsContext := FormatFoodsForAI(dbFoods)
-	activitiesContext := FormatActivitiesForAI(dbActivities)
-	typesStr := strings.Join(requestedTypes, ", ")
-
-	return fmt.Sprintf(
-		UserPromptTemplate,
-		healthContext,
-		foodsContext,
-		activitiesContext,
-		typesStr,
-		userFilters,
-	)
-}
-
-/*=================================================================================
-				ADDITIONAL HELPER: Auto-set health-based limits
-=================================================================================*/
-
-// ApplyHealthBasedLimits is the logic engine that sets safety boundaries.
-func ApplyHealthBasedLimits(ctx context.Context, q *database.Queries, userID string, req *RequestParams) error {
-
-	// 1. Get Profile
-	profile, err := q.GetUserHealthProfile(ctx, userID)
-	if err != nil {
-		return err
-	}
-
-	// 2. Get Recent Glucose
-	latestGlucose, err := q.GetLatestGlucoseReading(ctx, userID)
-	if err != nil {
-		// Default safe assumption if no data exists
-		latestGlucose.GlucoseValue = 150
-	}
-
-	// 3. Set Base Limits by Condition
-	switch profile.ConditionID {
-	case 1: // Type 2 Diabetes (Strict)
-		if req.MaxGlycemicLoad == nil {
-			maxGL := 10.0
-			req.MaxGlycemicLoad = &maxGL
-		}
-		if req.MaxCarbs == nil {
-			maxCarbs := 30.0
-			req.MaxCarbs = &maxCarbs
-		}
-
-	case 2: // Prediabetes (Moderate)
-		if req.MaxGlycemicLoad == nil {
-			maxGL := 15.0
-			req.MaxGlycemicLoad = &maxGL
-		}
-		if req.MaxCarbs == nil {
-			maxCarbs := 45.0
-			req.MaxCarbs = &maxCarbs
-		}
-
-	case 3: // Obesity
-		// Focus on calorie density rather than carbs
-		// Keep carbs moderate but not as strict
-		if req.MaxCarbs == nil {
-			maxCarbs := 60.0
-			req.MaxCarbs = &maxCarbs
-		}
-	}
-
-	// 4. Adjust for Acute High Glucose (>180)
-	if latestGlucose.GlucoseValue > 180 {
-		if req.MaxGlycemicLoad != nil {
-			val := *req.MaxGlycemicLoad * 0.7 // Reduce GL limit by 30%
-			req.MaxGlycemicLoad = &val
-		}
-		if req.MaxCarbs != nil {
-			val := *req.MaxCarbs * 0.7 // Reduce Carb limit by 30%
-			req.MaxCarbs = &val
-		}
-	}
-
-	return nil
 }

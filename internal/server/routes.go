@@ -1,3 +1,8 @@
+/*
+Package server implements the HTTP transport layer for the Glupulse platform.
+It manages routing, template rendering, middleware orchestration, and 
+centralized error handling for User, Seller, and Admin domains.
+*/
 package server
 
 import (
@@ -19,22 +24,24 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// TemplateRenderer is a custom html/template renderer for Echo framework
+// TemplateRenderer implements the echo.Renderer interface for HTML template execution.
 type TemplateRenderer struct {
 	templates *template.Template
 }
 
-// Render renders a template document
+// Render executes a specific HTML template by name and writes it to the response stream.
 func (t *TemplateRenderer) Render(w io.Writer, name string, data interface{}, c echo.Context) error {
-	// Use ExecuteTemplate to select the correct template by name
 	return t.templates.ExecuteTemplate(w, name, data)
 }
 
+// RegisterRoutes initializes the Echo router, configures global middlewares, 
+// and defines all public and protected API and web endpoints.
 func (s *Server) RegisterRoutes() http.Handler {
 	e := echo.New()
+
+	// --- Global Middleware ---
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins:     []string{"https://*", "http://*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
@@ -43,14 +50,13 @@ func (s *Server) RegisterRoutes() http.Handler {
 		MaxAge:           300,
 	}))
 
+	// --- Static Assets & Templates ---
 	e.Static("/static", "web/public")
-
-	renderer := &TemplateRenderer{
+	e.Renderer = &TemplateRenderer{
 		templates: template.Must(template.ParseGlob("web/templates/*.html")),
 	}
-	e.Renderer = renderer
 
-	// Traditional Auth Routes
+	// --- Public Authentication Routes ---
 	e.POST("/signup", auth.SignupHandler)
 	e.POST("/login", auth.LoginHandler)
 	e.POST("/verify-otp", auth.VerifyOTPHandler)
@@ -59,55 +65,39 @@ func (s *Server) RegisterRoutes() http.Handler {
 	e.POST("/password/reset/complete", auth.ResetPasswordHandler)
 	e.GET("/auth/verify-email-change", user.VerifyEmailChangeHandler)
 
-	// Traditional Seller Dedicated Auth Routes
+	// --- Seller Specific Authentication ---
 	e.POST("/auth/seller/signup", auth.SellerSignupHandler)
 	e.POST("/auth/seller/verify-otp", auth.VerifySellerOTPHandler)
 
-	// Traditional Admin Dedicated Auth Routes
+	// --- Admin Specific Authentication ---
 	e.POST("/auth/admin/login", auth.AdminLoginHandler)
 	e.POST("/auth/admin/register", auth.AdminRegisterHandler)
 	e.POST("/auth/admin/logout", auth.AdminLogoutHandler)
 	e.POST("/auth/admin/refresh", auth.AdminRefreshTokenHandler)
 
-	// Seller Web pages routes
+	// --- Public Web Pages (Seller/Account Entry) ---
 	e.GET("/health", s.healthHandler)
-	e.GET("/seller/login", s.renderLoginHandler)                    // Serves the login.html page
-	e.GET("/seller/register", s.renderRegisterHandler)              // Serves the register.html page
-	e.GET("/seller/verify-otp", s.RenderOTPHandler)                 // Serves the otp.html page
-	e.GET("/seller/forgot_password", s.RenderForgotPasswordHandler) // Serves the forgot_password.html page
+	e.GET("/seller/login", s.renderLoginHandler)
+	e.GET("/seller/register", s.renderRegisterHandler)
+	e.GET("/seller/verify-otp", s.RenderOTPHandler)
+	e.GET("/seller/forgot_password", s.RenderForgotPasswordHandler)
 
-	//Admin Web Pages routes
+	// --- Public Web Pages (Admin Entry) ---
 	e.GET("/admin/login", s.renderAdminLoginHandler)
-	e.GET("/admin/dashboard", s.RenderAdminHandler)
-	e.GET("/admin/dashboard", s.RenderAdminHandler)
-	e.GET("/admin/verifications/seller", s.RenderAdminHandler)
-	e.GET("/admin/verifications/menu", s.RenderAdminHandler)
-	e.GET("/admin/list/users", s.RenderAdminHandler)
-	e.GET("/admin/list/sellers", s.RenderAdminHandler)
-	e.GET("/admin/data/foods", s.RenderAdminHandler)
-	e.GET("/admin/data/ai-analytics", s.RenderAdminHandler)
-	e.GET("/admin/security/logs", s.RenderAdminHandler)
-	e.GET("/admin/system/access", s.RenderAdminHandler)
-	e.GET("/admin/system/health", s.RenderAdminHandler)
-	e.GET("/admin/system/settings", s.RenderAdminHandler)
 
-	// Seller Web OAuth routes
+	// --- OAuth & Identity Federation ---
 	e.GET("/auth/:provider", auth.ProviderHandler)
 	e.GET("/auth/:provider/callback", auth.SellerWebGoogleAuthCallbackHandler)
-
-	// Mobile auth route - Android/iOS Google Sign-In
 	e.POST("/auth/mobile/google", auth.MobileGoogleAuthHandler)
-
-	// Refresh token endpoint (both web and mobile)
 	e.POST("/auth/refresh", auth.RefreshHandler)
 
 	e.Use(LoggerMiddleware)
 
-	// Protected routes
+	// --- PROTECTED USER ROUTES ---
 	protected := e.Group("")
 	protected.Use(auth.JwtAuthMiddleware)
 
-	// User's Account & Profile Functions Routes
+	// Account & Profile Management
 	protected.GET("/profile", user.GetUserProfileHandler)
 	protected.PUT("/profile", user.UpdateUserProfileHandler)
 	protected.PUT("/profile/password", user.UpdatePasswordHandler)
@@ -119,18 +109,18 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.GET("user/data", user.GetUserDataAllHandler)
 	protected.GET("/logout", auth.LogoutHandler)
 
-	//User's Addresses Management Functions Routes
+	// Address Management
 	protected.POST("/addresses", user.CreateAddressHandler)
 	protected.GET("/addresses", user.GetAddressesHandler)
 	protected.PUT("/addresses/:address_id", user.UpdateAddressHandler)
 	protected.DELETE("/addresses/:address_id", user.DeleteAddressHandler)
 	protected.POST("/addresses/:address_id/set-default", user.SetDefaultAddressHandler)
 
-	//User Cart & Order Functions Routes
+	// Commerce (Cart & Orders)
 	protected.GET("/cart", user.GetCartHandler)
 	protected.POST("/cart/add", user.AddItemToCartHandler)
 	protected.PUT("/cart/update", user.UpdateCartItemHandler)
-	protected.POST("/cart/remove", user.RemoveItemFromCartHandler) // Use POST to support a body
+	protected.POST("/cart/remove", user.RemoveItemFromCartHandler)
 	protected.POST("/checkout", user.CheckoutHandler)
 	protected.GET("/foods", user.ListAllFoodsHandler)
 	protected.GET("/foods/:seller_id", user.ListPublicSellerMenuHandler)
@@ -140,7 +130,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.POST("/orders/pay", user.SimulatePaymentHandler)
 	protected.POST("/reviews", user.CreateSellerReviewHandler)
 
-	//User Health Data Function Routes
+	// Clinical Health Data
 	protected.GET("/health/profile", user.GetHealthProfileHandler)
 	protected.PUT("/health/profile", user.UpsertHealthProfileHandler)
 	protected.POST("/health/hba1c", user.CreateHBA1CRecordHandler)
@@ -178,7 +168,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.PUT("/health/log/meal/:meallog_id", user.UpdateMealLogHandler)
 	protected.DELETE("/health/log/meal/:meallog_id", user.DeleteMealLogHandler)
 
-	//User Recommendations Functions Routes
+	// AI Orchestration & Feedback
 	protected.POST("/recommendations", user.GetRecommendationsHandler)
 	protected.GET("/recommendations", user.GetRecommendationSessionsHandler)
 	protected.GET("/recommendation/:session_id", user.GetRecommendationSessionDetailHandler)
@@ -191,11 +181,12 @@ func (s *Server) RegisterRoutes() http.Handler {
 	protected.POST("/recommendation/feedback/activity/view/:session_id", user.MarkActivityViewedHandler)
 	protected.POST("/recommendation/feedback/activity/completed/:session_id", user.MarkActivityCompletedHandler)
 
+	// --- PROTECTED SELLER ROUTES ---
 	sellerGroup := e.Group("")
 	sellerGroup.Use(auth.JwtAuthMiddleware)
 	sellerGroup.Use(auth.SellerActionGuard)
 
-	//Seller Protected Web Page
+	// Web Dashboard Pages
 	sellerGroup.GET("/seller/dashboard", s.RenderSellerDashboardHandler)
 	sellerGroup.GET("/seller/orders", s.RenderSellerDashboardHandler)
 	sellerGroup.GET("/seller/menu", s.RenderSellerDashboardHandler)
@@ -203,36 +194,43 @@ func (s *Server) RegisterRoutes() http.Handler {
 	sellerGroup.GET("/seller/store-reviews", s.RenderSellerDashboardHandler)
 	sellerGroup.GET("/seller/store-profile", s.RenderSellerDashboardHandler)
 
-	// Websocket for seller dashboard website client
+	// Real-time Updates & API
 	sellerGroup.GET("/seller/ws", seller.DashboardSocketHandler)
-
-	// Seller Functions Routes
 	sellerGroup.GET("/seller/menus", seller.ListSellerInventoryHandler)
 	sellerGroup.GET("/seller/menu/:food_id", seller.GetFoodDetailHandler)
 	sellerGroup.POST("/seller/menu", seller.CreateFoodHandler)
 	sellerGroup.PUT("/seller/menu/:food_id", seller.UpdateFoodHandler)
 	sellerGroup.DELETE("/seller/menu/:food_id", seller.DeleteFoodHandler)
-
 	sellerGroup.GET("/seller/profile", seller.GetSellerProfileByIDHandler)
 	sellerGroup.GET("/seller/profile/:seller_id", seller.GetPublicSellerProfileHandler)
 	sellerGroup.PUT("/seller/profile", seller.UpdateSellerProfileHandler)
-
 	sellerGroup.GET("/seller/orders/incoming", seller.GetIncomingOrdersHandler)
 	sellerGroup.GET("/seller/orders/active", seller.GetActiveOrdersHandler)
 	sellerGroup.GET("/seller/orders/history", seller.GetOrderHistoryHandler)
 	sellerGroup.PUT("/seller/orders/status/:order_id", seller.UpdateOrderStatusHandler)
-
 	sellerGroup.GET("/seller/stats", seller.GetSellerDashboardStatsHandler)
 	sellerGroup.GET("/seller/stats/chart", seller.GetSellerSalesChartHandler)
-
 	sellerGroup.GET("/seller/reviews", seller.GetSellerReviewsHandler)
 	sellerGroup.POST("/seller/reviews/reply/:review_id", seller.ReplyToReviewHandler)
 
-	// --- ADMIN PROTECTED ROUTES ---
+	// --- PROTECTED ADMIN ROUTES ---
 	adminGroup := e.Group("/admin")
 	adminGroup.Use(auth.AdminJwtAuthMiddleware)
 
-	// SelAdminler Functions Routes
+	// System Management Pages
+	adminGroup.GET("/dashboard", s.RenderAdminHandler)
+	adminGroup.GET("/verifications/seller", s.RenderAdminHandler)
+	adminGroup.GET("/verifications/menu", s.RenderAdminHandler)
+	adminGroup.GET("/list/users", s.RenderAdminHandler)
+	adminGroup.GET("/list/sellers", s.RenderAdminHandler)
+	adminGroup.GET("/data/foods", s.RenderAdminHandler)
+	adminGroup.GET("/data/ai-analytics", s.RenderAdminHandler)
+	adminGroup.GET("/security/logs", s.RenderAdminHandler)
+	adminGroup.GET("/system/access", s.RenderAdminHandler)
+	adminGroup.GET("/system/health", s.RenderAdminHandler)
+	adminGroup.GET("/system/settings", s.RenderAdminHandler)
+
+	// Backend API Endpoints
 	adminGroup.GET("/ws", admin.AdminWebSocketHandler)
 	adminGroup.GET("/dashboard/stats", admin.GetAdminDashboardHandler)
 	adminGroup.PUT("/verify-seller/:seller_id", admin.VerifySellerHandler)
@@ -272,13 +270,13 @@ func (s *Server) RegisterRoutes() http.Handler {
 	return e
 }
 
+// healthHandler provides a diagnostic endpoint returning the database connection status.
 func (s *Server) healthHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, s.db.Health())
 }
 
-// getUserDataFromContext extracts and combines user and Goth raw data from the context.
+// getUserDataFromContext serializes user identity and raw OAuth metadata from the context.
 func getUserDataFromContext(c echo.Context) (map[string]interface{}, error) {
-	// Try to get user from context
 	userInterface := c.Get("user")
 	if userInterface == nil {
 		return nil, fmt.Errorf("user not found in context")
@@ -289,30 +287,21 @@ func getUserDataFromContext(c echo.Context) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("user context has wrong type: %T", userInterface)
 	}
 
-	// Create a map to hold the unmarshalled raw JSON data from OAuth
-	var rawGothData map[string]interface{}
-
-	// Check if raw data exists and try to unmarshal it
+	rawGothData := make(map[string]interface{})
 	if len(user.UserRawData) > 0 {
 		if err := json.Unmarshal(user.UserRawData, &rawGothData); err != nil {
-			log.Info().Msgf("getUserDataFromContext: could not unmarshal raw user data: %v", err)
-			// Continue even if unmarshalling fails - set empty map
-			rawGothData = make(map[string]interface{})
+			log.Warn().Msgf("getUserDataFromContext: failed to parse user metadata: %v", err)
 		}
-	} else {
-		// No raw data (traditional user) - set empty map
-		rawGothData = make(map[string]interface{})
 	}
 
-	// Create a combined response map to send all relevant data
-	response := map[string]interface{}{
+	return map[string]interface{}{
 		"user":     user,
 		"gothData": rawGothData,
-	}
-
-	return response, nil
+	}, nil
 }
 
+// LoggerMiddleware generates a unique Request ID for every transaction and injects 
+// a scoped zerolog instance into the request context.
 func LoggerMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		requestID := c.Request().Header.Get("X-Request-ID")
@@ -323,23 +312,20 @@ func LoggerMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		c.Response().Header().Set("X-Request-ID", requestID)
 
 		logger := log.With().Str("request_id", requestID).Logger()
-
 		c.Set("logger", &logger)
 
 		return next(c)
 	}
 }
 
-/* ====================================================================
-                   		Seller Web Handler
-==================================================================== */
+/* =================================================================================
+                          		SELLER VIEW HANDLERS
+=================================================================================*/
 
-// renderLoginHandler serves the public login.html page.
 func (s *Server) renderLoginHandler(c echo.Context) error {
 	return c.Render(http.StatusOK, "login.html", nil)
 }
 
-// renderRegisterHandler serves the public register.html page.
 func (s *Server) renderRegisterHandler(c echo.Context) error {
 	return c.Render(http.StatusOK, "register.html", nil)
 }
@@ -352,44 +338,37 @@ func (s *Server) RenderForgotPasswordHandler(c echo.Context) error {
 	return c.Render(http.StatusOK, "forgot_password.html", nil)
 }
 
-// RenderSellerDashboardHandler renders the seller dashboard
+// RenderSellerDashboardHandler aggregates merchant identity and profile data for the dashboard UI.
 func (s *Server) RenderSellerDashboardHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	// 1. Get Base User Data (from Token/Context)
-	// This usually returns map[string]interface{} with user details
 	data, err := getUserDataFromContext(c)
 	if err != nil {
-		log.Error().Err(err).Msg("RenderSellerDashboardHandler: User data not found")
+		log.Error().Err(err).Msg("Unauthorized access attempt to seller dashboard")
 		return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
 	}
 
-	// 2. Extract User ID to fetch Seller Profile
 	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
 		return c.Redirect(http.StatusTemporaryRedirect, "/seller/login")
 	}
 
-	// 3. Fetch Seller Profile from DB
 	sellerProfile, err := seller.GetSellerProfile(ctx, userID)
 	if err != nil {
-		// CASE: User is logged in but has NO seller profile yet.
-		log.Info().Msgf("User %s tried to access dashboard but has no shop", userID)
+		log.Info().Msgf("User %s lacks seller profile, redirecting to onboarding", userID)
 		return c.Redirect(http.StatusTemporaryRedirect, "/seller/register")
 	}
 
-	// 4. Inject Seller Data into the Template Payload
 	data["seller"] = sellerProfile
 	data["store_name"] = sellerProfile.StoreName
 	data["verification_status"] = sellerProfile.VerificationStatus
 
-	// 5. Render
 	return c.Render(http.StatusOK, "index.html", data)
 }
 
-/* ====================================================================
-                   		Admin Web Handler
-==================================================================== */
+/* =================================================================================
+                          		ADMIN VIEW HANDLERS
+=================================================================================*/
 
 func (s *Server) renderAdminLoginHandler(c echo.Context) error {
 	return c.Render(http.StatusOK, "admin_login.html", nil)

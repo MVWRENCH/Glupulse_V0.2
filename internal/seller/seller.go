@@ -1,3 +1,7 @@
+/*
+Package seller handles all merchant-facing operations, including inventory management,
+order processing, shop profile updates, and business analytics.
+*/
 package seller
 
 import (
@@ -21,14 +25,18 @@ var (
 	queries *database.Queries
 )
 
-// FoodRequest covers both Create and Update (fields are pointers for optional updates)
+/* =================================================================================
+                           REQUEST & RESPONSE MODELS
+=================================================================================*/
+
+// FoodRequest represents the payload for creating or updating a menu item.
 type FoodRequest struct {
 	FoodName     string   `json:"food_name" validate:"required,min=3"`
 	Description  string   `json:"description"`
 	Price        float64  `json:"price" validate:"required,min=0"`
 	Currency     string   `json:"currency" validate:"required,len=3"`
 	PhotoURL     string   `json:"photo_url"`
-	ThumbnailURL string   `json:"thumbnail_url"` // Added based on SQL
+	ThumbnailURL string   `json:"thumbnail_url"`
 	IsAvailable  *bool    `json:"is_available"`
 	StockCount   *int32   `json:"stock_count"`
 	Tags         []string `json:"tags"`
@@ -37,7 +45,7 @@ type FoodRequest struct {
 	// Nutrition Data
 	ServingSize             string  `json:"serving_size"`
 	ServingSizeGrams        float64 `json:"serving_size_grams"`
-	Quantity                float64 `json:"quantity"` // Usually 1 serving
+	Quantity                float64 `json:"quantity"`
 	Calories                int32   `json:"calories"`
 	CarbsGrams              float64 `json:"carbs_grams"`
 	FiberGrams              float64 `json:"fiber_grams"`
@@ -47,18 +55,20 @@ type FoodRequest struct {
 	SodiumMg                float64 `json:"sodium_mg"`
 	GlycemicIndex           int32   `json:"glycemic_index"`
 	GlycemicLoad            float64 `json:"glycemic_load"`
-	SaturatedFatGrams       float64 `json:"saturated_fat_grams"`       // Added
-	MonounsaturatedFatGrams float64 `json:"monounsaturated_fat_grams"` // Added
-	PolyunsaturatedFatGrams float64 `json:"polyunsaturated_fat_grams"` // Added
-	CholesterolMg           float64 `json:"cholesterol_mg"`            // Added
+	SaturatedFatGrams       float64 `json:"saturated_fat_grams"`
+	MonounsaturatedFatGrams float64 `json:"monounsaturated_fat_grams"`
+	PolyunsaturatedFatGrams float64 `json:"polyunsaturated_fat_grams"`
+	CholesterolMg           float64 `json:"cholesterol_mg"`
 }
 
+// OrderItem represents a single line item within a customer's order.
 type OrderItem struct {
 	FoodName string  `json:"food_name"`
 	Quantity int     `json:"quantity"`
 	Price    float64 `json:"price"`
 }
 
+// SellerOrderResponse provides a detailed view of an order for the seller dashboard.
 type SellerOrderResponse struct {
 	OrderID         string          `json:"order_id"`
 	CustomerName    string          `json:"customer_name"`
@@ -69,11 +79,13 @@ type SellerOrderResponse struct {
 	Items           []OrderItem     `json:"items"`
 }
 
+// UpdateStatusRequest defines the payload for changing an order's fulfillment state.
 type UpdateStatusRequest struct {
 	Status      string `json:"status" validate:"required,oneof=confirmed processing shipping ready_for_pickup completed cancelled rejected"`
 	SellerNotes string `json:"seller_notes"`
 }
 
+// DashboardStatsResponse provides summary metrics for the merchant dashboard.
 type DashboardStatsResponse struct {
 	TotalRevenue      float64   `json:"total_revenue"`
 	TotalOrders       int64     `json:"total_orders"`
@@ -81,19 +93,21 @@ type DashboardStatsResponse struct {
 	TopItems          []TopItem `json:"top_items"`
 }
 
+// TopItem represents a best-selling menu item over a specific period.
 type TopItem struct {
 	FoodName     string  `json:"food_name"`
 	TotalSold    int64   `json:"total_sold"`
 	TotalRevenue float64 `json:"total_revenue"`
 }
 
+// ChartDataPoint represents a single day's performance for sales graphing.
 type ChartDataPoint struct {
 	Date    string  `json:"date"`
 	Revenue float64 `json:"revenue"`
 	Orders  int64   `json:"orders"`
 }
 
-// SellerProfileResponse is the JSON-friendly version of the database struct
+// SellerProfileResponse contains full details about a merchant's store and ownership.
 type SellerProfileResponse struct {
 	SellerID           uuid.UUID       `json:"seller_id"`
 	UserID             string          `json:"user_id"`
@@ -128,116 +142,112 @@ type SellerProfileResponse struct {
 	SuspensionReason   string          `json:"suspension_reason"`
 }
 
+// UpdateSellerProfileRequest allows partial updates to the merchant's store details.
 type UpdateSellerProfileRequest struct {
 	StoreName        *string         `json:"store_name"`
 	StoreDescription *string         `json:"store_description"`
 	StorePhoneNumber *string         `json:"store_phone_number"`
-	BusinessHours    json.RawMessage `json:"business_hours"` // Pass JSON object directly
+	BusinessHours    json.RawMessage `json:"business_hours"`
 	IsOpen           *bool           `json:"is_open"`
 	IsActive         *bool           `json:"is_active"`
-
-	AddressLine1 *string `json:"address_line1"`
-	AddressLine2 *string `json:"address_line2"`
-	District     *string `json:"district"`
-	City         *string `json:"city"`
-	Province     *string `json:"province"`
-	PostalCode   *string `json:"postal_code"`
-
-	Latitude  *float64 `json:"latitude"`
-	Longitude *float64 `json:"longitude"`
-
-	StoreEmail  *string  `json:"store_email" validate:"omitempty,email"`
-	CuisineType []string `json:"cuisine_type"` // e.g. ["Indonesian", "Spicy"]
-	PriceRange  *int32   `json:"price_range"`
-
-	LogoUrl   *string `json:"logo_url"`
-	BannerUrl *string `json:"banner_url"`
+	AddressLine1     *string         `json:"address_line1"`
+	AddressLine2     *string         `json:"address_line2"`
+	District         *string         `json:"district"`
+	City             *string         `json:"city"`
+	Province         *string         `json:"province"`
+	PostalCode       *string         `json:"postal_code"`
+	Latitude         *float64        `json:"latitude"`
+	Longitude        *float64        `json:"longitude"`
+	StoreEmail       *string         `json:"store_email" validate:"omitempty,email"`
+	CuisineType      []string        `json:"cuisine_type"`
+	PriceRange       *int32          `json:"price_range"`
+	LogoUrl          *string         `json:"logo_url"`
+	BannerUrl        *string         `json:"banner_url"`
 }
 
+// ReplyReviewRequest contains the text for a merchant's response to a customer review.
 type ReplyReviewRequest struct {
 	ReplyText string `json:"reply_text" validate:"required"`
 }
 
-// WebSocket Handler
-func DashboardSocketHandler(c echo.Context) error {
-	// 1. Authenticate user to get Seller ID
-	ctx := c.Request().Context()
-	sellerIDUuid, err := getSellerID(c, ctx) // Your existing helper
-	if err != nil {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
-	}
-	sellerID := utility.UuidToString(sellerIDUuid)
+/* =================================================================================
+                    	PACKAGE INITIALIZATION & HELPERS
+=================================================================================*/
 
-	// 2. Upgrade HTTP to WebSocket
-	ws, err := utility.Upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
-	defer ws.Close()
-
-	// 3. Register Client
-	utility.RegisterSellerClient(sellerID, ws)
-	defer utility.UnregisterSellerClient(sellerID)
-
-	// 4. Keep connection alive (Read Loop)
-	// We don't expect messages FROM the client, but we must read to keep socket open
-	for {
-		_, _, err := ws.ReadMessage()
-		if err != nil {
-			break // Break loop on error/disconnect
-		}
-	}
-	return nil
-}
-
-// InitUserPackage is called by the server package to initialize the database connection
+// InitSellerPackage injects the database connection pool into the package queries.
 func InitSellerPackage(dbpool *pgxpool.Pool) {
 	queries = database.New(dbpool)
 	log.Info().Msg("Seller package initialized with database queries.")
 }
 
-// Helper: Get SellerID from UserID context
+// getSellerID retrieves the Seller UUID associated with the authenticated user in the context.
 func getSellerID(c echo.Context, ctx context.Context) (pgtype.UUID, error) {
 	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	// Fetch Seller ID associated with this user
 	return queries.GetSellerIDByUserID(ctx, userID)
 }
 
+// GetSellerProfile retrieves the core profile data for a specific user ID.
 func GetSellerProfile(ctx context.Context, userID string) (database.SellerProfile, error) {
-	// queries is the global variable in this package
 	return queries.GetSellerProfileByUserID(ctx, userID)
 }
 
-// CreateFoodHandler
+// DashboardSocketHandler upgrades the HTTP connection to a WebSocket for real-time dashboard updates.
+func DashboardSocketHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	sellerIDUuid, err := getSellerID(c, ctx)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+	sellerID := utility.UuidToString(sellerIDUuid)
+
+	ws, err := utility.Upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to upgrade WebSocket for seller")
+		return err
+	}
+	defer ws.Close()
+
+	utility.RegisterSellerClient(sellerID, ws)
+	defer utility.UnregisterSellerClient(sellerID)
+
+	for {
+		if _, _, err := ws.ReadMessage(); err != nil {
+			break
+		}
+	}
+	return nil
+}
+
+/* =================================================================================
+                          		INVENTORY HANDLERS
+=================================================================================*/
+
+// CreateFoodHandler registers a new food item in the seller's catalog.
 func CreateFoodHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Resolve Seller ID
 	sellerID, err := getSellerID(c, ctx)
 	if err != nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "You do not have a registered shop"})
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "No registered shop found"})
 	}
 
-	// 2. Bind Request
 	var req FoodRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	// 3. Defaults
+	// Default availability and stock logic
 	isAvailable := true
 	if req.IsAvailable != nil {
 		isAvailable = *req.IsAvailable
 	}
-	stock := int32(-1) // Infinite
+	stock := int32(-1)
 	if req.StockCount != nil {
 		stock = *req.StockCount
 	}
 
-	// 4. Create
 	food, err := queries.CreateFood(ctx, database.CreateFoodParams{
 		SellerID:                sellerID,
 		FoodName:                req.FoodName,
@@ -269,39 +279,29 @@ func CreateFoodHandler(c echo.Context) error {
 	})
 
 	if err != nil {
+		log.Error().Err(err).Msg("Database error in CreateFood")
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create food item"})
 	}
 
 	return c.JSON(http.StatusCreated, food)
 }
 
+// ListSellerInventoryHandler returns a paginated list of all menu items belonging to the seller.
 func ListSellerInventoryHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Get Seller ID from Auth Context (Token)
-	// Using your existing helper function
 	sellerID, err := getSellerID(c, ctx)
 	if err != nil {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "Seller profile not found"})
 	}
 
-	// 2. Pagination
-	limit := 20
-	offset := 0
-	if l := c.QueryParam("limit"); l != "" {
-		if val, err := strconv.Atoi(l); err == nil {
-			limit = val
-		}
+	limit, _ := strconv.Atoi(c.QueryParam("limit"))
+	if limit <= 0 {
+		limit = 20
 	}
-	if o := c.QueryParam("offset"); o != "" {
-		if val, err := strconv.Atoi(o); err == nil {
-			offset = val
-		}
-	}
+	offset, _ := strconv.Atoi(c.QueryParam("offset"))
 
-	// 3. Query: GetSellerInventory (Shows unapproved/pending items too)
 	foods, err := queries.GetSellerInventory(ctx, database.GetSellerInventoryParams{
-		SellerID: sellerID, // This is already pgtype.UUID from your helper
+		SellerID: sellerID,
 		Limit:    int32(limit),
 		Offset:   int32(offset),
 	})
@@ -317,12 +317,10 @@ func ListSellerInventoryHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, foods)
 }
 
-// GetFoodDetailHandler (Get Single)
+// GetFoodDetailHandler retrieves full details and nutritional info for a specific food ID.
 func GetFoodDetailHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-	id := c.Param("food_id")
-
-	foodUUID, err := uuid.Parse(id)
+	foodUUID, err := uuid.Parse(c.Param("food_id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid food ID"})
 	}
@@ -335,7 +333,7 @@ func GetFoodDetailHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, food)
 }
 
-// UpdateFoodHandler (Partial Update)
+// UpdateFoodHandler performs a comprehensive update of a menu item's attributes.
 func UpdateFoodHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 	sellerID, err := getSellerID(c, ctx)
@@ -343,8 +341,7 @@ func UpdateFoodHandler(c echo.Context) error {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
 	}
 
-	id := c.Param("food_id")
-	foodUUID, err := uuid.Parse(id)
+	foodUUID, err := uuid.Parse(c.Param("food_id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid food ID"})
 	}
@@ -354,26 +351,13 @@ func UpdateFoodHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 	}
 
-	// Construct parameters for SQLC's UpdateFood
-	// Note: We use pgtype conversion functions. If a value is 0 or empty string in 'req',
-	// the conversion helper (FloatToNumeric/StringToText) handles it.
-	// For nullable updates (COALESCE logic in SQL), we rely on sqlc.Narg which maps to pgtype.*
-	// However, standard helpers return pgtype.Numeric{Valid: true} even for 0.
-	// To truly support "partial updates" where we ignore missing fields, the helpers need to handle nil pointers
-	// or we accept defaults. Assuming the Frontend sends the FULL object for updates is safer here,
-	// OR we rely on the fact that your helper returns Valid=false for empty inputs if designed that way.
-
-	// Assuming utility.FloatToNumeric returns Valid=true for 0.0, this will overwrite DB with 0.
-	// If you want true PATCH behavior (ignore missing fields), 'req' fields should be pointers.
-	// For simplicity with this struct, we update all provided fields.
-
 	params := database.UpdateFoodParams{
 		FoodID:                  pgtype.UUID{Bytes: foodUUID, Valid: true},
 		SellerID:                sellerID,
 		FoodName:                utility.StringToText(req.FoodName),
 		Description:             utility.StringToText(req.Description),
 		Price:                   utility.FloatToNumeric(req.Price),
-		Currency:                utility.StringToText(req.Currency), // SQL uses text/varchar
+		Currency:                utility.StringToText(req.Currency),
 		PhotoUrl:                utility.StringToText(req.PhotoURL),
 		ThumbnailUrl:            utility.StringToText(req.ThumbnailURL),
 		Tags:                    req.Tags,
@@ -381,7 +365,7 @@ func UpdateFoodHandler(c echo.Context) error {
 		ServingSize:             utility.StringToText(req.ServingSize),
 		ServingSizeGrams:        utility.FloatToNumeric(req.ServingSizeGrams),
 		Quantity:                utility.FloatToNumeric(req.Quantity),
-		Calories:                pgtype.Int4{Int32: req.Calories, Valid: true}, // Update to 0 is allowed if passed
+		Calories:                pgtype.Int4{Int32: req.Calories, Valid: true},
 		CarbsGrams:              utility.FloatToNumeric(req.CarbsGrams),
 		FiberGrams:              utility.FloatToNumeric(req.FiberGrams),
 		ProteinGrams:            utility.FloatToNumeric(req.ProteinGrams),
@@ -396,7 +380,6 @@ func UpdateFoodHandler(c echo.Context) error {
 		CholesterolMg:           utility.FloatToNumeric(req.CholesterolMg),
 	}
 
-	// Handle Boolean & Int pointers explicitly
 	if req.IsAvailable != nil {
 		params.IsAvailable = pgtype.Bool{Bool: *req.IsAvailable, Valid: true}
 	}
@@ -406,13 +389,13 @@ func UpdateFoodHandler(c echo.Context) error {
 
 	updatedFood, err := queries.UpdateFood(ctx, params)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update food. Ensure ID is correct and you own this item."})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update food item"})
 	}
 
 	return c.JSON(http.StatusOK, updatedFood)
 }
 
-// DeleteFoodHandler (Soft Delete via is_active = false)
+// DeleteFoodHandler performs a soft delete on a menu item by setting is_active to false.
 func DeleteFoodHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 	sellerID, err := getSellerID(c, ctx)
@@ -420,13 +403,11 @@ func DeleteFoodHandler(c echo.Context) error {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
 	}
 
-	id := c.Param("food_id")
-	foodUUID, err := uuid.Parse(id)
+	foodUUID, err := uuid.Parse(c.Param("food_id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid food ID"})
 	}
 
-	// Using the new Soft Delete query logic
 	err = queries.DeleteFood(ctx, database.DeleteFoodParams{
 		FoodID:   pgtype.UUID{Bytes: foodUUID, Valid: true},
 		SellerID: sellerID,
@@ -438,488 +419,50 @@ func DeleteFoodHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "Food item deleted successfully"})
 }
 
-// GetSellerProfileByIDHandler retrieves the logged-in user's seller profile
+/* =================================================================================
+                          		PROFILE HANDLERS
+=================================================================================*/
+
+// GetSellerProfileByIDHandler retrieves the detailed profile of the logged-in merchant.
 func GetSellerProfileByIDHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Get User ID
 	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 	}
 
-	// 2. Resolve Seller ID
 	sellerID, err := queries.GetSellerIDByUserID(ctx, userID)
 	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "No shop associated with this account"})
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "No shop associated with account"})
 	}
 
-	// 3. Fetch Full Profile
 	dbProfile, err := queries.GetSellerByID(ctx, sellerID)
 	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "Seller profile details not found"})
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Profile details not found"})
 	}
 
-	// 4. Map DB Struct to Response Struct
-	response := SellerProfileResponse{
-		SellerID: dbProfile.SellerID.Bytes,
-		UserID:   dbProfile.UserID,
-
-		// DIRECT ASSIGNMENT (For NOT NULL columns)
-		StoreName:          dbProfile.StoreName,
-		StoreSlug:          dbProfile.StoreSlug,
-		IsOpen:             dbProfile.IsOpen,
-		IsActive:           dbProfile.IsActive.Bool,
-		VerificationStatus: string(dbProfile.VerificationStatus),
-		AdminStatus:        string(dbProfile.AdminStatus.SellerAdminStatus),
-		SuspensionReason:   dbProfile.SuspensionReason.String,
-
-		// JSON RAW MESSAGE (Fixes Base64 issue)
-		BusinessHours: json.RawMessage(dbProfile.BusinessHours),
-
-		// UTILITY HELPERS (Only for NULLABLE columns)
-		// If these throw errors too, remove the utility wrapper and assign directly
-		StoreDescription: utility.TextToString(dbProfile.StoreDescription),
-		StorePhoneNumber: utility.TextToString(dbProfile.StorePhoneNumber),
-		AddressLine1:     utility.TextToString(dbProfile.AddressLine1),
-		AddressLine2:     utility.TextToString(dbProfile.AddressLine2),
-		District:         utility.TextToString(dbProfile.District),
-		City:             utility.TextToString(dbProfile.City),
-		Province:         utility.TextToString(dbProfile.Province),
-		PostalCode:       utility.TextToString(dbProfile.PostalCode),
-		StoreEmail:       utility.TextToString(dbProfile.StoreEmail),
-
-		// Numeric handling (Keep utility if it's pgtype.Numeric, or cast if float64)
-		Latitude:      utility.NumericToFloat(dbProfile.Latitude),
-		Longitude:     utility.NumericToFloat(dbProfile.Longitude),
-		AverageRating: utility.NumericToFloat(dbProfile.AverageRating),
-
-		// Arrays and Ints
-		CuisineType: dbProfile.CuisineType,
-		PriceRange:  dbProfile.PriceRange.Int32,
-		ReviewCount: dbProfile.ReviewCount.Int32,
-
-		LogoUrl:   nil,
-		BannerUrl: nil,
-
-		OwnerFirstName: utility.TextToString(dbProfile.UserFirstname),
-		OwnerLastName:  utility.TextToString(dbProfile.UserLastname),
-		OwnerEmail:     utility.TextToString(dbProfile.UserEmail),
-	}
-
-	// Handle Nullable Images
-	if dbProfile.LogoUrl.Valid {
-		s := dbProfile.LogoUrl.String
-		response.LogoUrl = &s
-	}
-	if dbProfile.BannerUrl.Valid {
-		s := dbProfile.BannerUrl.String
-		response.BannerUrl = &s
-	}
-
-	return c.JSON(http.StatusOK, response)
+	return c.JSON(http.StatusOK, mapSellerProfileToResponse(dbProfile))
 }
 
-// GetPublicSellerProfileHandler retrieves a seller profile by ID passed in the URL.
+// GetPublicSellerProfileHandler retrieves a seller's profile by their public UUID for storefront display.
 func GetPublicSellerProfileHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Get 'seller_id' from the URL parameter (e.g., /sellers/:seller_id)
-	id := c.Param("seller_id")
-
-	// 2. Validate UUID format
-	sellerUUID, err := uuid.Parse(id)
+	sellerUUID, err := uuid.Parse(c.Param("seller_id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid seller ID format"})
 	}
 
-	// 3. Fetch Profile directly
 	dbProfile, err := queries.GetSellerByID(ctx, pgtype.UUID{Bytes: sellerUUID, Valid: true})
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Seller not found"})
 	}
 
-	// 4. Map DB Struct to Response Struct
-	response := SellerProfileResponse{
-		SellerID: dbProfile.SellerID.Bytes,
-		UserID:   dbProfile.UserID,
-
-		// DIRECT ASSIGNMENT (For NOT NULL columns)
-		StoreName:          dbProfile.StoreName,
-		StoreSlug:          dbProfile.StoreSlug,
-		IsOpen:             dbProfile.IsOpen,
-		IsActive:           dbProfile.IsActive.Bool,
-		VerificationStatus: string(dbProfile.VerificationStatus),
-
-		// JSON RAW MESSAGE (Fixes Base64 issue)
-		BusinessHours: json.RawMessage(dbProfile.BusinessHours),
-
-		// UTILITY HELPERS (Only for NULLABLE columns)
-		// If these throw errors too, remove the utility wrapper and assign directly
-		StoreDescription: utility.TextToString(dbProfile.StoreDescription),
-		StorePhoneNumber: utility.TextToString(dbProfile.StorePhoneNumber),
-		AddressLine1:     utility.TextToString(dbProfile.AddressLine1),
-		AddressLine2:     utility.TextToString(dbProfile.AddressLine2),
-		District:         utility.TextToString(dbProfile.District),
-		City:             utility.TextToString(dbProfile.City),
-		Province:         utility.TextToString(dbProfile.Province),
-		PostalCode:       utility.TextToString(dbProfile.PostalCode),
-		StoreEmail:       utility.TextToString(dbProfile.StoreEmail),
-
-		// Numeric handling (Keep utility if it's pgtype.Numeric, or cast if float64)
-		Latitude:      utility.NumericToFloat(dbProfile.Latitude),
-		Longitude:     utility.NumericToFloat(dbProfile.Longitude),
-		AverageRating: utility.NumericToFloat(dbProfile.AverageRating),
-
-		// Arrays and Ints
-		CuisineType: dbProfile.CuisineType,
-		PriceRange:  dbProfile.PriceRange.Int32,
-		ReviewCount: dbProfile.ReviewCount.Int32,
-
-		LogoUrl:   nil,
-		BannerUrl: nil,
-
-		OwnerFirstName: utility.TextToString(dbProfile.UserFirstname),
-		OwnerLastName:  utility.TextToString(dbProfile.UserLastname),
-		OwnerEmail:     utility.TextToString(dbProfile.UserEmail),
-	}
-
-	// Handle Nullable Images
-	if dbProfile.LogoUrl.Valid {
-		s := dbProfile.LogoUrl.String
-		response.LogoUrl = &s
-	}
-	if dbProfile.BannerUrl.Valid {
-		s := dbProfile.BannerUrl.String
-		response.BannerUrl = &s
-	}
-
-	return c.JSON(http.StatusOK, response)
+	return c.JSON(http.StatusOK, mapSellerProfileToResponse(dbProfile))
 }
 
-// GetIncomingOrdersHandler (Pending orders needing acceptance)
-func GetIncomingOrdersHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	sellerID, err := getSellerID(c, ctx) // Reuse your helper
-	if err != nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
-	}
-
-	rows, err := queries.GetSellerIncomingOrders(ctx, sellerID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch orders"})
-	}
-
-	resp := mapOrdersToResponse(rows)
-	return c.JSON(http.StatusOK, resp)
-}
-
-// GetActiveOrdersHandler (In-Kitchen / Shipping)
-func GetActiveOrdersHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	sellerID, err := getSellerID(c, ctx)
-	if err != nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
-	}
-
-	rows, err := queries.GetSellerActiveOrders(ctx, sellerID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch orders"})
-	}
-
-	resp := mapActiveOrdersToResponse(rows)
-	return c.JSON(http.StatusOK, resp)
-}
-
-// GetOrderHistoryHandler (Past orders)
-func GetOrderHistoryHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	sellerID, err := getSellerID(c, ctx)
-	if err != nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
-	}
-
-	limit := 20
-	offset := 0
-	if l := c.QueryParam("limit"); l != "" {
-		if val, err := strconv.Atoi(l); err == nil {
-			limit = val
-		}
-	}
-	if o := c.QueryParam("offset"); o != "" {
-		if val, err := strconv.Atoi(o); err == nil {
-			offset = val
-		}
-	}
-
-	rows, err := queries.GetSellerOrderHistory(ctx, database.GetSellerOrderHistoryParams{
-		SellerID: sellerID,
-		Limit:    int32(limit),
-		Offset:   int32(offset),
-	})
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch history"})
-	}
-
-	// Manual mapping because History row structure is slightly different in SQL (less fields)
-	resp := make([]SellerOrderResponse, 0)
-	for _, row := range rows {
-		var items []OrderItem
-		if len(row.Items) > 0 {
-			_ = json.Unmarshal(row.Items, &items)
-		}
-
-		// Combine First and Last Name
-		firstName := utility.TextToString(row.UserFirstname)
-		lastName := utility.TextToString(row.UserLastname)
-		fullName := strings.TrimSpace(firstName + " " + lastName)
-
-		resp = append(resp, SellerOrderResponse{
-			OrderID:      utility.UuidToString(row.OrderID),
-			CustomerName: fullName,
-			TotalPrice:   utility.NumericToFloat(row.TotalPrice),
-			Status:       row.Status,
-			CreatedAt:    row.CreatedAt.Time,
-			Items:        items,
-		})
-	}
-	if resp == nil {
-		resp = []SellerOrderResponse{}
-	}
-
-	return c.JSON(http.StatusOK, resp)
-}
-
-// UpdateOrderStatusHandler (Move order to next stage)
-func UpdateOrderStatusHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	sellerID, err := getSellerID(c, ctx)
-	if err != nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
-	}
-
-	id := c.Param("order_id")
-	orderUUID, err := uuid.Parse(id)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid order ID"})
-	}
-
-	var req UpdateStatusRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
-	}
-
-	sellerNotesParams := pgtype.Text{Valid: false}
-	if req.SellerNotes != "" {
-		sellerNotesParams = pgtype.Text{String: req.SellerNotes, Valid: true}
-	}
-
-	// Execute Update
-	err = queries.UpdateOrderStatus(ctx, database.UpdateOrderStatusParams{
-		Status:      req.Status,
-		SellerNotes: sellerNotesParams,
-		OrderID:     pgtype.UUID{Bytes: orderUUID, Valid: true},
-		SellerID:    sellerID,
-	})
-
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update status"})
-	}
-
-	// Get the seller ID string
-	sID := utility.UuidToString(sellerID)
-
-	go utility.TriggerSellerUpdate(sID)
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"message": "Order status updated to " + req.Status,
-	})
-}
-
-// --- Helpers for Mapping SQL Rows to JSON Structs ---
-
-func mapOrdersToResponse(rows []database.GetSellerIncomingOrdersRow) []SellerOrderResponse {
-	resp := make([]SellerOrderResponse, 0)
-	for _, row := range rows {
-		var items []OrderItem
-		if len(row.Items) > 0 {
-			_ = json.Unmarshal(row.Items, &items)
-		}
-
-		// Combine First and Last Name
-		firstName := utility.TextToString(row.UserFirstname)
-		lastName := utility.TextToString(row.UserLastname)
-		fullName := strings.TrimSpace(firstName + " " + lastName)
-
-		resp = append(resp, SellerOrderResponse{
-			OrderID:         utility.UuidToString(row.OrderID),
-			CustomerName:    fullName,
-			TotalPrice:      utility.NumericToFloat(row.TotalPrice),
-			Status:          row.Status,
-			DeliveryAddress: row.DeliveryAddressJson,
-			CreatedAt:       row.CreatedAt.Time,
-			Items:           items,
-		})
-	}
-	if resp == nil {
-		return []SellerOrderResponse{}
-	}
-	return resp
-}
-
-func mapActiveOrdersToResponse(rows []database.GetSellerActiveOrdersRow) []SellerOrderResponse {
-	resp := make([]SellerOrderResponse, 0)
-	for _, row := range rows {
-		var items []OrderItem
-		if len(row.Items) > 0 {
-			_ = json.Unmarshal(row.Items, &items)
-		}
-
-		// Combine First and Last Name
-		firstName := utility.TextToString(row.UserFirstname)
-		lastName := utility.TextToString(row.UserLastname)
-		fullName := strings.TrimSpace(firstName + " " + lastName)
-
-		resp = append(resp, SellerOrderResponse{
-			OrderID:         utility.UuidToString(row.OrderID),
-			CustomerName:    fullName,
-			TotalPrice:      utility.NumericToFloat(row.TotalPrice),
-			Status:          row.Status,
-			DeliveryAddress: row.DeliveryAddressJson,
-			CreatedAt:       row.CreatedAt.Time,
-			Items:           items,
-		})
-	}
-	if resp == nil {
-		return []SellerOrderResponse{}
-	}
-	return resp
-}
-
-// GetSellerDashboardStatsHandler returns summary cards + top items
-func GetSellerDashboardStatsHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	sellerID, err := getSellerID(c, ctx)
-	if err != nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
-	}
-
-	// 1. Determine Date Range (Default: Last 30 Days)
-	startDate := time.Now().AddDate(0, 0, -30)
-	endDate := time.Now()
-
-	if s := c.QueryParam("start"); s != "" {
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			startDate = t
-		}
-	}
-	if e := c.QueryParam("end"); e != "" {
-		if t, err := time.Parse("2006-01-02", e); err == nil {
-			// FIX: Set time to 23:59:59 to include the whole day
-			endDate = t.Add(time.Hour*23 + time.Minute*59 + time.Second*59)
-		}
-	}
-
-	// Convert to pgtype
-	pgStart := pgtype.Timestamptz{Time: startDate, Valid: true}
-	pgEnd := pgtype.Timestamptz{Time: endDate, Valid: true}
-
-	// 2. Get Summary Stats
-	summary, err := queries.GetSellerSummaryStats(ctx, database.GetSellerSummaryStatsParams{
-		SellerID:    sellerID,
-		CreatedAt:   pgStart,
-		CreatedAt_2: pgEnd,
-	})
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch summary"})
-	}
-
-	// 3. Get Top Items
-	topItemsRows, err := queries.GetSellerTopItems(ctx, database.GetSellerTopItemsParams{
-		SellerID:    sellerID,
-		CreatedAt:   pgStart,
-		CreatedAt_2: pgEnd,
-	})
-	if err != nil {
-		// Log error but continue with empty items
-		topItemsRows = []database.GetSellerTopItemsRow{}
-	}
-
-	// Map Top Items
-	topItems := make([]TopItem, 0)
-	for _, row := range topItemsRows {
-		topItems = append(topItems, TopItem{
-			FoodName:     row.FoodNameSnapshot,
-			TotalSold:    row.TotalSold,
-			TotalRevenue: utility.NumericToFloat(row.TotalRevenue),
-		})
-	}
-
-	// 4. Construct Response
-	resp := DashboardStatsResponse{
-		TotalRevenue:      utility.NumericToFloat(summary.TotalRevenue),
-		TotalOrders:       summary.TotalOrders,
-		AverageOrderValue: utility.NumericToFloat(summary.AverageOrderValue),
-		TopItems:          topItems,
-	}
-
-	return c.JSON(http.StatusOK, resp)
-}
-
-// GetSellerSalesChartHandler returns daily data for graphing
-func GetSellerSalesChartHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	sellerID, err := getSellerID(c, ctx)
-	if err != nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
-	}
-
-	// Default: Last 7 Days for Charts
-	startDate := time.Now().AddDate(0, 0, -30)
-	endDate := time.Now()
-
-	if s := c.QueryParam("start"); s != "" {
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			startDate = t
-		}
-	}
-	if e := c.QueryParam("end"); e != "" {
-		if t, err := time.Parse("2006-01-02", e); err == nil {
-			// FIX: Set time to 23:59:59 to include the whole day
-			endDate = t.Add(time.Hour*23 + time.Minute*59 + time.Second*59)
-		}
-	}
-
-	rows, err := queries.GetSellerDailySales(ctx, database.GetSellerDailySalesParams{
-		SellerID:    sellerID,
-		CreatedAt:   pgtype.Timestamptz{Time: startDate, Valid: true},
-		CreatedAt_2: pgtype.Timestamptz{Time: endDate, Valid: true},
-	})
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch chart data"})
-	}
-
-	// Map to simple JSON
-	chartData := make([]ChartDataPoint, 0)
-	for _, row := range rows {
-		chartData = append(chartData, ChartDataPoint{
-			Date:    row.SaleDate,
-			Revenue: utility.NumericToFloat(row.DailyRevenue),
-			Orders:  row.DailyOrders,
-		})
-	}
-	if chartData == nil {
-		chartData = []ChartDataPoint{}
-	}
-
-	return c.JSON(http.StatusOK, chartData)
-}
-
-// UpdateSellerProfileHandler updates the logged-in seller's store details
+// UpdateSellerProfileHandler modifies specific store attributes for the authenticated merchant.
 func UpdateSellerProfileHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Authorization: Get Seller ID via User Token
 	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
@@ -930,17 +473,13 @@ func UpdateSellerProfileHandler(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Seller profile not found"})
 	}
 
-	// 2. Bind Request
 	var req UpdateSellerProfileRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON format"})
 	}
 
-	// 3. Prepare SQL Parameters
 	params := database.UpdateSellerProfileParams{
-		SellerID: sellerID,
-
-		// Text Fields (using utility helper)
+		SellerID:         sellerID,
 		StoreName:        utility.StringToTextNullable(req.StoreName),
 		StoreDescription: utility.StringToTextNullable(req.StoreDescription),
 		StorePhoneNumber: utility.StringToTextNullable(req.StorePhoneNumber),
@@ -953,91 +492,285 @@ func UpdateSellerProfileHandler(c echo.Context) error {
 		PostalCode:       utility.StringToTextNullable(req.PostalCode),
 		LogoUrl:          utility.StringToTextNullable(req.LogoUrl),
 		BannerUrl:        utility.StringToTextNullable(req.BannerUrl),
-
-		// Array
-		CuisineType: req.CuisineType, // SQLC handles []string -> text[] automatically if not nil
-
-		// JSONB (Business Hours)
-		BusinessHours: req.BusinessHours, // Passes raw bytes
+		CuisineType:      req.CuisineType,
+		BusinessHours:    req.BusinessHours,
 	}
 
-	// Manual Handling for Numerics & Bools (Pointers -> pgtype)
-
-	// Latitude
 	if req.Latitude != nil {
 		params.Latitude = utility.FloatToNumeric(*req.Latitude)
-	} else {
-		params.Latitude = pgtype.Numeric{Valid: false}
 	}
-
 	if req.Longitude != nil {
 		params.Longitude = utility.FloatToNumeric(*req.Longitude)
-	} else {
-		params.Longitude = pgtype.Numeric{Valid: false}
 	}
-
-	// Price Range (Int)
 	if req.PriceRange != nil {
 		params.PriceRange = pgtype.Int4{Int32: *req.PriceRange, Valid: true}
-	} else {
-		params.PriceRange = pgtype.Int4{Valid: false}
 	}
-
-	// Booleans
 	if req.IsOpen != nil {
 		params.IsOpen = pgtype.Bool{Bool: *req.IsOpen, Valid: true}
-	} else {
-		params.IsOpen = pgtype.Bool{Valid: false}
 	}
-
 	if req.IsActive != nil {
 		params.IsActive = pgtype.Bool{Bool: *req.IsActive, Valid: true}
-	} else {
-		params.IsActive = pgtype.Bool{Valid: false}
 	}
 
-	// 4. Execute
-	updatedProfile, err := queries.UpdateSellerProfile(ctx, params)
+	updated, err := queries.UpdateSellerProfile(ctx, params)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update profile"})
 	}
 
-	sID := utility.UuidToString(sellerID)
+	go utility.TriggerSellerUpdate(utility.UuidToString(sellerID))
 
-	go utility.TriggerSellerUpdate(sID)
-
-	return c.JSON(http.StatusOK, map[string]string{"message": "Store profile updated successfully", "store_name": updatedProfile.StoreName})
+	return c.JSON(http.StatusOK, map[string]string{"message": "Store profile updated successfully", "store_name": updated.StoreName})
 }
 
-// GetSellerReviewsHandler retrieves reviews for the logged-in seller
+/* =================================================================================
+                          		ORDER HANDLERS
+=================================================================================*/
+
+// GetIncomingOrdersHandler lists all new orders that require merchant confirmation.
+func GetIncomingOrdersHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	sellerID, err := getSellerID(c, ctx)
+	if err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
+	}
+
+	rows, err := queries.GetSellerIncomingOrders(ctx, sellerID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch orders"})
+	}
+
+	resp := make([]SellerOrderResponse, 0, len(rows))
+	for _, row := range rows {
+		var items []OrderItem
+		if len(row.Items) > 0 {
+			_ = json.Unmarshal(row.Items, &items)
+		}
+		fullName := strings.TrimSpace(utility.TextToString(row.UserFirstname) + " " + utility.TextToString(row.UserLastname))
+
+		resp = append(resp, SellerOrderResponse{
+			OrderID:         utility.UuidToString(row.OrderID),
+			CustomerName:    fullName,
+			TotalPrice:      utility.NumericToFloat(row.TotalPrice),
+			Status:          row.Status,
+			DeliveryAddress: row.DeliveryAddressJson,
+			CreatedAt:       row.CreatedAt.Time,
+			Items:           items,
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// GetActiveOrdersHandler lists orders currently in preparation or transit.
+func GetActiveOrdersHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	sellerID, err := getSellerID(c, ctx)
+	if err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
+	}
+
+	rows, err := queries.GetSellerActiveOrders(ctx, sellerID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch active orders"})
+	}
+
+	resp := make([]SellerOrderResponse, 0, len(rows))
+	for _, row := range rows {
+		var items []OrderItem
+		if len(row.Items) > 0 {
+			_ = json.Unmarshal(row.Items, &items)
+		}
+		fullName := strings.TrimSpace(utility.TextToString(row.UserFirstname) + " " + utility.TextToString(row.UserLastname))
+
+		resp = append(resp, SellerOrderResponse{
+			OrderID:         utility.UuidToString(row.OrderID),
+			CustomerName:    fullName,
+			TotalPrice:      utility.NumericToFloat(row.TotalPrice),
+			Status:          row.Status,
+			DeliveryAddress: row.DeliveryAddressJson,
+			CreatedAt:       row.CreatedAt.Time,
+			Items:           items,
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// GetOrderHistoryHandler retrieves a paginated history of completed and cancelled orders.
+func GetOrderHistoryHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	sellerID, err := getSellerID(c, ctx)
+	if err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
+	}
+
+	limit, _ := strconv.Atoi(c.QueryParam("limit"))
+	if limit <= 0 {
+		limit = 20
+	}
+	offset, _ := strconv.Atoi(c.QueryParam("offset"))
+
+	rows, err := queries.GetSellerOrderHistory(ctx, database.GetSellerOrderHistoryParams{
+		SellerID: sellerID,
+		Limit:    int32(limit),
+		Offset:   int32(offset),
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch history"})
+	}
+
+	resp := make([]SellerOrderResponse, 0, len(rows))
+	for _, row := range rows {
+		var items []OrderItem
+		if len(row.Items) > 0 {
+			_ = json.Unmarshal(row.Items, &items)
+		}
+		fullName := strings.TrimSpace(utility.TextToString(row.UserFirstname) + " " + utility.TextToString(row.UserLastname))
+
+		resp = append(resp, SellerOrderResponse{
+			OrderID:      utility.UuidToString(row.OrderID),
+			CustomerName: fullName,
+			TotalPrice:   utility.NumericToFloat(row.TotalPrice),
+			Status:       row.Status,
+			CreatedAt:    row.CreatedAt.Time,
+			Items:        items,
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// UpdateOrderStatusHandler advances an order to its next fulfillment status and triggers notifications.
+func UpdateOrderStatusHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	sellerID, err := getSellerID(c, ctx)
+	if err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
+	}
+
+	orderUUID, err := uuid.Parse(c.Param("order_id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid order ID"})
+	}
+
+	var req UpdateStatusRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+	}
+
+	err = queries.UpdateOrderStatus(ctx, database.UpdateOrderStatusParams{
+		Status:      req.Status,
+		SellerNotes: pgtype.Text{String: req.SellerNotes, Valid: req.SellerNotes != ""},
+		OrderID:     pgtype.UUID{Bytes: orderUUID, Valid: true},
+		SellerID:    sellerID,
+	})
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update status"})
+	}
+
+	go utility.TriggerSellerUpdate(utility.UuidToString(sellerID))
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Order status updated to " + req.Status})
+}
+
+/* =================================================================================
+                          		DASHBOARD HANDLERS
+=================================================================================*/
+
+// GetSellerDashboardStatsHandler aggregates high-level KPIs and top product performance.
+func GetSellerDashboardStatsHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	sellerID, err := getSellerID(c, ctx)
+	if err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
+	}
+
+	start, end := parseDateRange(c.QueryParam("start"), c.QueryParam("end"))
+
+	summary, err := queries.GetSellerSummaryStats(ctx, database.GetSellerSummaryStatsParams{
+		SellerID:    sellerID,
+		CreatedAt:   pgtype.Timestamptz{Time: start, Valid: true},
+		CreatedAt_2: pgtype.Timestamptz{Time: end, Valid: true},
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch summary"})
+	}
+
+	topItemsRows, _ := queries.GetSellerTopItems(ctx, database.GetSellerTopItemsParams{
+		SellerID:    sellerID,
+		CreatedAt:   pgtype.Timestamptz{Time: start, Valid: true},
+		CreatedAt_2: pgtype.Timestamptz{Time: end, Valid: true},
+	})
+
+	topItems := make([]TopItem, 0, len(topItemsRows))
+	for _, row := range topItemsRows {
+		topItems = append(topItems, TopItem{
+			FoodName:     row.FoodNameSnapshot,
+			TotalSold:    row.TotalSold,
+			TotalRevenue: utility.NumericToFloat(row.TotalRevenue),
+		})
+	}
+
+	return c.JSON(http.StatusOK, DashboardStatsResponse{
+		TotalRevenue:      utility.NumericToFloat(summary.TotalRevenue),
+		TotalOrders:       summary.TotalOrders,
+		AverageOrderValue: utility.NumericToFloat(summary.AverageOrderValue),
+		TopItems:          topItems,
+	})
+}
+
+// GetSellerSalesChartHandler provides time-series data for daily revenue and volume tracking.
+func GetSellerSalesChartHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+	sellerID, err := getSellerID(c, ctx)
+	if err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Unauthorized"})
+	}
+
+	start, end := parseDateRange(c.QueryParam("start"), c.QueryParam("end"))
+
+	rows, err := queries.GetSellerDailySales(ctx, database.GetSellerDailySalesParams{
+		SellerID:    sellerID,
+		CreatedAt:   pgtype.Timestamptz{Time: start, Valid: true},
+		CreatedAt_2: pgtype.Timestamptz{Time: end, Valid: true},
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch chart data"})
+	}
+
+	chartData := make([]ChartDataPoint, 0, len(rows))
+	for _, row := range rows {
+		chartData = append(chartData, ChartDataPoint{
+			Date:    row.SaleDate,
+			Revenue: utility.NumericToFloat(row.DailyRevenue),
+			Orders:  row.DailyOrders,
+		})
+	}
+
+	return c.JSON(http.StatusOK, chartData)
+}
+
+/* =================================================================================
+                          		FEEDBACK HANDLERS
+=================================================================================*/
+
+// GetSellerReviewsHandler retrieves a paginated list of customer feedback for the merchant's store.
 func GetSellerReviewsHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Auth: Get Seller ID
 	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 	}
+
 	sellerID, err := queries.GetSellerIDByUserID(ctx, userID)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Seller profile not found"})
 	}
 
-	// 2. Pagination
-	limit := 20
-	offset := 0
-	if l := c.QueryParam("limit"); l != "" {
-		if val, err := strconv.Atoi(l); err == nil {
-			limit = val
-		}
+	limit, _ := strconv.Atoi(c.QueryParam("limit"))
+	if limit <= 0 {
+		limit = 20
 	}
-	if o := c.QueryParam("offset"); o != "" {
-		if val, err := strconv.Atoi(o); err == nil {
-			offset = val
-		}
-	}
+	offset, _ := strconv.Atoi(c.QueryParam("offset"))
 
-	// 3. Fetch Data
 	rows, err := queries.GetSellerReviews(ctx, database.GetSellerReviewsParams{
 		SellerID: sellerID,
 		Limit:    int32(limit),
@@ -1047,7 +780,6 @@ func GetSellerReviewsHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch reviews"})
 	}
 
-	// 4. Map Response
 	type ReviewResponse struct {
 		ReviewID       string  `json:"review_id"`
 		Rating         int32   `json:"rating"`
@@ -1058,83 +790,117 @@ func GetSellerReviewsHandler(c echo.Context) error {
 		CustomerAvatar *string `json:"customer_avatar"`
 	}
 
-	resp := make([]ReviewResponse, 0)
+	resp := make([]ReviewResponse, 0, len(rows))
 	for _, row := range rows {
-		// Format Name
-		firstName := utility.TextToString(row.UserFirstname)
-		lastName := utility.TextToString(row.UserLastname)
-		fullName := strings.TrimSpace(firstName + " " + lastName)
-
-		// Handle Nullables
-		var reviewText *string
-		if row.ReviewText.Valid {
-			reviewText = &row.ReviewText.String
-		}
-		var sellerReply *string
-		if row.SellerReply.Valid {
-			sellerReply = &row.SellerReply.String
-		}
-		var avatar *string
-		if row.UserAvatarUrl.Valid {
-			avatar = &row.UserAvatarUrl.String
-		}
-
+		fullName := strings.TrimSpace(utility.TextToString(row.UserFirstname) + " " + utility.TextToString(row.UserLastname))
 		resp = append(resp, ReviewResponse{
 			ReviewID:       utility.UuidToString(row.ReviewID),
 			Rating:         row.Rating,
-			ReviewText:     reviewText,
-			SellerReply:    sellerReply,
+			ReviewText:     utility.SafeStringPtr(row.ReviewText),
+			SellerReply:    utility.SafeStringPtr(row.SellerReply),
 			CreatedAt:      row.CreatedAt.Time.Format("2006-01-02 15:04:05"),
 			CustomerName:   fullName,
-			CustomerAvatar: avatar,
+			CustomerAvatar: utility.SafeStringPtr(row.UserAvatarUrl),
 		})
 	}
 
 	return c.JSON(http.StatusOK, resp)
 }
 
-// ReplyToReviewHandler allows seller to reply to a specific review
+// ReplyToReviewHandler allows the merchant to respond to specific customer feedback.
 func ReplyToReviewHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	// 1. Auth: Get Seller ID
 	userID, err := utility.GetUserIDFromContext(c)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 	}
+
 	sellerID, err := queries.GetSellerIDByUserID(ctx, userID)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Seller profile not found"})
 	}
 
-	// 2. Get Review ID from URL
-	reviewIDParam := c.Param("review_id")
-	reviewUUID, err := uuid.Parse(reviewIDParam)
+	reviewUUID, err := uuid.Parse(c.Param("review_id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid review ID"})
 	}
 
-	// 3. Bind Request
 	var req ReplyReviewRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 	}
 
-	// 4. Update DB
-	updatedReview, err := queries.ReplyToReview(ctx, database.ReplyToReviewParams{
+	updated, err := queries.ReplyToReview(ctx, database.ReplyToReviewParams{
 		ReviewID:    pgtype.UUID{Bytes: reviewUUID, Valid: true},
 		SellerReply: pgtype.Text{String: req.ReplyText, Valid: true},
-		SellerID:    sellerID, // Security: Ensures seller owns this review
+		SellerID:    sellerID,
 	})
 
 	if err != nil {
-		// If no rows affected, usually means Review ID doesn't belong to this seller
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Review not found or access denied"})
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":      "Reply posted successfully",
-		"review_id":    utility.UuidToString(updatedReview.ReviewID),
-		"seller_reply": updatedReview.SellerReply.String,
+		"review_id":    utility.UuidToString(updated.ReviewID),
+		"seller_reply": updated.SellerReply.String,
 	})
+}
+
+/* =================================================================================
+                    	MAPPING & FORMATTING HANDLERS
+=================================================================================*/
+
+func mapSellerProfileToResponse(db database.GetSellerByIDRow) SellerProfileResponse {
+	resp := SellerProfileResponse{
+		SellerID:           db.SellerID.Bytes,
+		UserID:             db.UserID,
+		StoreName:          db.StoreName,
+		StoreSlug:          db.StoreSlug,
+		IsOpen:             db.IsOpen,
+		IsActive:           db.IsActive.Bool,
+		VerificationStatus: string(db.VerificationStatus),
+		AdminStatus:        string(db.AdminStatus.SellerAdminStatus),
+		SuspensionReason:   db.SuspensionReason.String,
+		BusinessHours:      json.RawMessage(db.BusinessHours),
+		StoreDescription:   utility.TextToString(db.StoreDescription),
+		StorePhoneNumber:   utility.TextToString(db.StorePhoneNumber),
+		AddressLine1:       utility.TextToString(db.AddressLine1),
+		AddressLine2:       utility.TextToString(db.AddressLine2),
+		District:           utility.TextToString(db.District),
+		City:               utility.TextToString(db.City),
+		Province:           utility.TextToString(db.Province),
+		PostalCode:         utility.TextToString(db.PostalCode),
+		StoreEmail:         utility.TextToString(db.StoreEmail),
+		Latitude:           utility.NumericToFloat(db.Latitude),
+		Longitude:          utility.NumericToFloat(db.Longitude),
+		AverageRating:      utility.NumericToFloat(db.AverageRating),
+		CuisineType:        db.CuisineType,
+		PriceRange:         db.PriceRange.Int32,
+		ReviewCount:        db.ReviewCount.Int32,
+		OwnerFirstName:     utility.TextToString(db.UserFirstname),
+		OwnerLastName:      utility.TextToString(db.UserLastname),
+		OwnerEmail:         utility.TextToString(db.UserEmail),
+	}
+
+	if db.LogoUrl.Valid {
+		resp.LogoUrl = &db.LogoUrl.String
+	}
+	if db.BannerUrl.Valid {
+		resp.BannerUrl = &db.BannerUrl.String
+	}
+
+	return resp
+}
+
+func parseDateRange(startParam, endParam string) (time.Time, time.Time) {
+	start := time.Now().AddDate(0, 0, -30)
+	if t, err := time.Parse("2006-01-02", startParam); err == nil {
+		start = t
+	}
+	end := time.Now()
+	if t, err := time.Parse("2006-01-02", endParam); err == nil {
+		end = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+	}
+	return start, end
 }
