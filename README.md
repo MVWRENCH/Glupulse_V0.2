@@ -1,6 +1,5 @@
 # GluPulse: Holistic Diabetes Management & Marketplace Ecosystem
 
-![GluPulse Banner](https://via.placeholder.com/1200x300?text=GluPulse+Health+Ecosystem) 
 GluPulse is a comprehensive mobile ecosystem designed to bridge the gap between **medical health tracking** and **dietary action** for Type 2 Diabetes management. Unlike passive logbooks, GluPulse integrates clinical data monitoring with a specialized **healthy food marketplace**, orchestrated by **Google Gemini AI** to provide real-time, personalized lifestyle recommendations.
 
 ---
@@ -90,24 +89,6 @@ The system has undergone rigorous testing to ensure reliability:
 
 ---
 
-## 📂 Project Structure
-
-GluPulse/
-├── cmd/api/            # Application entry point
-├── internal/
-│   ├── auth/           # JWT, OTP, and OAuth logic
-│   ├── database/       # SQLC generated models & queries
-│   ├── server/         # Echo server configuration & routes
-│   ├── user/           # User & Health handlers
-│   ├── seller/         # Seller & Order handlers
-│   ├── admin/          # Admin & Verification handlers
-│   └── utility/        # Helper functions
-├── web/
-│   ├── public/         # Static assets (CSS/JS)
-│   └── templates/      # HTML views for Web Portals
-├── schema.sql          # Database migration files
-└── go.mod              # Dependencies
-
 ## 🚀 Getting Started
 
 Follow these steps to set up the GluPulse backend locally.
@@ -144,5 +125,6 @@ Follow these steps to set up the GluPulse backend locally.
     ```
 
 ---
+
 
 **© 2026 GluPulse Project. Bina Nusantara University.**
